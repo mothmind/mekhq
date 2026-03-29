@@ -133,7 +133,8 @@ public class DefaultPersonnelGenerator extends AbstractPersonnelGenerator {
         // set SPAs
         if (expLvl >= EXP_ULTRA_GREEN) {
             AbstractSpecialAbilityGenerator specialAbilityGenerator = new DefaultSpecialAbilityGenerator();
-            specialAbilityGenerator.setSkillPreferences(new RandomSkillPreferences());
+            //specialAbilityGenerator.setSkillPreferences(new RandomSkillPreferences());
+            specialAbilityGenerator.setSkillPreferences(getSkillPreferences());
             specialAbilityGenerator.generateSpecialAbilities(campaign, person, expLvl);
         }
 
