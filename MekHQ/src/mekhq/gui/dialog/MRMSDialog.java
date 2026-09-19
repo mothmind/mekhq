@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2016-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -58,9 +58,12 @@ import javax.swing.table.TableRowSorter;
 import megamek.client.ui.models.XTableColumnModel;
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
+import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.OptionsChangedEvent;
 import mekhq.campaign.parts.Part;
 import mekhq.campaign.parts.enums.PartRepairType;
@@ -69,14 +72,12 @@ import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.work.IPartWork;
 import mekhq.gui.CampaignGUI;
-import mekhq.gui.baseComponents.AbstractMHQScrollablePanel;
 import mekhq.gui.baseComponents.DefaultMHQScrollablePanel;
 import mekhq.gui.model.PartsTableModel;
 import mekhq.gui.model.UnitTableModel;
 import mekhq.gui.sorter.PartsDetailSorter;
 import mekhq.gui.sorter.UnitStatusSorter;
 import mekhq.gui.sorter.UnitTypeSorter;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.service.enums.MRMSMode;
 import mekhq.service.mrms.MRMSConfiguredOptions;
 import mekhq.service.mrms.MRMSOption;
@@ -256,7 +257,7 @@ public class MRMSDialog extends JDialog {
         if (refreshCompleteList) {
             completePartsList = new ArrayList<>();
 
-            campaignGUI.getCampaign().getWarehouse().forEachSparePart(part -> {
+            campaignGUI.getCampaign().getPlayerForce().getWarehouse().forEachSparePart(part -> {
                 if (!part.isBeingWorkedOn() &&
                           part.needsFixing() &&
                           !(part instanceof AmmoBin) && (part.getSkillMin() <= SkillType.EXP_LEGENDARY)) {
@@ -295,7 +296,7 @@ public class MRMSDialog extends JDialog {
         final Container content = getContentPane();
         content.setLayout(new BorderLayout());
 
-        AbstractMHQScrollablePanel pnlMain = new DefaultMHQScrollablePanel(frame, "pnlMain", new GridBagLayout());
+        DefaultMHQScrollablePanel pnlMain = new DefaultMHQScrollablePanel(frame, "pnlMain", new GridBagLayout());
 
         if (getMode().isUnits()) {
             pnlMain.add(createUnitsPanel(), createBaseConstraints(0));
@@ -307,7 +308,7 @@ public class MRMSDialog extends JDialog {
 
         pnlMain.add(createOptionsPanel(), createBaseConstraints(2));
 
-        content.add(new JScrollPaneWithSpeed(pnlMain), BorderLayout.CENTER);
+        content.add(new FastJScrollPane(pnlMain), BorderLayout.CENTER);
         content.add(createActionButtons(), BorderLayout.SOUTH);
 
         pack();
@@ -366,7 +367,7 @@ public class MRMSDialog extends JDialog {
         unitTable.setIntercellSpacing(new Dimension(0, 0));
         unitTable.setShowGrid(false);
 
-        JScrollPane scrollUnitList = new JScrollPaneWithSpeed(unitTable);
+        JScrollPane scrollUnitList = new FastJScrollPane(unitTable);
         scrollUnitList.setMinimumSize(new Dimension(350, 200));
         scrollUnitList.setPreferredSize(new Dimension(350, 200));
 
@@ -417,7 +418,7 @@ public class MRMSDialog extends JDialog {
         partsTable.setIntercellSpacing(new Dimension(0, 0));
         partsTable.setShowGrid(false);
 
-        JScrollPane scrollPartsTable = new JScrollPaneWithSpeed(partsTable);
+        JScrollPane scrollPartsTable = new FastJScrollPane(partsTable);
         scrollPartsTable.setMinimumSize(new Dimension(350, 200));
         scrollPartsTable.setPreferredSize(new Dimension(350, 200));
 
@@ -649,7 +650,7 @@ public class MRMSDialog extends JDialog {
 
     private MRMSOptionControl createMRMSOptionControls(PartRepairType type, String text, String tooltipText,
           String activeBoxName, JPanel pnlItems, int rowIdx) {
-        MRMSOption mrmsOption = campaignOptions.getMRMSOptions()
+        MRMSOption mrmsOption = campaignOptions.get(CampaignOption.MRMS_OPTIONS)
                                       .stream()
                                       .filter(option -> option.getType() == type)
                                       .findFirst()
@@ -995,7 +996,8 @@ public class MRMSDialog extends JDialog {
 
     private void btnStartMRMSActionPerformed(ActionEvent evt) {
         // Not enough Astechs to run the tech teams
-        if (campaignGUI.getCampaign().requiresAdditionalAsTechs()) {
+        Campaign campaign = campaignGUI.getCampaign();
+        if (campaign.getPlayerForce().getHumanResources().requiresAdditionalAsTechs(campaign.getCampaignOptions())) {
             int savePrompt = JOptionPane.showConfirmDialog(null,
                   resources.getString("NotEnoughAstechs.error"),
                   resources.getString("NotEnoughAstechs.errorTitle"),
@@ -1125,33 +1127,33 @@ public class MRMSDialog extends JDialog {
 
     // region Campaign Options
     private void refreshOptions() {
-        getUseRepairBox().setSelected(campaignOptions.isMRMSUseRepair());
-        getUseSalvageBox().setSelected(campaignOptions.isMRMSUseSalvage());
-        getUseExtraTimeBox().setSelected(campaignOptions.isMRMSUseExtraTime());
-        getUseRushJobBox().setSelected(campaignOptions.isMRMSUseRushJob());
-        getAllowCarryoverBox().setSelected(campaignOptions.isMRMSAllowCarryover());
-        getOptimizeToCompleteTodayBox().setSelected(campaignOptions.isMRMSOptimizeToCompleteToday());
-        getOptimizeToCompleteTodayBox().setEnabled(campaignOptions.isMRMSAllowCarryover());
+        getUseRepairBox().setSelected(campaignOptions.get(CampaignOption.MRMS_USE_REPAIR));
+        getUseSalvageBox().setSelected(campaignOptions.get(CampaignOption.MRMS_USE_SALVAGE));
+        getUseExtraTimeBox().setSelected(campaignOptions.get(CampaignOption.MRMS_USE_EXTRA_TIME));
+        getUseRushJobBox().setSelected(campaignOptions.get(CampaignOption.MRMS_USE_RUSH_JOB));
+        getAllowCarryoverBox().setSelected(campaignOptions.get(CampaignOption.MRMS_ALLOW_CARRYOVER));
+        getOptimizeToCompleteTodayBox().setSelected(campaignOptions.get(CampaignOption.MRMS_OPTIMIZE_TO_COMPLETE_TODAY));
+        getOptimizeToCompleteTodayBox().setEnabled(campaignOptions.get(CampaignOption.MRMS_ALLOW_CARRYOVER));
 
         if (!getMode().isWarehouse()) {
-            getScrapImpossibleBox().setSelected(campaignOptions.isMRMSScrapImpossible());
-            getUseAssignedTechsFirstBox().setSelected(campaignOptions.isMRMSUseAssignedTechsFirst());
-            getReplacePodPartsBox().setSelected(campaignOptions.isMRMSReplacePod());
+            getScrapImpossibleBox().setSelected(campaignOptions.get(CampaignOption.MRMS_SCRAP_IMPOSSIBLE));
+            getUseAssignedTechsFirstBox().setSelected(campaignOptions.get(CampaignOption.MRMS_USE_ASSIGNED_TECHS_FIRST));
+            getReplacePodPartsBox().setSelected(campaignOptions.get(CampaignOption.MRMS_REPLACE_POD));
         }
     }
 
     private void updateOptions() {
-        campaignOptions.setMRMSUseRepair(getUseRepairBox().isSelected());
-        campaignOptions.setMRMSUseSalvage(getUseSalvageBox().isSelected());
-        campaignOptions.setMRMSUseExtraTime(getUseExtraTimeBox().isSelected());
-        campaignOptions.setMRMSUseRushJob(getUseRushJobBox().isSelected());
-        campaignOptions.setMRMSAllowCarryover(getAllowCarryoverBox().isSelected());
-        campaignOptions.setMRMSOptimizeToCompleteToday(getOptimizeToCompleteTodayBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_USE_REPAIR, getUseRepairBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_USE_SALVAGE, getUseSalvageBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_USE_EXTRA_TIME, getUseExtraTimeBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_USE_RUSH_JOB, getUseRushJobBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_ALLOW_CARRYOVER, getAllowCarryoverBox().isSelected());
+        campaignOptions.set(CampaignOption.MRMS_OPTIMIZE_TO_COMPLETE_TODAY, getOptimizeToCompleteTodayBox().isSelected());
 
         if (!getMode().isWarehouse()) {
-            campaignOptions.setMRMSScrapImpossible(scrapImpossibleBox.isSelected());
-            campaignOptions.setMRMSUseAssignedTechsFirst(useAssignedTechsFirstBox.isSelected());
-            campaignOptions.setMRMSReplacePod(replacePodPartsBox.isSelected());
+            campaignOptions.set(CampaignOption.MRMS_SCRAP_IMPOSSIBLE, scrapImpossibleBox.isSelected());
+            campaignOptions.set(CampaignOption.MRMS_USE_ASSIGNED_TECHS_FIRST, useAssignedTechsFirstBox.isSelected());
+            campaignOptions.set(CampaignOption.MRMS_REPLACE_POD, replacePodPartsBox.isSelected());
         }
 
         for (PartRepairType partRepairType : PartRepairType.getMRMSValidTypes()) {

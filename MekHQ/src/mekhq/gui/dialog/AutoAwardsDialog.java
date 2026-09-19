@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2014-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -54,6 +54,7 @@ import javax.swing.RowSorter.SortKey;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
 
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -63,7 +64,6 @@ import mekhq.gui.CampaignGUI;
 import mekhq.gui.enums.PersonnelFilter;
 import mekhq.gui.model.AutoAwardsTableModel;
 import mekhq.gui.sorter.PersonRankStringSorter;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 
 public class AutoAwardsDialog extends JDialog {
     private static final MMLogger logger = MMLogger.create(AutoAwardsDialog.class);
@@ -92,7 +92,7 @@ public class AutoAwardsDialog extends JDialog {
 
     public AutoAwardsDialog(Campaign c, Map<Integer, Map<Integer, List<Object>>> allAwardData, int ceremonyCount) {
         campaign = c;
-        gui = campaign.getApp().getCampaigngui();
+        gui = campaign.getGUI();
         allData = allAwardData;
         logger.info("attempting to extract a single page");
         data = allAwardData.get(ceremonyCount);
@@ -145,7 +145,8 @@ public class AutoAwardsDialog extends JDialog {
         cboPersonnelFilter = new JComboBox<>();
         cboPersonnelFilter.setMaximumSize(new Dimension(200, 20));
 
-        for (PersonnelFilter filter : MekHQ.getMHQOptions().getPersonnelFilterStyle().getFilters(true)) {
+        for (PersonnelFilter filter : PersonnelFilter.applicableTo(
+              MekHQ.getMHQOptions().getPersonnelFilterStyle().getFilters(true), campaign)) {
             cboPersonnelFilter.addItem(filter);
         }
 
@@ -192,7 +193,7 @@ public class AutoAwardsDialog extends JDialog {
         JCheckBox cbxAward = (JCheckBox) cellEditor.getComponent();
         cbxAward.addMouseListener(checkboxListener);
 
-        JScrollPane scrollPane = new JScrollPaneWithSpeed();
+        JScrollPane scrollPane = new FastJScrollPane();
         scrollPane.setViewportView(personnelTable);
         scrollPane.setPreferredSize(new Dimension(500, 500));
         autoAwardsPanel.add(scrollPane, BorderLayout.CENTER);
@@ -256,7 +257,7 @@ public class AutoAwardsDialog extends JDialog {
             if (event.getSource().equals(btnDone)) {
                 for (int rowIndex = 0; rowIndex < personnelTable.getRowCount(); rowIndex++) {
                     if ((boolean) personnelTable.getValueAt(rowIndex, 3)) {
-                        Person person = campaign.getPerson((UUID) data.get(rowIndex).get(0));
+                        Person person = campaign.getPlayerForce().getHumanResources().getPerson((UUID) data.get(rowIndex).getFirst());
                         Award award = (Award) data.get(rowIndex).get(1);
 
                         List<Award> awardsForRemoval = new ArrayList<>();

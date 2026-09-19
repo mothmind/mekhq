@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2009-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -36,24 +36,24 @@ package mekhq.campaign;
 import static mekhq.campaign.unit.enums.TransporterType.ASF_BAY;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static testUtilities.MHQTestUtilities.TEST_CANON_SYSTEMS_DIR;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
-import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -62,16 +62,19 @@ import java.util.UUID;
 import java.util.Vector;
 import java.util.stream.Stream;
 
+import megamek.common.enums.Gender;
 import megamek.common.enums.SkillLevel;
 import megamek.common.equipment.EquipmentType;
 import megamek.common.equipment.Mounted;
 import megamek.common.icons.Portrait;
-import megamek.common.enums.Gender;
+import megamek.common.options.GameOptions;
+import megamek.common.options.OptionsConstants;
 import megamek.common.units.Crew;
 import megamek.common.units.Dropship;
 import megamek.common.units.EntityMovementMode;
 import megamek.common.units.UnitType;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.enums.CampaignTransportType;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
@@ -79,6 +82,7 @@ import mekhq.campaign.personnel.enums.PersonnelStatus;
 import mekhq.campaign.personnel.ranks.Ranks;
 import mekhq.campaign.unit.AbstractTransportedUnitsSummary;
 import mekhq.campaign.unit.Unit;
+import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.TestSystems;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,6 +91,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentMatchers;
 import testUtilities.MHQTestUtilities;
 
 /**
@@ -106,7 +111,7 @@ public class CampaignTest {
     @BeforeEach
     public void before() {
         // Reset TestSystems
-        systems = TestSystems.getInstance();
+        systems = TestSystems.resetAndGetInstance();
     }
 
     @Test
@@ -131,9 +136,33 @@ public class CampaignTest {
         assertEquals(6, travelTime);
     }
 
+    /**
+     * Regression test: replacing the campaign's GameOptions (as happens when applying a campaign preset) must also
+     * update the Game's options reference. MegaMek code such as TeamLoadOutGenerator reads options through
+     * campaign.getGame().getOptions(); if the two references diverge, later updates like the ALLOWED_YEAR sync during
+     * scenario setup are applied to one object while the loadout generator reads the other, and bot forces are equipped
+     * with munitions from the wrong era.
+     */
+    @Test
+    void testSetGameOptionsKeepsGameInSync() {
+        Campaign campaign = MHQTestUtilities.getTestCampaign();
+
+        // Sanity check: the constructor wires the same object into both places
+        assertSame(campaign.getGameOptions(), campaign.getGame().getOptions());
+
+        // Replace the options wholesale, as preset application does
+        GameOptions replacementOptions = new GameOptions();
+        campaign.setGameOptions(replacementOptions);
+        assertSame(replacementOptions, campaign.getGame().getOptions());
+
+        // A year written through the campaign accessor (e.g. the pre-scenario ALLOWED_YEAR sync in BriefingTab)
+        // must be visible to code reading through the game, like TeamLoadOutGenerator
+        campaign.getGameOptions().getOption(OptionsConstants.ALLOWED_YEAR).setValue(3019);
+        assertEquals(3019, campaign.getGame().getOptions().intOption(OptionsConstants.ALLOWED_YEAR));
+    }
+
     @Test
     void testGetTechs() {
-        List<Person> testPersonList = new ArrayList<>(5);
         List<Person> testActivePersonList = new ArrayList<>(5);
 
         Person mockTechActive = mock(Person.class);
@@ -142,10 +171,12 @@ public class CampaignTest {
         when(mockTechActive.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
         doReturn(PersonnelStatus.ACTIVE).when(mockTechActive).getStatus();
         when(mockTechActive.getMinutesLeft()).thenReturn(240);
-        when(mockTechActive.getSkillLevel(any(Campaign.class),
+        when(mockTechActive.getSkillLevel(any(),
+              anyBoolean(),
+              any(),
               anyBoolean(),
               anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockTechActive);
+        when(mockTechActive.getDailyAvailableTechTime(anyBoolean())).thenReturn(240);
         testActivePersonList.add(mockTechActive);
 
         Person mockTechActiveTwo = mock(Person.class);
@@ -154,22 +185,10 @@ public class CampaignTest {
         when(mockTechActiveTwo.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
         doReturn(PersonnelStatus.ACTIVE).when(mockTechActiveTwo).getStatus();
         when(mockTechActiveTwo.getMinutesLeft()).thenReturn(1);
-        when(mockTechActiveTwo.getSkillLevel(any(Campaign.class),
-              anyBoolean(),
-              anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockTechActiveTwo);
+        when(mockTechActiveTwo.getSkillLevel(any(), anyBoolean(), any(), anyBoolean(), anyBoolean())).thenReturn(
+              SkillLevel.REGULAR);
+        when(mockTechActiveTwo.getDailyAvailableTechTime(anyBoolean())).thenReturn(1);
         testActivePersonList.add(mockTechActiveTwo);
-
-        Person mockTechInactive = mock(Person.class);
-        when(mockTechInactive.isTech()).thenReturn(true);
-        when(mockTechInactive.getPrimaryRole()).thenReturn(PersonnelRole.MEK_TECH);
-        when(mockTechInactive.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
-        doReturn(PersonnelStatus.RETIRED).when(mockTechInactive).getStatus();
-        when(mockTechInactive.getMinutesLeft()).thenReturn(240);
-        when(mockTechInactive.getSkillLevel(any(Campaign.class),
-              anyBoolean(),
-              anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockTechInactive);
 
         Person mockTechNoTime = mock(Person.class);
         when(mockTechNoTime.isTech()).thenReturn(true);
@@ -177,10 +196,12 @@ public class CampaignTest {
         when(mockTechNoTime.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
         doReturn(PersonnelStatus.ACTIVE).when(mockTechNoTime).getStatus();
         when(mockTechNoTime.getMinutesLeft()).thenReturn(0);
-        when(mockTechNoTime.getSkillLevel(any(Campaign.class),
+        when(mockTechNoTime.getSkillLevel(any(),
+              anyBoolean(),
+              any(),
               anyBoolean(),
               anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockTechNoTime);
+        when(mockTechNoTime.getDailyAvailableTechTime(anyBoolean())).thenReturn(0);
         testActivePersonList.add(mockTechNoTime);
 
         Person mockNonTechOne = mock(Person.class);
@@ -189,48 +210,117 @@ public class CampaignTest {
         when(mockNonTechOne.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
         doReturn(PersonnelStatus.ACTIVE).when(mockNonTechOne).getStatus();
         when(mockNonTechOne.getMinutesLeft()).thenReturn(240);
-        when(mockNonTechOne.getSkillLevel(any(Campaign.class),
-              anyBoolean(),
-              anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockNonTechOne);
         testActivePersonList.add(mockNonTechOne);
 
         Person mockNonTechTwo = mock(Person.class);
         when(mockNonTechTwo.isTech()).thenReturn(false);
-        when(mockNonTechTwo.getPrimaryRole()).thenReturn(PersonnelRole.ADMINISTRATOR_COMMAND);
+        when(mockNonTechTwo.getPrimaryRole()).thenReturn(PersonnelRole.ADMINISTRATOR);
         when(mockNonTechTwo.getSecondaryRole()).thenReturn(PersonnelRole.NONE);
         doReturn(PersonnelStatus.ACTIVE).when(mockNonTechTwo).getStatus();
         when(mockNonTechTwo.getMinutesLeft()).thenReturn(240);
-        when(mockNonTechTwo.getSkillLevel(any(Campaign.class),
-              anyBoolean(),
-              anyBoolean())).thenReturn(SkillLevel.REGULAR);
-        testPersonList.add(mockNonTechTwo);
         testActivePersonList.add(mockNonTechTwo);
 
-        Campaign testCampaign = mock(Campaign.class);
-        when(testCampaign.getPersonnel()).thenReturn(testPersonList);
-        when(testCampaign.getActivePersonnel(false, false)).thenReturn(testActivePersonList);
-        when(testCampaign.getTechs()).thenCallRealMethod();
-        when(testCampaign.getTechs(anyBoolean())).thenCallRealMethod();
-        when(testCampaign.getTechs(anyBoolean(), anyBoolean())).thenCallRealMethod();
-        when(testCampaign.getTechsExpanded(anyBoolean(), anyBoolean(), anyBoolean())).thenCallRealMethod();
-
         CampaignOptions campaignOptions = mock(CampaignOptions.class);
-        when(testCampaign.getCampaignOptions()).thenReturn(campaignOptions);
-        when(campaignOptions.isTechsUseAdministration()).thenReturn(false);
+        when(campaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        LocalDate today = LocalDate.of(3067, 1, 1);
+        List<Unit> noUnits = List.of();
+
+        Campaign testCampaign = mockCampaign();
+        when(testCampaign.getPlayerForce()
+                   .getHumanResources()
+                   .getTechs(ArgumentMatchers.any(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.any())).thenAnswer(inv ->
+                                                                   ForceHumanResources.getTechsExpanded(
+                                                                         testActivePersonList,
+                                                                         noUnits,
+                                                                         campaignOptions,
+                                                                         false,
+                                                                         today,
+                                                                         false,
+                                                                         false,
+                                                                         false));
+        when(testCampaign.getPlayerForce()
+                   .getHumanResources()
+                   .getTechs(ArgumentMatchers.any(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean())).thenAnswer(inv ->
+                                                                          ForceHumanResources.getTechsExpanded(
+                                                                                testActivePersonList,
+                                                                                noUnits,
+                                                                                campaignOptions,
+                                                                                false,
+                                                                                today,
+                                                                                (boolean) inv.getArgument(4),
+                                                                                false,
+                                                                                false));
+        when(testCampaign.getPlayerForce()
+                   .getHumanResources()
+                   .getTechs(ArgumentMatchers.any(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.anyBoolean())).thenAnswer(inv ->
+                                                                          ForceHumanResources.getTechsExpanded(
+                                                                                testActivePersonList,
+                                                                                noUnits,
+                                                                                campaignOptions,
+                                                                                false,
+                                                                                today,
+                                                                                (boolean) inv.getArgument(4),
+                                                                                (boolean) inv.getArgument(5),
+                                                                                false));
+        when(testCampaign.getPlayerForce()
+                   .getHumanResources()
+                   .getTechsExpanded(ArgumentMatchers.any(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.any(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.anyBoolean(),
+                         ArgumentMatchers.anyBoolean())).thenAnswer(inv ->
+                                                                          ForceHumanResources.getTechsExpanded(
+                                                                                testActivePersonList,
+                                                                                noUnits,
+                                                                                campaignOptions,
+                                                                                false,
+                                                                                today,
+                                                                                (boolean) inv.getArgument(
+                                                                                      4),
+                                                                                (boolean) inv.getArgument(
+                                                                                      5),
+                                                                                (boolean) inv.getArgument(
+                                                                                      6)));
 
         // Test just getting the list of active techs.
         List<Person> expected = new ArrayList<>(3);
         expected.add(mockTechActive);
         expected.add(mockTechActiveTwo);
         expected.add(mockTechNoTime);
-        assertEquals(expected, testCampaign.getTechs());
+        assertEquals(expected,
+              testCampaign.getPlayerForce()
+                    .getHumanResources()
+                    .getTechs(testCampaign.getPlayerForce().getHangar().getUnits(),
+                          testCampaign.getCampaignOptions(),
+                          testCampaign.getPlayerForce().isClanForce(),
+                          testCampaign.getLocalDate()));
 
         // Test getting active techs with time remaining.
         expected = new ArrayList<>(2);
         expected.add(mockTechActive);
         expected.add(mockTechActiveTwo);
-        assertEquals(expected, testCampaign.getTechs(true));
+        assertEquals(expected,
+              testCampaign.getPlayerForce()
+                    .getHumanResources()
+                    .getTechs(testCampaign.getPlayerForce().getHangar().getUnits(),
+                          testCampaign.getCampaignOptions(),
+                          testCampaign.getPlayerForce().isClanForce(),
+                          testCampaign.getLocalDate(),
+                          true));
     }
 
     @ParameterizedTest
@@ -283,139 +373,143 @@ public class CampaignTest {
     void testInitiative() {
         Campaign campaign = MHQTestUtilities.getTestCampaign();
 
-        campaign.applyInitiativeBonus(6);
+        campaign.getPlayerForce().applyInitiativeBonus(6);
         // should increase bonus to 6 and max to 6
-        assertEquals(6, campaign.getInitiativeBonus());
-        assertEquals(6, campaign.getInitiativeMaxBonus());
+        assertEquals(6, campaign.getPlayerForce().getInitiativeBonus());
+        assertEquals(6, campaign.getPlayerForce().getInitiativeMaxBonus());
         // Should not be able to increment over max of 6
-        campaign.initiativeBonusIncrement(true);
-        assertNotEquals(7, campaign.getInitiativeBonus());
-        campaign.applyInitiativeBonus(2);
-        assertEquals(6, campaign.getInitiativeBonus());
+        campaign.getPlayerForce().initiativeBonusIncrement(true);
+        assertNotEquals(7, campaign.getPlayerForce().getInitiativeBonus());
+        campaign.getPlayerForce().applyInitiativeBonus(2);
+        assertEquals(6, campaign.getPlayerForce().getInitiativeBonus());
         // But should be able to decrease below max
-        campaign.initiativeBonusIncrement(false);
-        assertEquals(5, campaign.getInitiativeBonus());
+        campaign.getPlayerForce().initiativeBonusIncrement(false);
+        assertEquals(5, campaign.getPlayerForce().getInitiativeBonus());
         // After setting lower Max Bonus any applied bonus that's less than max should set
         // bonus to max
-        campaign.setInitiativeMaxBonus(3);
-        campaign.applyInitiativeBonus(2);
-        assertEquals(3, campaign.getInitiativeBonus());
+        campaign.getPlayerForce().setInitiativeMaxBonus(3);
+        campaign.getPlayerForce().applyInitiativeBonus(2);
+        assertEquals(3, campaign.getPlayerForce().getInitiativeBonus());
 
-    }
-
-    private static Person[] invokeFindTopCommanders(Campaign campaign) throws Exception {
-        Method findTopCommanders = Campaign.class.getDeclaredMethod("findTopCommanders");
-        findTopCommanders.setAccessible(true);
-        return (Person[]) findTopCommanders.invoke(campaign);
     }
 
     @Test
-    void findTopCommanders_whenBothFlagged_returnsThoseAndDoesNotScanPersonnel() throws Exception {
-        Campaign campaign = spy(MHQTestUtilities.getTestCampaign());
+    void findTopCommanders_whenBothFlagged_returnsThoseAndDoesNotScanPersonnel() {
+        CampaignOptions opts = mock(CampaignOptions.class);
+        LocalDate today = LocalDate.of(3067, 1, 1);
 
         Person flaggedCommander = mock(Person.class);
+        when(flaggedCommander.isCommander()).thenReturn(true);
+
         Person flaggedSecond = mock(Person.class);
+        when(flaggedSecond.isSecondInCommand()).thenReturn(true);
 
-        doReturn(flaggedCommander).when(campaign).getFlaggedCommander();
-        doReturn(flaggedSecond).when(campaign).getFlaggedSecondInCommand();
-
-        Person[] result = invokeFindTopCommanders(campaign);
+        Person[] result = ForceHumanResources.findTopCommanders(
+              List.of(flaggedCommander, flaggedSecond), opts, false, today);
 
         assertSame(flaggedCommander, result[0]);
         assertSame(flaggedSecond, result[1]);
-
-        verify(campaign, never()).getActivePersonnel(false, false);
     }
 
     @Test
-    void findTopCommanders_whenOnlyCommanderFlagged_commanderLocked_secondChosenFromOthers() throws Exception {
-        Campaign campaign = spy(MHQTestUtilities.getTestCampaign());
+    void findTopCommanders_whenOnlyCommanderFlagged_commanderLocked_secondChosenFromOthers() {
+        CampaignOptions opts = mock(CampaignOptions.class);
+        LocalDate today = LocalDate.of(3067, 1, 1);
 
         Person flaggedCommander = mock(Person.class);
-        doReturn(flaggedCommander).when(campaign).getFlaggedCommander();
-        doReturn(null).when(campaign).getFlaggedSecondInCommand();
+        when(flaggedCommander.isCommander()).thenReturn(true);
 
         Person aPerson = mock(Person.class);
         Person bPerson = mock(Person.class);
 
-        when(aPerson.outRanksUsingSkillTiebreaker(eq(campaign), eq(bPerson))).thenReturn(true);
-        when(bPerson.outRanksUsingSkillTiebreaker(eq(campaign), eq(aPerson))).thenReturn(false);
+        when(aPerson.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(bPerson))).thenReturn(true);
+        when(bPerson.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(aPerson))).thenReturn(false);
 
-        doReturn(List.of(flaggedCommander, bPerson, aPerson)).when(campaign).getActivePersonnel(false, false);
-
-        Person[] result = invokeFindTopCommanders(campaign);
+        Person[] result = ForceHumanResources.findTopCommanders(
+              List.of(flaggedCommander, bPerson, aPerson), opts, false, today);
 
         assertSame(flaggedCommander, result[0], "Flagged commander must remain commander");
         assertSame(aPerson, result[1], "Second-in-command should be best among remaining personnel");
     }
 
     @Test
-    void findTopCommanders_whenOnlySecondFlagged_secondLocked_commanderChosenFromOthersExcludingSecond()
-          throws Exception {
-        Campaign campaign = spy(MHQTestUtilities.getTestCampaign());
+    void findTopCommanders_whenOnlySecondFlagged_secondLocked_commanderChosenFromOthersExcludingSecond() {
+        CampaignOptions opts = mock(CampaignOptions.class);
+        LocalDate today = LocalDate.of(3067, 1, 1);
 
         Person flaggedSecond = mock(Person.class);
-        doReturn(null).when(campaign).getFlaggedCommander();
-        doReturn(flaggedSecond).when(campaign).getFlaggedSecondInCommand();
+        when(flaggedSecond.isSecondInCommand()).thenReturn(true);
 
         Person aPerson = mock(Person.class);
         Person bPerson = mock(Person.class);
 
-        when(bPerson.outRanksUsingSkillTiebreaker(eq(campaign), eq(aPerson))).thenReturn(true);
+        when(bPerson.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(aPerson))).thenReturn(true);
 
-        doReturn(List.of(aPerson, flaggedSecond, bPerson)).when(campaign).getActivePersonnel(false, false);
-
-        Person[] result = invokeFindTopCommanders(campaign);
+        Person[] result = ForceHumanResources.findTopCommanders(
+              List.of(aPerson, flaggedSecond, bPerson), opts, false, today);
 
         assertSame(bPerson, result[0], "Commander should be the top-ranked among non-flagged-second personnel");
         assertSame(flaggedSecond, result[1], "Flagged second-in-command must remain second");
     }
 
     @Test
-    void findTopCommanders_whenUnflagged_selectsTopTwo_andPromotesPreviousCommanderToSecondIfAppropriate()
-          throws Exception {
-        Campaign campaign = spy(MHQTestUtilities.getTestCampaign());
-
-        doReturn(null).when(campaign).getFlaggedCommander();
-        doReturn(null).when(campaign).getFlaggedSecondInCommand();
+    void findTopCommanders_whenUnflagged_selectsTopTwo_andPromotesPreviousCommanderToSecondIfAppropriate() {
+        CampaignOptions opts = mock(CampaignOptions.class);
+        LocalDate today = LocalDate.of(3067, 1, 1);
 
         Person person1 = mock(Person.class);
         Person person2 = mock(Person.class);
         Person person3 = mock(Person.class);
 
-        when(person2.outRanksUsingSkillTiebreaker(eq(campaign), eq(person1))).thenReturn(true);
-        when(person3.outRanksUsingSkillTiebreaker(eq(campaign), eq(person2))).thenReturn(false);
-        when(person3.outRanksUsingSkillTiebreaker(eq(campaign), eq(person1))).thenReturn(true);
+        when(person2.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(person1))).thenReturn(true);
+        when(person3.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(person2))).thenReturn(false);
+        when(person3.outRanksUsingSkillTiebreaker(any(), anyBoolean(), any(), eq(person1))).thenReturn(true);
 
-        doReturn(List.of(person1, person2, person3)).when(campaign).getActivePersonnel(false, false);
-
-        Person[] result = invokeFindTopCommanders(campaign);
+        Person[] result = ForceHumanResources.findTopCommanders(
+              List.of(person1, person2, person3), opts, false, today);
 
         assertSame(person2, result[0], "Commander should be the best overall");
         assertSame(person3, result[1], "Second should be the best excluding commander");
     }
 
     @Test
-    void findTopCommanders_neverReturnsSamePersonForBothSlots() throws Exception {
-        Campaign campaign = spy(MHQTestUtilities.getTestCampaign());
-
-        doReturn(null).when(campaign).getFlaggedCommander();
-        doReturn(null).when(campaign).getFlaggedSecondInCommand();
+    void findTopCommanders_neverReturnsSamePersonForBothSlots() {
+        CampaignOptions opts = mock(CampaignOptions.class);
+        LocalDate today = LocalDate.of(3067, 1, 1);
 
         Person only = mock(Person.class);
-        doReturn(List.of(only)).when(campaign).getActivePersonnel(false, false);
 
-        Person[] result = invokeFindTopCommanders(campaign);
+        Person[] result = ForceHumanResources.findTopCommanders(List.of(only), opts, false, today);
 
         assertSame(only, result[0]);
         assertNull(result[1], "Second-in-command must be null when only one eligible person exists");
         assertArrayEquals(new Person[] { only, null }, result);
     }
 
+    @Test
+    void getTechAvailabilityYearsRespectsLimitByYear() {
+        CampaignOptions options = mock(CampaignOptions.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getCampaignOptions()).thenReturn(options);
+        when(campaign.getGameYear()).thenReturn(3025);
+        when(campaign.getTechIntroYear()).thenCallRealMethod();
+        when(campaign.getTechAvailabilityYears()).thenCallRealMethod();
+
+        // Limit enabled: technology availability is capped at the current game year.
+        when(options.get(CampaignOption.LIMIT_BY_YEAR)).thenReturn(true);
+        assertEquals(List.of(3025), campaign.getTechAvailabilityYears());
+
+        // Limit disabled: availability is unbounded, so designs introduced after the current campaign year - and
+        // their era-based tech level - are still treated as available.
+        when(options.get(CampaignOption.LIMIT_BY_YEAR)).thenReturn(false);
+        assertEquals(List.of(Integer.MAX_VALUE), campaign.getTechAvailabilityYears());
+    }
+
     // region Nested Test Classes for Temp Crew
+
     /**
-     * Parent nested test class for all temp crew tests.
-     * Contains shared setup and helper methods used across all temp crew role tests.
+     * Parent nested test class for all temp crew tests. Contains shared setup and helper methods used across all temp
+     * crew role tests.
      */
     @Nested
     class TempCrewTests {
@@ -433,22 +527,22 @@ public class CampaignTest {
          */
         private static Stream<PersonnelRole> getTempCrewRoles() {
             return Stream.of(
-                PersonnelRole.SOLDIER,
-                PersonnelRole.BATTLE_ARMOUR,
-                PersonnelRole.VEHICLE_CREW_GROUND,
-                PersonnelRole.VEHICLE_CREW_VTOL,
-                PersonnelRole.VEHICLE_CREW_NAVAL,
-                PersonnelRole.VESSEL_PILOT,
-                PersonnelRole.VESSEL_GUNNER,
-                PersonnelRole.VESSEL_CREW
+                  PersonnelRole.SOLDIER,
+                  PersonnelRole.BATTLE_ARMOUR,
+                  PersonnelRole.VEHICLE_CREW_GROUND,
+                  PersonnelRole.VEHICLE_CREW_VTOL,
+                  PersonnelRole.VEHICLE_CREW_NAVAL,
+                  PersonnelRole.VESSEL_PILOT,
+                  PersonnelRole.VESSEL_GUNNER,
+                  PersonnelRole.VESSEL_CREW
             );
         }
 
         /**
-         * Creates a mock Unit with a mock Entity configured for the specified personnel role.
-         * The unit will be properly configured to use the specified temp crew type.
+         * Creates a mock Unit with a mock Entity configured for the specified personnel role. The unit will be properly
+         * configured to use the specified temp crew type.
          *
-         * @param role The personnel role this unit should be configured for
+         * @param role     The personnel role this unit should be configured for
          * @param withCrew If true, unit will have 1 active crew member; if false, no crew
          */
         private Unit createMockUnitForRole(PersonnelRole role, boolean withCrew) {
@@ -595,19 +689,30 @@ public class CampaignTest {
             when(unit.getActiveCrew()).thenReturn(activeCrew);
             when(unit.getFullCrewSize()).thenReturn(crewSize);
 
+            // Mock vessel-specific role methods for getRoleSpecificNeeds
+            switch (role) {
+                case VESSEL_PILOT -> {
+                    doReturn(activeCrew).when(unit).getDrivers();
+                    doReturn(crewSize).when(unit).getTotalDriverNeeds();
+                }
+                case VESSEL_GUNNER -> {
+                    doReturn(new HashSet<>(activeCrew)).when(unit).getGunners();
+                    doReturn(crewSize).when(unit).getTotalGunnerNeeds();
+                }
+                case VESSEL_CREW -> {
+                    doReturn(activeCrew).when(unit).getVesselCrew();
+                    doReturn(crewSize).when(unit).getTotalCrewNeeds();
+                }
+                default -> { /* non-vessel: getActiveCrew() + getFullCrewSize() covers default case */ }
+            }
+
             // Mock role methods so unitCanUseTempCrewRole returns true
             switch (role) {
                 case SOLDIER, BATTLE_ARMOUR, VEHICLE_CREW_GROUND,
-                     VEHICLE_CREW_VTOL, VEHICLE_CREW_NAVAL, VESSEL_PILOT -> {
-                    when(unit.getDriverRole()).thenReturn(role);
-                }
-                case VESSEL_GUNNER -> {
-                    when(unit.getGunnerRole()).thenReturn(role);
-                }
-                case VESSEL_CREW -> {
-                    // Can take more crew if not fully crewed (activeCrew.size() < fullCrewSize)
-                    when(unit.canTakeMoreVesselCrew()).thenReturn(activeCrew.size() < crewSize);
-                }
+                     VEHICLE_CREW_VTOL, VEHICLE_CREW_NAVAL, VESSEL_PILOT -> when(unit.getDriverRole()).thenReturn(role);
+                case VESSEL_GUNNER -> when(unit.getGunnerRole()).thenReturn(role);
+                case VESSEL_CREW -> // Can take more crew if not fully crewed (activeCrew.size() < fullCrewSize)
+                      when(unit.canTakeMoreVesselCrew()).thenReturn(activeCrew.size() < crewSize);
                 default -> throw new IllegalStateException("Unexpected value: " + role);
             }
 
@@ -622,8 +727,8 @@ public class CampaignTest {
         }
 
         /**
-         * Helper method to set up a mock commander for a unit.
-         * Call this in the Arrange phase when you need a unit with a commander.
+         * Helper method to set up a mock commander for a unit. Call this in the Arrange phase when you need a unit with
+         * a commander.
          */
         private void setupMockCommander(Unit unit) {
             Person mockCommander = mock(Person.class);
@@ -649,14 +754,14 @@ public class CampaignTest {
          */
         private void enableBlobCrewForRole(PersonnelRole role) {
             switch (role) {
-                case SOLDIER -> campaignOptions.setUseBlobInfantry(true);
-                case BATTLE_ARMOUR -> campaignOptions.setUseBlobBattleArmor(true);
-                case VEHICLE_CREW_GROUND -> campaignOptions.setUseBlobVehicleCrewGround(true);
-                case VEHICLE_CREW_VTOL -> campaignOptions.setUseBlobVehicleCrewVTOL(true);
-                case VEHICLE_CREW_NAVAL -> campaignOptions.setUseBlobVehicleCrewNaval(true);
-                case VESSEL_PILOT -> campaignOptions.setUseBlobVesselPilot(true);
-                case VESSEL_GUNNER -> campaignOptions.setUseBlobVesselGunner(true);
-                case VESSEL_CREW -> campaignOptions.setUseBlobVesselCrew(true);
+                case SOLDIER -> campaignOptions.set(CampaignOption.USE_BLOB_INFANTRY, true);
+                case BATTLE_ARMOUR -> campaignOptions.set(CampaignOption.USE_BLOB_BATTLE_ARMOR, true);
+                case VEHICLE_CREW_GROUND -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_GROUND, true);
+                case VEHICLE_CREW_VTOL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_VTOL, true);
+                case VEHICLE_CREW_NAVAL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_NAVAL, true);
+                case VESSEL_PILOT -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_PILOT, true);
+                case VESSEL_GUNNER -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_GUNNER, true);
+                case VESSEL_CREW -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_CREW, true);
                 default -> throw new IllegalStateException("Unexpected value: " + role);
             }
         }
@@ -666,65 +771,64 @@ public class CampaignTest {
          */
         private void disableBlobCrewForRole(PersonnelRole role) {
             switch (role) {
-                case SOLDIER -> campaignOptions.setUseBlobInfantry(false);
-                case BATTLE_ARMOUR -> campaignOptions.setUseBlobBattleArmor(false);
-                case VEHICLE_CREW_GROUND -> campaignOptions.setUseBlobVehicleCrewGround(false);
-                case VEHICLE_CREW_VTOL -> campaignOptions.setUseBlobVehicleCrewVTOL(false);
-                case VEHICLE_CREW_NAVAL -> campaignOptions.setUseBlobVehicleCrewNaval(false);
-                case VESSEL_PILOT -> campaignOptions.setUseBlobVesselPilot(false);
-                case VESSEL_GUNNER -> campaignOptions.setUseBlobVesselGunner(false);
-                case VESSEL_CREW -> campaignOptions.setUseBlobVesselCrew(false);
+                case SOLDIER -> campaignOptions.set(CampaignOption.USE_BLOB_INFANTRY, false);
+                case BATTLE_ARMOUR -> campaignOptions.set(CampaignOption.USE_BLOB_BATTLE_ARMOR, false);
+                case VEHICLE_CREW_GROUND -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_GROUND, false);
+                case VEHICLE_CREW_VTOL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_VTOL, false);
+                case VEHICLE_CREW_NAVAL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_NAVAL, false);
+                case VESSEL_PILOT -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_PILOT, false);
+                case VESSEL_GUNNER -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_GUNNER, false);
+                case VESSEL_CREW -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_CREW, false);
                 default -> throw new IllegalStateException("Unexpected value: " + role);
             }
         }
 
         /**
-         * Tests that initial pool state is zero for each temp crew role.
-         * Tests {@link Campaign#getTempCrewPool(PersonnelRole)}.
+         * Tests that initial pool state is zero for each temp crew role. Tests
+         * {@link Campaign#getTempCrewPool(PersonnelRole)}.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
         void testInitialPoolStateIsZero(PersonnelRole role) {
-            assertEquals(0, testCampaign.getTempCrewPool(role));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
-         * Tests setting pool to a positive value.
-         * Tests {@link Campaign#setTempCrewPool(PersonnelRole, int)}.
+         * Tests setting pool to a positive value. Tests {@link Campaign#setTempCrewPool(PersonnelRole, int)}.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
         void testSetPoolToPositiveValue(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 0);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 0);
 
             // Act
-            testCampaign.setTempCrewPool(role, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
 
             // Assert
-            assertEquals(10, testCampaign.getTempCrewPool(role));
+            assertEquals(10, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
-         * Tests that setting pool to negative value results in zero.
-         * Tests {@link Campaign#setTempCrewPool(PersonnelRole, int)}.
+         * Tests that setting pool to negative value results in zero. Tests
+         * {@link Campaign#setTempCrewPool(PersonnelRole, int)}.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
         void testSetPoolToNegativeValueResultsInZero(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 5);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 5);
 
             // Act
-            testCampaign.setTempCrewPool(role, -5);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, -5);
 
             // Assert
-            assertEquals(0, testCampaign.getTempCrewPool(role));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
-         * Tests that disabling blob crew option disables it for the role.
-         * Tests {@link Campaign#isBlobCrewEnabled(PersonnelRole)}.
+         * Tests that disabling blob crew option disables it for the role. Tests
+         * {@link Campaign#isBlobCrewEnabled(PersonnelRole)}.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
@@ -736,12 +840,14 @@ public class CampaignTest {
             disableBlobCrewForRole(role);
 
             // Assert
-            assertTrue(!testCampaign.isBlobCrewEnabled(role));
+            assertFalse(testCampaign.getPlayerForce()
+                              .getHumanResources()
+                              .isBlobCrewEnabled(role, testCampaign.getCampaignOptions()));
         }
 
         /**
-         * Tests that enabling blob crew option enables it for the role.
-         * Tests {@link Campaign#isBlobCrewEnabled(PersonnelRole)}.
+         * Tests that enabling blob crew option enables it for the role. Tests
+         * {@link Campaign#isBlobCrewEnabled(PersonnelRole)}.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
@@ -753,27 +859,35 @@ public class CampaignTest {
             enableBlobCrewForRole(role);
 
             // Assert
-            assertTrue(testCampaign.isBlobCrewEnabled(role));
+            assertTrue(testCampaign.getPlayerForce()
+                             .getHumanResources()
+                             .isBlobCrewEnabled(role, testCampaign.getCampaignOptions()));
         }
 
         /**
-         * Tests that clearing blob crew for a specific role only affects that role.
-         * Tests {@link Campaign#clearBlobCrewForRole(PersonnelRole)}.
+         * Tests that clearing blob crew for a specific role only affects that role. Tests
+         * {@link Campaign#clearBlobCrewForRole(PersonnelRole)}.
          */
         @Test
         void testClearBlobCrewForRoleIsolation() {
             // Arrange
-            testCampaign.setTempCrewPool(PersonnelRole.SOLDIER, 10);
-            testCampaign.setTempCrewPool(PersonnelRole.BATTLE_ARMOUR, 20);
-            testCampaign.setTempCrewPool(PersonnelRole.VEHICLE_CREW_GROUND, 30);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, PersonnelRole.SOLDIER, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign,
+                  PersonnelRole.BATTLE_ARMOUR,
+                  20);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign,
+                  PersonnelRole.VEHICLE_CREW_GROUND,
+                  30);
 
             // Act
-            testCampaign.clearBlobCrewForRole(PersonnelRole.SOLDIER);
+            testCampaign.getPlayerForce().getHumanResources().clearBlobCrewForRole(testCampaign, PersonnelRole.SOLDIER);
 
             // Assert
-            assertEquals(0, testCampaign.getTempCrewPool(PersonnelRole.SOLDIER));
-            assertEquals(20, testCampaign.getTempCrewPool(PersonnelRole.BATTLE_ARMOUR));
-            assertEquals(30, testCampaign.getTempCrewPool(PersonnelRole.VEHICLE_CREW_GROUND));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(PersonnelRole.SOLDIER));
+            assertEquals(20,
+                  testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(PersonnelRole.BATTLE_ARMOUR));
+            assertEquals(30,
+                  testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(PersonnelRole.VEHICLE_CREW_GROUND));
         }
 
         /**
@@ -783,13 +897,13 @@ public class CampaignTest {
         @MethodSource("getTempCrewRoles")
         void testIncreaseTempCrewPool(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
 
             // Act
             testCampaign.increaseTempCrewPool(role, 5);
 
             // Assert
-            assertEquals(15, testCampaign.getTempCrewPool(role));
+            assertEquals(15, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
@@ -799,13 +913,13 @@ public class CampaignTest {
         @MethodSource("getTempCrewRoles")
         void testDecreaseTempCrewPool(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
 
             // Act
             testCampaign.decreaseTempCrewPool(role, 3);
 
             // Assert
-            assertEquals(7, testCampaign.getTempCrewPool(role));
+            assertEquals(7, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
@@ -815,13 +929,13 @@ public class CampaignTest {
         @MethodSource("getTempCrewRoles")
         void testDecreasePoolMoreThanAvailableResultsInZero(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 5);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 5);
 
             // Act
             testCampaign.decreaseTempCrewPool(role, 20);
 
             // Assert
-            assertEquals(0, testCampaign.getTempCrewPool(role));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
@@ -831,19 +945,19 @@ public class CampaignTest {
         @MethodSource("getTempCrewRoles")
         void testEmptyTempCrewPool(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 50);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 50);
             enableBlobCrewForRole(role);
 
             // Act
             testCampaign.emptyTempCrewPoolForRole(role);
 
             // Assert
-            assertEquals(0, testCampaign.getTempCrewPool(role));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
         }
 
         /**
-         * Tests {@link Campaign#fillTempCrewPoolForRole(PersonnelRole)} correctly calculates crew needs
-         * from units WITH at least 1 crew. Units need at least 1 real crew member to be able to use temp crew.
+         * Tests {@link Campaign#fillTempCrewPoolForRole(PersonnelRole)} correctly calculates crew needs from units WITH
+         * at least 1 crew. Units need at least 1 real crew member to be able to use temp crew.
          */
         @ParameterizedTest
         @MethodSource("getTempCrewRoles")
@@ -856,10 +970,13 @@ public class CampaignTest {
             testCampaign.importUnit(mockUnit);
 
             // Start with empty pool
-            testCampaign.setTempCrewPool(role, 0);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 0);
 
             // Act - Fill the pool
-            testCampaign.fillTempCrewPoolForRole(role);
+            testCampaign.getPlayerForce()
+                  .getHumanResources()
+                  .fillTempCrewPoolForRole(testCampaign, testCampaign.getCampaignOptions(),
+                        role);
 
             // Assert - Pool should be filled to match unit needs (fullCrewSize - activeCrew)
             int fullCrewSize = mockUnit.getFullCrewSize();
@@ -867,9 +984,9 @@ public class CampaignTest {
             int expectedNeed = fullCrewSize - activeCrew;
 
             assertTrue(expectedNeed > 0);
-            assertEquals(expectedNeed, testCampaign.getTempCrewPool(role),
-                "Pool should be filled to match unit crew needs for " + role +
-                " (fullCrew=" + fullCrewSize + " - activeCrew=" + activeCrew + ")");
+            assertEquals(expectedNeed, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role),
+                  "Pool should be filled to match unit crew needs for " + role +
+                        " (fullCrew=" + fullCrewSize + " - activeCrew=" + activeCrew + ")");
         }
 
         /**
@@ -887,14 +1004,17 @@ public class CampaignTest {
             testCampaign.importUnit(mockUnitWithoutCrew);
 
             // Start with empty pool
-            testCampaign.setTempCrewPool(role, 0);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 0);
 
             // Act - Fill the pool
-            testCampaign.fillTempCrewPoolForRole(role);
+            testCampaign.getPlayerForce()
+                  .getHumanResources()
+                  .fillTempCrewPoolForRole(testCampaign, testCampaign.getCampaignOptions(),
+                        role);
 
             // Assert - Pool should remain 0 because unit has no crew
-            assertEquals(0, testCampaign.getTempCrewPool(role),
-                "Pool should not be filled for units without any crew for " + role);
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role),
+                  "Pool should not be filled for units without any crew for " + role);
         }
 
         /**
@@ -909,7 +1029,7 @@ public class CampaignTest {
             testCampaign.importUnit(mockUnit);
 
             // Act
-            int inUse = testCampaign.getTempCrewInUse(role);
+            int inUse = testCampaign.getPlayerForce().getHumanResources().getTempCrewInUse(testCampaign, role);
 
             // Assert
             assertEquals(3, inUse);
@@ -922,13 +1042,15 @@ public class CampaignTest {
         @MethodSource("getTempCrewRoles")
         void testGetAvailableTempCrewPool(PersonnelRole role) {
             // Arrange
-            testCampaign.setTempCrewPool(role, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
             Unit mockUnit = createMockUnitForRole(role);
             mockUnit.setTempCrew(role, 3);
             testCampaign.importUnit(mockUnit);
 
             // Act
-            int available = testCampaign.getAvailableTempCrewPool(role);
+            int available = testCampaign.getPlayerForce()
+                                  .getHumanResources()
+                                  .getAvailableTempCrewPool(testCampaign, role);
 
             // Assert
             assertEquals(7, available);
@@ -941,14 +1063,16 @@ public class CampaignTest {
         void testAvailablePoolNeverGoesNegative() {
             // Arrange
             PersonnelRole testRole = PersonnelRole.SOLDIER;
-            testCampaign.setTempCrewPool(testRole, 5);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, testRole, 5);
 
             Unit mockUnit = createMockUnitForRole(testRole);
             mockUnit.setTempCrew(testRole, 10);
             testCampaign.importUnit(mockUnit);
 
             // Act
-            int available = testCampaign.getAvailableTempCrewPool(testRole);
+            int available = testCampaign.getPlayerForce()
+                                  .getHumanResources()
+                                  .getAvailableTempCrewPool(testCampaign, testRole);
 
             // Assert - Available should never be negative
             assertEquals(0, available, "Available pool should not go negative");
@@ -960,16 +1084,321 @@ public class CampaignTest {
         @Test
         void testClearBlobCrewForRoleDoesNotAffectOtherRoles() {
             // Arrange
-            testCampaign.setTempCrewPool(PersonnelRole.SOLDIER, 10);
-            testCampaign.setTempCrewPool(PersonnelRole.BATTLE_ARMOUR, 8);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, PersonnelRole.SOLDIER, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign,
+                  PersonnelRole.BATTLE_ARMOUR,
+                  8);
 
             // Act
-            testCampaign.clearBlobCrewForRole(PersonnelRole.SOLDIER);
+            testCampaign.getPlayerForce().getHumanResources().clearBlobCrewForRole(testCampaign, PersonnelRole.SOLDIER);
 
             // Assert
-            assertEquals(0, testCampaign.getTempCrewPool(PersonnelRole.SOLDIER));
-            assertEquals(8, testCampaign.getTempCrewPool(PersonnelRole.BATTLE_ARMOUR));
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(PersonnelRole.SOLDIER));
+            assertEquals(8,
+                  testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(PersonnelRole.BATTLE_ARMOUR));
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusBlobCrewForRole(PersonnelRole)}: when a unit has more temp crew than
+         * needed to fill the gap left by real crew, the excess is trimmed.
+         *
+         * <p>SOLDIER units have fullCrewSize=5 and 1 real crew member, so they need 4 temp crew.
+         * Setting 6 temp crew gives an excess of 2, which should be removed.</p>
+         */
+        @Test
+        void testReleaseSurplusTrimsExcessTempCrewFromUnit() {
+            // Arrange
+            PersonnelRole role = PersonnelRole.SOLDIER;
+            enableBlobCrewForRole(role);
+            Unit unit = createMockUnitForRole(role, true); // 1 real crew, fullSize=5
+            unit.setTempCrew(role, 6); // 1 real + 6 temp = 7 total; need 5, excess = 2
+            testCampaign.importUnit(unit);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusBlobCrewForRole(testCampaign, role);
+
+            // Assert
+            assertEquals(4, unit.getTempCrewByPersonnelRole(role),
+                  "Excess temp crew should be trimmed so real + temp equals fullCrewSize");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusBlobCrewForRole(PersonnelRole)}: when temp crew exactly covers the gap
+         * between real crew and full crew size, nothing is changed.
+         */
+        @Test
+        void testReleaseSurplusDoesNotRemoveTempCrewWhenExactFit() {
+            // Arrange
+            PersonnelRole role = PersonnelRole.SOLDIER;
+            enableBlobCrewForRole(role);
+            Unit unit = createMockUnitForRole(role, true); // 1 real crew, fullSize=5
+            unit.setTempCrew(role, 4); // 1 real + 4 temp = 5 = fullSize; no excess
+            testCampaign.importUnit(unit);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusBlobCrewForRole(testCampaign, role);
+
+            // Assert
+            assertEquals(4, unit.getTempCrewByPersonnelRole(role),
+                  "Temp crew should be unchanged when it exactly fills the crew gap");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusBlobCrewForRole(PersonnelRole)}: when real crew already meets or exceeds
+         * fullCrewSize, all temp crew are removed from the unit.
+         *
+         * <p>VESSEL_PILOT units have fullCrewSize=2. By providing 2 real crew members the unit is fully staffed,
+         * so any temp crew assigned is pure surplus.</p>
+         */
+        @Test
+        void testReleaseSurplusRemovesAllTempWhenRealCrewFull() {
+            // Arrange
+            PersonnelRole role = PersonnelRole.VESSEL_PILOT;
+            enableBlobCrewForRole(role);
+            Unit unit = createMockUnitForRole(role, false); // fullSize=2
+            List<Person> fullPilotCrew = List.of(mock(Person.class), mock(Person.class));
+            doReturn(fullPilotCrew).when(unit).getActiveCrew();
+            doReturn(fullPilotCrew).when(unit).getDrivers();
+            unit.setTempCrew(role, 1); // 2 real + 1 temp = 3 total; need 2, excess = 1
+            testCampaign.importUnit(unit);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusBlobCrewForRole(testCampaign, role);
+
+            // Assert
+            assertEquals(0, unit.getTempCrewByPersonnelRole(role),
+                  "All temp crew should be removed when real crew already fills the unit");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusBlobCrewForRole(PersonnelRole)}: any temp crew sitting in the unassigned
+         * pool (not yet distributed to units) is also cleared.
+         */
+        @Test
+        void testReleaseSurplusClearsUnassignedPool() {
+            // Arrange
+            PersonnelRole role = PersonnelRole.SOLDIER;
+            enableBlobCrewForRole(role);
+            Unit unit = createMockUnitForRole(role, true); // 1 real crew, fullSize=5
+            unit.setTempCrew(role, 4); // unit exactly staffed: 1 + 4 = 5
+            testCampaign.importUnit(unit);
+            // 4 in-use, 6 unassigned in pool
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusBlobCrewForRole(testCampaign, role);
+
+            // Assert — pool reduced to just the in-use count
+            assertEquals(4, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role),
+                  "Unassigned pool should be cleared; only assigned (in-use) temp crew remain");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusAsTechPool()}: in a campaign with no tech personnel all pooled AsTechs
+         * are surplus and should be released.
+         */
+        @Test
+        void testReleaseSurplusAsTechPoolReleasesAllWhenNoTechs() {
+            // Arrange — no techs in campaign, so entire pool is surplus
+            testCampaign.getPlayerForce().getHumanResources().setAsTechPool(5);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusAsTechPool(testCampaign);
+
+            // Assert
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryAsTechPool(),
+                  "All AsTechs should be released when there are no tech teams requiring support");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusAsTechPool()}: when the pool is already empty, nothing changes.
+         */
+        @Test
+        void testReleaseSurplusAsTechPoolDoesNothingWhenEmpty() {
+            // Arrange — pool already at 0
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryAsTechPool());
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusAsTechPool(testCampaign);
+
+            // Assert
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryAsTechPool());
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusMedicPool()}: in a campaign with no doctors all pooled Medics are surplus
+         * and should be released.
+         */
+        @Test
+        void testReleaseSurplusMedicPoolReleasesAllWhenNoDoctors() {
+            // Arrange — no doctors in campaign, so entire pool is surplus
+            testCampaign.getPlayerForce().getHumanResources().setMedicPool(3);
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusMedicPool(testCampaign);
+
+            // Assert
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryMedicPool(),
+                  "All Medics should be released when there are no doctors requiring support");
+        }
+
+        /**
+         * Tests {@link Campaign#releaseSurplusMedicPool()}: when the pool is already empty, nothing changes.
+         */
+        @Test
+        void testReleaseSurplusMedicPoolDoesNothingWhenEmpty() {
+            // Arrange — pool already at 0
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryMedicPool());
+
+            // Act
+            testCampaign.getPlayerForce().getHumanResources().releaseSurplusMedicPool(testCampaign);
+
+            // Assert
+            assertEquals(0, testCampaign.getPlayerForce().getHumanResources().getTemporaryMedicPool());
         }
     }
     // endregion Nested Test Classes for Temp Crew
+
+    // region Nested Test Classes for Location
+    @Nested
+    class Location {
+
+        Campaign campaign;
+
+        @BeforeEach
+        void setUp() {
+            campaign = MHQTestUtilities.getTestCampaign();
+        }
+
+        /** Tests for {@link Campaign#setLocation(AbstractLocation)}. */
+        @Nested
+        class SetLocation {
+
+            @Test
+            void setLocation_replacesExistingLocation() {
+                PlanetarySystem newSystem = mock(PlanetarySystem.class);
+                CurrentLocation newLocation = new CurrentLocation(newSystem, 0.0);
+
+                campaign.setLocation(newLocation);
+
+                assertEquals(1, campaign.getCampaignLocationManager().getLocations().size());
+                assertSame(newLocation, campaign.getCampaignLocationManager().getLocations().get(0));
+            }
+
+            @Test
+            void setLocation_null_clearsLocations() {
+                campaign.setLocation(null);
+
+                assertTrue(campaign.getCampaignLocationManager().getLocations().isEmpty());
+            }
+
+            @Test
+            void setLocation_null_currentLocationBecomesNull() {
+                campaign.setLocation(null);
+
+                assertNull(campaign.getPlayerForce().getForceDetachment().getCurrentLocation());
+            }
+
+            @Test
+            void setLocation_updatesCurrentLocation() {
+                PlanetarySystem newSystem = mock(PlanetarySystem.class);
+                CurrentLocation newLocation = new CurrentLocation(newSystem, 0.0);
+
+                campaign.setLocation(newLocation);
+
+                assertSame(newLocation, campaign.getPlayerForce().getForceDetachment().getCurrentLocation());
+            }
+
+            @Test
+            void setLocation_keepsOldLocationWhenItHasChildren() {
+                // The old CurrentLocation has a child (simulating a person in transit).
+                // setLocation must NOT remove it — only the daily prune may do so.
+                AbstractLocation old = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
+                PlanetarySystem childSystem = mock(PlanetarySystem.class);
+                CurrentLocation child = new CurrentLocation(childSystem, 0.0);
+                child.setParent(old);
+
+                PlanetarySystem newSystem = mock(PlanetarySystem.class);
+                CurrentLocation newLocation = new CurrentLocation(newSystem, 0.0);
+                campaign.setLocation(newLocation);
+
+                assertTrue(campaign.getCampaignLocationManager().getLocations().contains(old));
+            }
+        }
+
+        /** Tests for {@link Campaign#addLocation(AbstractLocation)}. */
+        @Nested
+        class AddLocation {
+
+            @Test
+            void addLocation_appendsToExistingList() {
+                int sizeBefore = campaign.getCampaignLocationManager().getLocations().size();
+                PlanetarySystem system = mock(PlanetarySystem.class);
+                CurrentLocation extra = new CurrentLocation(system, 0.0);
+
+                campaign.getCampaignLocationManager().addLocation(extra);
+
+                assertEquals(sizeBefore + 1, campaign.getCampaignLocationManager().getLocations().size());
+            }
+
+            @Test
+            void addLocation_newLocationAppearsInList() {
+                PlanetarySystem system = mock(PlanetarySystem.class);
+                CurrentLocation extra = new CurrentLocation(system, 0.0);
+
+                campaign.getCampaignLocationManager().addLocation(extra);
+
+                assertTrue(campaign.getCampaignLocationManager().getLocations().contains(extra));
+            }
+
+            @Test
+            void addLocation_null_doesNotChangeList() {
+                int sizeBefore = campaign.getCampaignLocationManager().getLocations().size();
+
+                campaign.getCampaignLocationManager().addLocation(null);
+
+                assertEquals(sizeBefore, campaign.getCampaignLocationManager().getLocations().size());
+            }
+
+            @Test
+            void addLocation_doesNotClearPrimaryLocation() {
+                AbstractLocation primary = campaign.getCampaignLocationManager().getLocations().get(0);
+                PlanetarySystem system = mock(PlanetarySystem.class);
+
+                campaign.getCampaignLocationManager().addLocation(new CurrentLocation(system, 0.0));
+
+                assertSame(primary, campaign.getCampaignLocationManager().getLocations().get(0));
+            }
+        }
+
+        /** Tests for {@link Campaign#getLocations()}. */
+        @Nested
+        class GetLocations {
+
+            @Test
+            void getLocations_returnsUnmodifiableList() {
+                PlanetarySystem system = mock(PlanetarySystem.class);
+                CurrentLocation extra = new CurrentLocation(system, 0.0);
+
+                assertThrows(UnsupportedOperationException.class,
+                      () -> campaign.getCampaignLocationManager().getLocations().add(extra));
+            }
+
+            @Test
+            void getLocations_initiallyContainsOneLocation() {
+                assertEquals(1, campaign.getCampaignLocationManager().getLocations().size());
+            }
+
+            @Test
+            void getLocations_multipleCallsReflectCurrentState() {
+                int before = campaign.getCampaignLocationManager().getLocations().size();
+
+                PlanetarySystem system = mock(PlanetarySystem.class);
+                campaign.getCampaignLocationManager().addLocation(new CurrentLocation(system, 0.0));
+
+                assertEquals(before + 1, campaign.getCampaignLocationManager().getLocations().size());
+            }
+        }
+    }
+    // endregion Nested Test Classes for Location
 }

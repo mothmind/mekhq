@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,6 +34,7 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nonnull;
 import megamek.common.TechAdvancement;
 import megamek.common.TechConstants;
 import megamek.common.annotations.Nullable;
@@ -73,6 +74,7 @@ public class SVEnginePart extends Part {
      * Constructor used during campaign deserialization
      */
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public SVEnginePart() {
         this(0, 0.0, Engine.COMBUSTION_ENGINE, TechRating.D, FuelType.PETROCHEMICALS, null);
     }
@@ -115,7 +117,7 @@ public class SVEnginePart extends Part {
     }
 
     @Override
-    public TechRating getTechRating() {
+    public @Nonnull TechRating getTechRating() {
         return techRating;
     }
 
@@ -229,12 +231,12 @@ public class SVEnginePart extends Part {
             } else if (unit.getEntity() instanceof Aero) {
                 ((Aero) unit.getEntity()).setEngineHits(((Aero) unit.getEntity()).getMaxEngineHits());
             }
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -322,17 +324,9 @@ public class SVEnginePart extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        if (null != getUnit()) {
-            if (getUnit().getEntity() instanceof Aero) {
-                return skillType.equals(SkillType.S_TECH_AERO);
-            } else {
-                return skillType.equals(SkillType.S_TECH_MECHANIC);
-            }
-        }
-        // We're not tracking whether parts in the warehouse came from ground or
-        // fixed-wing/airships,
-        // so let either tech repair it.
-        return (skillType.equals(SkillType.S_TECH_AERO) || skillType.equals(SkillType.S_TECH_MECHANIC));
+        return skillType.equals(EnginePart.isNuclearEngineType(etype) ?
+                                      SkillType.S_TECH_NUCLEAR :
+                                      SkillType.S_TECH_MECHANICAL);
     }
 
     @Override

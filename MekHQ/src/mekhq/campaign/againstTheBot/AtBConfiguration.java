@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014 - Carl Spain. All rights reserved.
- * Copyright (C) 2014-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2014-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -254,7 +254,7 @@ public class AtBConfiguration {
                   weightClass);
 
             // Limit the weightClassIndex within valid range
-            weightClassIndex = Math.max(0, Math.min(weightClassIndex, botForceTable.size() - 1));
+            weightClassIndex = Math.clamp(weightClassIndex, 0, botForceTable.size() - 1);
         }
 
         // Fetch table for the weight class
@@ -356,7 +356,12 @@ public class AtBConfiguration {
         }
 
         TargetRoll target = new TargetRoll(baseShipSearchTarget, "Base");
-        Person logisticsAdmin = campaign.findBestInRole(PersonnelRole.ADMINISTRATOR_LOGISTICS, SkillType.S_ADMIN);
+        Person logisticsAdmin = campaign.getPlayerForce().getHumanResources()
+                                      .findBestInRole(PersonnelRole.ADMINISTRATOR,
+                                            SkillType.S_ADMIN,
+                                            campaign.getCampaignOptions(),
+                                            campaign.getPlayerForce().isClanForce(),
+                                            campaign.getLocalDate());
 
         int experienceLevel = EXP_ULTRA_GREEN;
         if (logisticsAdmin != null && logisticsAdmin.hasSkill(S_ADMIN)) {

@@ -48,6 +48,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ResourceBundle;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
@@ -58,20 +59,20 @@ import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.common.Player;
 import megamek.common.planetaryConditions.PlanetaryConditions;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.mission.*;
-import mekhq.campaign.mission.atb.AtBScenarioModifier;
-import mekhq.campaign.mission.atb.AtBScenarioModifier.EventTiming;
-import mekhq.campaign.mission.enums.ScenarioStatus;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.*;
+import mekhq.campaign.mission.scenarios.atb.AtBScenarioModifier;
+import mekhq.campaign.mission.scenarios.atb.AtBScenarioModifier.EventTiming;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.FileDialogs;
 import mekhq.gui.model.BotForceTableModel;
 import mekhq.gui.model.LootTableModel;
 import mekhq.gui.model.ObjectiveTableModel;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.gui.utilities.MarkdownEditorPanel;
 
 /**
@@ -83,7 +84,7 @@ public class CustomizeScenarioDialog extends JDialog {
     // region Variable declarations
     private final JFrame frame;
     private final Scenario scenario;
-    private final Mission mission;
+    private final AbstractContract mission;
     private final Campaign campaign;
     private final boolean newScenario;
     private LocalDate date;
@@ -162,54 +163,55 @@ public class CustomizeScenarioDialog extends JDialog {
     private MarkdownEditorPanel txtReport;
     // endregion Variable declarations
 
-    public CustomizeScenarioDialog(JFrame parent, boolean modal, Scenario s, Mission m, CampaignGUI gui) {
+    public CustomizeScenarioDialog(JFrame parent, boolean modal, Scenario scenario, AbstractContract contract,
+          CampaignGUI gui) {
         super(parent, modal);
         this.frame = parent;
-        this.mission = m;
-        if (null == s) {
-            scenario = new Scenario("New Scenario");
+        this.mission = contract;
+        if (null == scenario) {
+            this.scenario = new Scenario("New Scenario");
             newScenario = true;
         } else {
-            scenario = s;
+            this.scenario = scenario;
             newScenario = false;
         }
         campaign = gui.getCampaign();
-        if (scenario.getDate() == null) {
-            scenario.setDate(campaign.getLocalDate());
+        if (this.scenario.getDate() == null) {
+            this.scenario.setDate(campaign.getLocalDate());
         }
-        date = scenario.getDate();
+        date = this.scenario.getDate();
 
-        if (scenario.getDeploymentLimit() != null) {
-            deploymentLimits = scenario.getDeploymentLimit().getCopy();
+        if (this.scenario.getDeploymentLimit() != null) {
+            deploymentLimits = this.scenario.getDeploymentLimit().getCopy();
         }
 
-        player = Utilities.createPlayer(scenario);
+        player = Utilities.createPlayer(this.scenario);
 
-        planetaryConditions = scenario.createPlanetaryConditions();
+        planetaryConditions = this.scenario.createPlanetaryConditions();
 
         botForces = new ArrayList<>();
-        for (BotForce bf : scenario.getBotForces()) {
+        for (BotForce bf : this.scenario.getBotForces()) {
             botForces.add(bf.clone());
         }
         forcesModel = new BotForceTableModel(botForces, campaign);
 
         loots = new ArrayList<>();
-        for (Loot loot : scenario.getLoot()) {
+        for (Loot loot : this.scenario.getLoot()) {
             loots.add((Loot) loot.clone());
         }
         lootModel = new LootTableModel(loots);
 
         objectives = new ArrayList<>();
-        for (ScenarioObjective objective : scenario.getScenarioObjectives()) {
+        for (ScenarioObjective objective : this.scenario.getScenarioObjectives()) {
             objectives.add(new ScenarioObjective(objective));
         }
         objectiveModel = new ObjectiveTableModel(objectives);
 
-        map = scenario.getMap();
-        mapSizeX = scenario.getMapSizeX();
-        mapSizeY = scenario.getMapSizeY();
-        usingFixedMap = scenario.isUsingFixedMap();
-        boardType = scenario.getBoardType();
+        map = this.scenario.getMap();
+        mapSizeX = this.scenario.getMapSizeX();
+        mapSizeY = this.scenario.getMapSizeY();
+        usingFixedMap = this.scenario.isUsingFixedMap();
+        boardType = this.scenario.getBoardType();
 
         initComponents(gui);
         setLocationRelativeTo(parent);
@@ -393,13 +395,11 @@ public class CustomizeScenarioDialog extends JDialog {
             txtReport.setEnabled(!scenario.getStatus().isCurrent());
         }
 
-        if (newScenario && (mission instanceof AtBContract)) {
+        if (newScenario) {
             JButton btnLoad = new JButton("Generate From Template");
             btnLoad.addActionListener(this::btnLoadActionPerformed);
             panBtn.add(btnLoad);
-        } else if ((mission instanceof AtBContract) &&
-                         (scenario instanceof AtBDynamicScenario) &&
-                         (scenario.getStatus().isCurrent())) {
+        } else if (scenario instanceof AtBDynamicScenario && scenario.getStatus().isCurrent()) {
             JButton btnFinalize = new JButton();
 
             if (scenario.getNumBots() > 0) {
@@ -463,7 +463,7 @@ public class CustomizeScenarioDialog extends JDialog {
         scenario.setName(txtName.getText());
         scenario.setDesc(txtDesc.getText());
         if (!scenario.getStatus().isCurrent() ||
-                  (campaign.getCampaignOptions().isUseAtB() && (scenario instanceof AtBScenario))) {
+                  (campaign.getCampaignOptions().isUseStratCon() && (scenario instanceof AtBScenario))) {
             if (txtReport != null) {
                 scenario.setReport(txtReport.getText());
             }
@@ -510,7 +510,7 @@ public class CustomizeScenarioDialog extends JDialog {
         }
 
         AtBDynamicScenario scenario = AtBDynamicScenarioFactory.initializeScenarioFromTemplate(scenarioTemplate,
-              (AtBContract) mission,
+              mission,
               campaign);
         if (scenario.getDate() == null) {
             scenario.setDate(date);
@@ -524,11 +524,11 @@ public class CustomizeScenarioDialog extends JDialog {
     }
 
     private void btnFinalizeActionPerformed(ActionEvent evt) {
-        AtBDynamicScenarioFactory.finalizeScenario((AtBDynamicScenario) scenario, (AtBContract) mission, campaign);
+        AtBDynamicScenarioFactory.finalizeScenario((AtBDynamicScenario) scenario, mission, campaign);
         this.setVisible(false);
     }
 
-    public int getMissionId() {
+    public UUID getMissionId() {
         return mission.getId();
     }
 
@@ -937,7 +937,7 @@ public class CustomizeScenarioDialog extends JDialog {
         objectiveTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         objectiveTable.getSelectionModel().addListSelectionListener(this::objectiveTableValueChanged);
 
-        panObjectives.add(new JScrollPaneWithSpeed(objectiveTable), BorderLayout.CENTER);
+        panObjectives.add(new FastJScrollPane(objectiveTable), BorderLayout.CENTER);
 
     }
 
@@ -1030,7 +1030,7 @@ public class CustomizeScenarioDialog extends JDialog {
         lootTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         lootTable.getSelectionModel().addListSelectionListener(this::lootTableValueChanged);
 
-        panLoot.add(new JScrollPaneWithSpeed(lootTable), BorderLayout.CENTER);
+        panLoot.add(new FastJScrollPane(lootTable), BorderLayout.CENTER);
     }
 
     private void lootTableValueChanged(ListSelectionEvent evt) {
@@ -1113,7 +1113,7 @@ public class CustomizeScenarioDialog extends JDialog {
         forcesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         forcesTable.getSelectionModel().addListSelectionListener(this::forcesTableValueChanged);
 
-        panOtherForces.add(new JScrollPaneWithSpeed(forcesTable), BorderLayout.CENTER);
+        panOtherForces.add(new FastJScrollPane(forcesTable), BorderLayout.CENTER);
     }
 
     private void forcesTableValueChanged(ListSelectionEvent evt) {

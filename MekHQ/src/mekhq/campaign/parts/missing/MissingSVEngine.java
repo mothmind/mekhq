@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,6 +34,7 @@ package mekhq.campaign.parts.missing;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nonnull;
 import megamek.common.TechAdvancement;
 import megamek.common.annotations.Nullable;
 import megamek.common.enums.TechRating;
@@ -65,6 +66,7 @@ public class MissingSVEngine extends MissingPart {
      * Constructor used during campaign deserialization
      */
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public MissingSVEngine() {
         this(0, 0.0, Engine.COMBUSTION_ENGINE, TechRating.D, FuelType.PETROCHEMICALS, null);
     }
@@ -95,6 +97,7 @@ public class MissingSVEngine extends MissingPart {
     /**
      * @return The weight of the engine
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public double getEngineTonnage() {
         return engineTonnage;
     }
@@ -102,12 +105,13 @@ public class MissingSVEngine extends MissingPart {
     /**
      * @return The {@link Engine} type flag
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public int getEType() {
         return etype;
     }
 
     @Override
-    public TechRating getTechRating() {
+    public @Nonnull TechRating getTechRating() {
         return techRating;
     }
 
@@ -116,6 +120,7 @@ public class MissingSVEngine extends MissingPart {
      *
      * @return The type of fuel used by the engine.
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public FuelType getFuelType() {
         return fuelType;
     }

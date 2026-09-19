@@ -39,10 +39,10 @@ import javax.swing.SwingConstants;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 
-import mekhq.campaign.mission.ObjectiveEffect;
-import mekhq.campaign.mission.ScenarioObjective;
-import mekhq.campaign.mission.ScenarioObjective.ObjectiveAmountType;
-import mekhq.campaign.mission.ScenarioObjective.TimeLimitType;
+import mekhq.campaign.mission.scenarios.ObjectiveEffect;
+import mekhq.campaign.mission.scenarios.ScenarioObjective;
+import mekhq.campaign.mission.scenarios.ScenarioObjective.ObjectiveAmountType;
+import mekhq.campaign.mission.scenarios.ScenarioObjective.TimeLimitType;
 
 /**
  * TableModel for displaying information about a scenario objective
@@ -86,6 +86,7 @@ public class ObjectiveTableModel extends AbstractTableModel {
         };
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public void addObjective(ScenarioObjective objective) {
         data.add(objective);
         fireTableDataChanged();

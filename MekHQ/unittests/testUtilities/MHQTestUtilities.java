@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2024-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,33 +32,40 @@
  */
 package testUtilities;
 
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.time.LocalDate;
 import java.util.Base64;
 
+import megamek.Version;
 import megamek.common.Player;
+import megamek.common.annotations.Nullable;
+import megamek.common.equipment.EquipmentType;
 import megamek.common.game.Game;
+import megamek.common.loaders.MekSummary;
 import megamek.common.options.GameOptions;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.Entity;
-import megamek.common.equipment.EquipmentType;
-import megamek.common.loaders.MekSummary;
-import megamek.common.annotations.Nullable;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.CampaignConfiguration;
 import mekhq.campaign.CampaignFactory;
 import mekhq.campaign.CampaignSummary;
 import mekhq.campaign.CurrentLocation;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.market.PartsStore;
 import mekhq.campaign.market.TestPartsStore;
 import mekhq.campaign.market.personnelMarket.markets.NewPersonnelMarket;
-import mekhq.campaign.universe.TestSystems;
 import mekhq.campaign.personnel.death.RandomDeath;
+import mekhq.campaign.personnel.ranks.Ranks;
 import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.campaign.universe.Systems;
+import mekhq.campaign.universe.TestSystems;
 
 public final class MHQTestUtilities {
     private static final String TEST_RESOURCES_DIR = "testresources/";
@@ -69,20 +76,17 @@ public final class MHQTestUtilities {
     public static final String TEST_BLK = ".blk";
     public static final String TEST_MTF = ".mtf";
 
+    private static boolean rankSystemsInitialized = false;
 
     /**
-     * Create a Campaign Configuration partially configured from the campaign options
-     * Most dependencies are configured here with default values; for more information see
-     * {@link CampaignFactory#createPartialCampaignConfiguration}
-     *
-     * Then set the heavyweight dependencies here:
-     * 1. Systems (TestSystems for testing purposes)
-     * 2. GameOptions (required for MegaMek, may be candidate for further test class development)
-     * 3. Player instance
-     * 4. LocalDate for Campaign start day
-     * 5. CurrentLocation (created from a PlanetarySystem, which must be retrieved using Systems or TestSystems)
-     * 6. Logistical classes: parts store, new-type personnel market, random death generator, persistent campaign
-     *    summary tracker.
+     * Create a Campaign Configuration partially configured from the campaign options Most dependencies are configured
+     * here with default values; for more information see {@link CampaignFactory#createPartialCampaignConfiguration}
+     * <p>
+     * Then set the heavyweight dependencies here: 1. Systems (TestSystems for testing purposes) 2. GameOptions
+     * (required for MegaMek, may be candidate for further test class development) 3. Player instance 4. LocalDate for
+     * Campaign start day 5. CurrentLocation (created from a PlanetarySystem, which must be retrieved using Systems or
+     * TestSystems) 6. Logistical classes: parts store, new-type personnel market, random death generator, persistent
+     * campaign summary tracker.
      */
     public static CampaignConfiguration buildTestConfigWithSystems(Systems systems) {
         CampaignOptions options = new CampaignOptions();
@@ -128,7 +132,31 @@ public final class MHQTestUtilities {
     }
 
     public static Campaign getTestCampaign() {
-        return new Campaign(buildTestConfigWithSystems(TestSystems.getInstance()));
+        if (!rankSystemsInitialized) {
+            Ranks.initializeRankSystems();
+            rankSystemsInitialized = true;
+        }
+        Campaign campaign = new Campaign(buildTestConfigWithSystems(TestSystems.resetAndGetInstance()));
+
+        // I picked version 999.00.00 as we're never reaching it. This can be changed locally in tests that require
+        // version-gated testing. Without this line any test that passes through version-gated code (such as
+        // compatibility handlers) will break.
+        campaign.setVersion(new Version(999, 0, 0));
+
+        return campaign;
+    }
+
+    /**
+     * Returns a mocked {@link Campaign} whose {@link Campaign#getPlayerForce()} is stubbed with a deep-stub
+     * {@link PlayerForce}. This prevents {@link NullPointerException}s in production code that routes through
+     * {@code getPlayerForce().getX()}, while still allowing callers to layer additional stubbing on the returned mock.
+     *
+     * @return a {@link Campaign} mock with a non-null, deep-stubbed {@link PlayerForce}
+     */
+    public static Campaign mockCampaign() {
+        Campaign campaign = mock(Campaign.class);
+        when(campaign.getPlayerForce()).thenReturn(mock(PlayerForce.class, RETURNS_DEEP_STUBS));
+        return campaign;
     }
 
     public static InputStream ParseBase64XmlFile(String base64) {

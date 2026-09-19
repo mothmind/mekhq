@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -43,12 +43,12 @@ import megamek.common.compute.Compute;
 import megamek.common.enums.Gender;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.SpecialAbility;
 import mekhq.campaign.personnel.backgrounds.BackgroundsController;
 import mekhq.campaign.personnel.enums.PersonnelRole;
-import mekhq.campaign.personnel.skills.RandomSkillPreferences;
 import mekhq.campaign.randomEvents.personalities.PersonalityController;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Planet;
@@ -108,10 +108,10 @@ public class DefaultPersonnelGenerator extends AbstractPersonnelGenerator {
 
         generateBirthday(campaign, person, expLvl, person.isClanPersonnel() && !person.getPhenotype().isNone());
 
-        AbstractSkillGenerator skillGenerator = new DefaultSkillGenerator(getSkillPreferences());
+        AbstractSkillGenerator skillGenerator = new DefaultSkillGenerator(campaign.getRandomSkillPreferences());
 
         skillGenerator.generateSkills(campaign, person, expLvl);
-        skillGenerator.generateAttributes(person, campaignOptions.isUseEdge());
+        skillGenerator.generateAttributes(person, campaignOptions);
         skillGenerator.generateTraits(person);
 
         // Limit skills by age for children and adolescents
@@ -127,14 +127,17 @@ public class DefaultPersonnelGenerator extends AbstractPersonnelGenerator {
             }
             // regenerate expLvl to factor in skill additions (as this can modify character experience level beyond
             // the requested level)
-            expLvl = person.getExperienceLevel(campaign, false);
+            expLvl = person.getExperienceLevel(campaign.getCampaignOptions(),
+                  campaign.getPlayerForce().isClanForce(),
+                  campaign.getLocalDate(),
+                  false,
+                  false);
         }
 
         // set SPAs
         if (expLvl >= EXP_ULTRA_GREEN) {
             AbstractSpecialAbilityGenerator specialAbilityGenerator = new DefaultSpecialAbilityGenerator();
-            //specialAbilityGenerator.setSkillPreferences(new RandomSkillPreferences());
-            specialAbilityGenerator.setSkillPreferences(getSkillPreferences());
+            specialAbilityGenerator.setSkillPreferences(campaign.getRandomSkillPreferences());
             specialAbilityGenerator.generateSpecialAbilities(campaign, person, expLvl);
         }
 
@@ -142,17 +145,17 @@ public class DefaultPersonnelGenerator extends AbstractPersonnelGenerator {
         generateNameAndGender(campaign, person, gender);
 
         // Set relationship flags
-        determineOrientation(person, campaignOptions.getNoInterestInRelationshipsDiceSize(),
-              campaignOptions.getInterestedInSameSexDiceSize(), campaignOptions.getInterestedInBothSexesDiceSize());
+        determineOrientation(person, campaignOptions.get(CampaignOption.NO_INTEREST_IN_RELATIONSHIPS_DICE_SIZE),
+              campaignOptions.get(CampaignOption.INTERESTED_IN_SAME_SEX_DICE_SIZE), campaignOptions.get(CampaignOption.INTERESTED_IN_BOTH_SEXES_DICE_SIZE));
 
-        int interestInChildren = campaignOptions.getNoInterestInChildrenDiceSize();
-        person.setTryingToConceive(((interestInChildren != 0) && (randomInt(interestInChildren)) != 0));
+        int interestInChildren = campaignOptions.get(CampaignOption.NO_INTEREST_IN_CHILDREN_DICE_SIZE);
+        person.setWantsChildren(((interestInChildren != 0) && (randomInt(interestInChildren)) != 0));
 
         //check for Bloodname
-        campaign.checkBloodnameAdd(person, false);
+        campaign.getPlayerForce().getHumanResources().checkBloodnameAdd(campaign, person, false);
 
         if (person.getOriginFaction().isClan() &&
-                  campaignOptions.isUseAbilities() &&
+                  campaignOptions.get(CampaignOption.USE_ABILITIES) &&
                   !(person.getPrimaryRole().isSoldierOrBattleArmour() || person.getPrimaryRole().isProtoMekPilot())) {
             if (SpecialAbility.getSpecialAbilities().containsKey("clan_pilot_training")) {
                 PersonnelOptions personnelOptions = person.getOptions();
@@ -160,7 +163,7 @@ public class DefaultPersonnelGenerator extends AbstractPersonnelGenerator {
             }
         }
 
-        person.setDaysToWaitForHealing(campaignOptions.getNaturalHealingWaitingPeriod());
+        person.setDaysToWaitForHealing(campaignOptions.get(CampaignOption.NATURAL_HEALING_WAITING_PERIOD));
 
         // set loyalty
         if (expLvl <= 0) {

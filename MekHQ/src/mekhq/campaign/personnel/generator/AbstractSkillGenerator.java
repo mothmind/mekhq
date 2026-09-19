@@ -40,6 +40,7 @@ import java.util.Objects;
 
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.personnel.skills.RandomSkillPreferences;
@@ -70,6 +71,7 @@ public abstract class AbstractSkillGenerator {
      *
      * @param skillPreferences A {@link RandomSkillPreferences} to use.
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public void setSkillPreferences(RandomSkillPreferences skillPreferences) {
         randomSkillPreferences = Objects.requireNonNull(skillPreferences);
     }
@@ -88,9 +90,10 @@ public abstract class AbstractSkillGenerator {
     /**
      * Generates attributes for a specified person based on their phenotype.
      *
-     * @param person The {@link Person} for whom attributes are to be generated.
+     * @param person          The {@link Person} for whom attributes are to be generated.
+     * @param campaignOptions The campaign options controlling attribute generation.
      */
-    public abstract void generateAttributes(Person person, boolean isUseEdge);
+    public abstract void generateAttributes(Person person, CampaignOptions campaignOptions);
 
     /**
      * Generates the default skills for a {@link Person} based on their primary role.

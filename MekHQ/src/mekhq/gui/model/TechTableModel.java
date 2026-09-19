@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -38,6 +38,7 @@ import javax.swing.JTable;
 import javax.swing.table.TableCellRenderer;
 
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.skills.Skill;
@@ -57,7 +58,7 @@ public class TechTableModel extends DataTableModel<Person> {
     /** Contains the skill levels to be displayed in a tech's description */
     private static final String[] DISPLAYED_SKILL_LEVELS = new String[] {
           SkillType.S_TECH_MEK,
-          SkillType.S_TECH_MECHANIC,
+          SkillType.S_TECH_VEHICLE,
           SkillType.S_TECH_BA,
           SkillType.S_TECH_AERO,
           SkillType.S_TECH_VESSEL,
@@ -102,7 +103,7 @@ public class TechTableModel extends DataTableModel<Person> {
             int actualRow = table.convertRowIndexToModel(row);
             setOpaque(true);
             Person tech = getTechAt(actualRow);
-            setImage(tech.getPortrait().getImage(54));
+            setImage(tech.getPortraitImageIconWithFallback(true, 54).getImage());
             setHtmlText(getTechDescription(tech, getCampaign().isOvertimeAllowed(), panel.getSelectedTask()));
             if (isSelected) {
                 highlightBorder();
@@ -168,7 +169,7 @@ public class TechTableModel extends DataTableModel<Person> {
 
         toReturn.append(String.format(" (%d XP", tech.getXP()));
         // if Edge usage is allowed for techs, display remaining edge in the dialogue
-        if (getCampaign().getCampaignOptions().isUseSupportEdge() &&
+        if (getCampaign().getCampaignOptions().get(CampaignOption.USE_EDGE) &&
                   tech.getOptions().booleanOption(PersonnelOptions.EDGE_REPAIR_BREAK_PART)) {
             toReturn.append(String.format(", %d Edge)", tech.getCurrentEdge()));
         } else {
@@ -177,7 +178,7 @@ public class TechTableModel extends DataTableModel<Person> {
         toReturn.append("<br/>");
 
         toReturn.append(String.format("%d/%d minutes left", tech.getMinutesLeft(),
-              tech.getDailyAvailableTechTime(getCampaign().getCampaignOptions().isTechsUseAdministration())));
+              tech.getDailyAvailableTechTime(getCampaign().getCampaignOptions().get(CampaignOption.TECHS_USE_ADMINISTRATION))));
 
         if (overtimeAllowed) {
             toReturn.append(String.format(" + (%d overtime)", tech.getOvertimeLeft()));

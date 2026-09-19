@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2024-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.util.List;
 
@@ -46,7 +47,6 @@ import megamek.common.equipment.EquipmentType;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.personnel.ranks.Ranks;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.universe.Faction;
 import mekhq.gui.dialog.nagDialogs.UntreatedPersonnelNagDialog;
@@ -71,7 +71,6 @@ class UntreatedPersonnelNagLogicTest {
     public static void setup() {
         EquipmentType.initializeTypes();
         SkillType.initializeTypes();
-        Ranks.initializeRankSystems();
     }
 
     /**
@@ -80,11 +79,11 @@ class UntreatedPersonnelNagLogicTest {
      */
     @BeforeEach
     public void init() {
-        campaign = mock(Campaign.class);
+        campaign = mockCampaign();
 
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(campaign.getFaction()).thenReturn(campaignFaction);
+        when(campaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         injuredPerson = new Person(campaign);

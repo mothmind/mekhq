@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2017-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -48,6 +48,7 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingPart;
 import mekhq.campaign.parts.missing.MissingQuadVeeGear;
+import mekhq.campaign.personnel.skills.SkillType;
 import org.w3c.dom.Node;
 
 /**
@@ -72,6 +73,7 @@ public class QuadVeeGear extends Part {
                                                                  .setProductionFactions(Faction.CHH)
                                                                  .setStaticTechLevel(SimpleTechLevel.ADVANCED);
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public QuadVeeGear() {
         this(0, null);
     }
@@ -79,6 +81,11 @@ public class QuadVeeGear extends Part {
     public QuadVeeGear(int tonnage, Campaign c) {
         super(tonnage, c);
         this.name = "Conversion Gear";
+    }
+
+    @Override
+    public boolean isRightTechType(String skillType) {
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
     }
 
     @Override
@@ -146,12 +153,12 @@ public class QuadVeeGear extends Part {
     public void remove(boolean salvage) {
         if (null != unit) {
             unit.damageSystem(CriticalSlot.TYPE_SYSTEM, QuadVee.SYSTEM_CONVERSION_GEAR, 4);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();

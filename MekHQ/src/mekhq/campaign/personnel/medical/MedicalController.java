@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,7 +32,9 @@
  */
 package mekhq.campaign.personnel.medical;
 
+import static megamek.common.units.Crew.DEATH;
 import static mekhq.campaign.enums.DailyReportType.MEDICAL;
+import static mekhq.campaign.enums.DailyReportType.SKILL_CHECKS;
 import static mekhq.campaign.personnel.skills.SkillType.S_SURGERY;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
@@ -48,13 +50,15 @@ import megamek.common.TargetRollModifier;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.persons.PersonMedicalAssignmentEvent;
+import mekhq.campaign.log.MedicalLogger;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelStatus;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AdvancedMedicalAlternateHealing;
-import mekhq.campaign.personnel.skills.SkillCheckUtility;
+import mekhq.campaign.personnel.skills.ActionCheckResult;
 import mekhq.campaign.unit.Unit;
 
 /**
@@ -74,7 +78,7 @@ public class MedicalController {
     final private int maximumPatients;
     final private int healingWaitingPeriod;
     final private int naturalHealingWaitingPeriod;
-    final private boolean isUseSupportEdge;
+    final private boolean isUseEdge;
     final private boolean isUseAdvancedMedical;
     final private boolean isUseAltAdvancedMedical;
 
@@ -89,13 +93,13 @@ public class MedicalController {
         this.campaign = campaign;
 
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        isDoctorsUseAdministration = campaignOptions.isDoctorsUseAdministration();
-        maximumPatients = campaignOptions.getMaximumPatients();
-        healingWaitingPeriod = campaignOptions.getHealingWaitingPeriod();
-        naturalHealingWaitingPeriod = campaignOptions.getNaturalHealingWaitingPeriod();
-        isUseSupportEdge = campaignOptions.isUseSupportEdge();
+        isDoctorsUseAdministration = campaignOptions.get(CampaignOption.DOCTORS_USE_ADMINISTRATION);
+        maximumPatients = campaignOptions.get(CampaignOption.MAXIMUM_PATIENTS);
+        healingWaitingPeriod = campaignOptions.get(CampaignOption.HEAL_WAITING_PERIOD);
+        naturalHealingWaitingPeriod = campaignOptions.get(CampaignOption.NATURAL_HEALING_WAITING_PERIOD);
+        isUseEdge = campaignOptions.get(CampaignOption.USE_EDGE);
         isUseAdvancedMedical = campaignOptions.isUseAdvancedMedical();
-        isUseAltAdvancedMedical = campaignOptions.isUseAlternativeAdvancedMedical();
+        isUseAltAdvancedMedical = campaignOptions.get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL);
     }
 
     /**
@@ -128,12 +132,12 @@ public class MedicalController {
     public void processMedicalEvents(Person patient, boolean isUseAgingEffects, boolean isClanCampaign,
           LocalDate today) {
         // Should the character be dead already?
-        if (patient.getTotalInjurySeverity() > Person.DEATH_THRESHOLD) {
+        if (patient.getTotalInjurySeverity() >= DEATH) {
             patient.changeStatus(campaign, today, PersonnelStatus.WOUNDS);
             return; // Early exit as there is no point continuing to process the character
         }
 
-        Person doctor = campaign.getPerson(patient.getDoctorId());
+        Person doctor = campaign.getPlayerForce().getHumanResources().getPerson(patient.getDoctorId());
 
         if (doctor != null) {
             doctor = isValidDoctor(patient, doctor) ? doctor : null;
@@ -147,12 +151,13 @@ public class MedicalController {
             // Handle Advanced Medical
             if (isUseAdvancedMedical) {
                 if (isUseAltAdvancedMedical) {
-                    AdvancedMedicalAlternateHealing.processNewDay(campaign.getLocalDate(),
-                          campaign.getCampaignOptions().isUseFatigue(), campaign.getCampaignOptions().getFatigueRate(),
-                          patient, doctor);
+                    AdvancedMedicalAlternateHealing.processNewDay(campaign, patient, doctor);
                 } else {
                     InjuryUtil.resolveDailyHealing(campaign, patient);
                 }
+
+                patient.clearDoctorAssignmentForCharacterWithOnlyPermanentInjuries(isUseAdvancedMedical,
+                      naturalHealingWaitingPeriod);
             } else {
                 if (doctor != null && patient.getDaysToWaitForHealing() <= 0) {
                     healPerson(patient, doctor, isUseAgingEffects, isClanCampaign, today);
@@ -170,10 +175,10 @@ public class MedicalController {
     }
 
     private Person verifyTheatreAvailability(Person patient, Person doctor) {
-        if (campaign.getCampaignOptions().isUseMASHTheatres()) {
-            if (!campaign.getMashTheatresWithinCapacity()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_MASH_THEATRES)) {
+            if (!campaign.getPlayerForce().getMashTheatresWithinCapacity(campaign)) {
                 doctor = null;
-                patient.setDoctorId(null, campaign.getCampaignOptions().getNaturalHealingWaitingPeriod());
+                patient.setDoctorId(null, campaign.getCampaignOptions().get(CampaignOption.NATURAL_HEALING_WAITING_PERIOD));
                 campaign.addReport(MEDICAL, getFormattedTextAt(RESOURCE_BUNDLE,
                       "MedicalController.report.overTheatreCapacity",
                       spanOpeningWithCustomColor(getNegativeColor()), CLOSING_SPAN_TAG,
@@ -200,14 +205,6 @@ public class MedicalController {
     }
 
     /**
-     * Use {@link #healPerson(Person, Person, boolean, boolean, LocalDate)} instead
-     */
-    @Deprecated(since = "0.50.07", forRemoval = true)
-    private void healPerson(Person patient, Person doctor) {
-        healPerson(patient, doctor, false, false, LocalDate.of(3151, 1, 1));
-    }
-
-    /**
      * Applies medical treatment to the specified patient, using the given doctor as the medical provider.
      *
      * <p>This method performs a skill check for the doctor using current campaign rules and relevant situational
@@ -225,22 +222,19 @@ public class MedicalController {
         LOGGER.debug(getFormattedTextAt(RESOURCE_BUNDLE, "MedicalController.report.intro",
               doctor.getHyperlinkedFullTitle(), patient.getHyperlinkedFullTitle()));
 
-        SkillCheckUtility skillCheckUtility = new SkillCheckUtility(
-              getTextAt(RESOURCE_BUNDLE, "MedicalController.report.skillCheck"),
-              doctor,
-              S_SURGERY,
-              getAdditionalHealingModifiers(patient),
-              0,
-              isUseSupportEdge,
-              false,
-              isUseAgingEffects,
-              isClanCampaign,
-              today);
+        ActionCheckResult actionCheckResult =
+              doctor.checkSkill(S_SURGERY, isUseAgingEffects, isClanCampaign, today)
+                    .withExternalModifiers(getAdditionalHealingModifiers(patient))
+                    .resolve(isUseEdge, getTextAt(RESOURCE_BUNDLE, "MedicalController.report.skillCheck"));
 
-        LOGGER.debug(skillCheckUtility.getResultsText());
+        campaign.addReport(SKILL_CHECKS, actionCheckResult.getReport());
 
-        if (skillCheckUtility.isSuccess()) {
+        if (actionCheckResult.isSuccess()) {
+            boolean inInfirmary = !(null == patient.getDoctorId());
             patient.heal();
+            if (inInfirmary && !patient.needsFixing() && patient.getPrisonerStatus().isFreeOrBondsman()) {
+                MedicalLogger.dismissedFromInfirmary(patient, campaign);
+            }
             Unit unit = patient.getUnit();
             if (unit != null) {
                 unit.resetPilotAndEntity();
@@ -304,7 +298,7 @@ public class MedicalController {
             return false;
         }
 
-        if (campaign.getPatientsFor(doctor) > medicalCapacity) {
+        if (campaign.getPlayerForce().getHumanResources().getPatientsFor(doctor) > medicalCapacity) {
             campaign.addReport(MEDICAL, getFormattedTextAt(RESOURCE_BUNDLE, "MedicalController.report.overCapacity",
                   doctor.getHyperlinkedFullTitle(), patient.getHyperlinkedFullTitle()));
             unassignDoctor(patient, doctor);

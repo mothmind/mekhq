@@ -34,9 +34,12 @@ package mekhq.gui.view;
 
 import static mekhq.campaign.personnel.turnoverAndRetention.Fatigue.getEffectiveFatigue;
 
+import java.awt.Cursor;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.ResourceBundle;
@@ -45,12 +48,14 @@ import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextPane;
+import javax.swing.SwingUtilities;
 
 import megamek.client.ui.Messages;
 import megamek.common.units.Entity;
 import megamek.common.units.UnitType;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.enums.CampaignTransportType;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.force.Formation;
@@ -69,16 +74,44 @@ import mekhq.utilities.ReportingUtilities;
  * @author Jay Lawson (jaylawson39 at yahoo.com)
  */
 public class ForceViewPanel extends JScrollablePanel {
+    public enum UnitSelectionType {
+        CREW,
+        UNIT
+    }
+
+    @FunctionalInterface
+    public interface UnitSelectionListener {
+        void unitSelected(Unit unit, UnitSelectionType selectionType);
+    }
+
+    @FunctionalInterface
+    public interface FormationSelectionListener {
+        void formationSelected(Formation formation);
+    }
+
     private final Formation formation;
     private final Campaign campaign;
+    private final UnitSelectionListener unitSelectionListener;
+    private final FormationSelectionListener formationSelectionListener;
 
     private JPanel pnlStats;
     private JPanel pnlSubUnits;
 
     public ForceViewPanel(Formation f, Campaign c) {
+        this(f, c, null, null);
+    }
+
+    public ForceViewPanel(Formation f, Campaign c, UnitSelectionListener unitSelectionListener) {
+        this(f, c, unitSelectionListener, null);
+    }
+
+    public ForceViewPanel(Formation f, Campaign c, UnitSelectionListener unitSelectionListener,
+          FormationSelectionListener formationSelectionListener) {
         super();
         this.formation = f;
         this.campaign = c;
+        this.unitSelectionListener = unitSelectionListener;
+        this.formationSelectionListener = formationSelectionListener;
         this.setBorder(null);
         initComponents();
     }
@@ -179,18 +212,21 @@ public class ForceViewPanel extends JScrollablePanel {
         String assigned = "";
         String type = null;
 
-        Person commanderPerson = campaign.getPerson(formation.getFormationCommanderID());
+        Person commanderPerson = campaign.getPlayerForce().getHumanResources().getPerson(formation.getFormationCommanderID());
 
         if (formation.getId() == 0) {
-            commanderPerson = campaign.getCommander();
+            commanderPerson = campaign.getPlayerForce().getHumanResources()
+                                    .getCommander(campaign.getCampaignOptions(),
+                                          campaign.getPlayerForce().isClanForce(),
+                                          campaign.getLocalDate());
         }
         String commanderName = commanderPerson != null ? commanderPerson.getFullTitle() : "";
 
         for (UUID uid : formation.getAllUnits(false)) {
             Unit unit = campaign.getUnit(uid);
             if (null != unit) {
-                // Never factor in C3 in this check. It will cause the TO&E to lock up for large campaigns.
-                bv += unit.getEntity().calculateBattleValue(true, !unit.hasPilot());
+                // Never factor in C3 or the TAG force bonus in this check. It will cause the TO&E to lock up for large campaigns.
+                bv += unit.getEntity().calculateBattleValue(true, !unit.hasPilot(), true);
                 cost = cost.plus(unit.getEntity().getCost(true));
                 ton += unit.getEntity().getWeight();
                 String unitTypeName = UnitType.getTypeDisplayableName(unit.getEntity().getUnitType());
@@ -203,7 +239,7 @@ public class ForceViewPanel extends JScrollablePanel {
         }
 
         if (formation.getTechID() != null) {
-            final Person person = campaign.getPerson(formation.getTechID());
+            final Person person = campaign.getPlayerForce().getHumanResources().getPerson(formation.getTechID());
             if (person != null) {
                 lanceTech = person.getFullName();
             }
@@ -381,7 +417,7 @@ public class ForceViewPanel extends JScrollablePanel {
         nextY++;
 
         // if AtB is enabled, set tooltip to show lance weight breakdowns
-        if (campaign.getCampaignOptions().isUseAtB()) {
+        if (campaign.getCampaignOptions().isUseStratCon()) {
             // see Lance.java for lance weight breakdowns
             lblTonnage1.setToolTipText(resourceMap.getString("tonnageToolTip.text"));
             lblTonnage2.setToolTipText(resourceMap.getString("tonnageToolTip.text"));
@@ -427,6 +463,7 @@ public class ForceViewPanel extends JScrollablePanel {
             lblForce = new JLabel();
             lblForce.setText(getForceSummary(subFormation));
             lblForce.setIcon(subFormation.getFormationIcon().getImageIcon(72));
+            addFormationSelectionListener(lblForce, subFormation);
             nextY++;
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 0;
@@ -465,7 +502,8 @@ public class ForceViewPanel extends JScrollablePanel {
             lblUnit = new JLabel();
             if (null != p) {
                 lblPerson.setText(getForceSummary(p, unit));
-                lblPerson.setIcon(p.getPortrait().getImageIcon());
+                lblPerson.setIcon(p.getPortraitImageIconWithFallback(true, 54));
+                addUnitSelectionListener(lblPerson, unit, UnitSelectionType.CREW);
             } else {
                 lblPerson.getAccessibleContext().setAccessibleName("Unmanned Unit");
             }
@@ -480,6 +518,7 @@ public class ForceViewPanel extends JScrollablePanel {
             pnlSubUnits.add(lblPerson, gridBagConstraints);
             lblUnit.setText(getForceSummary(unit));
             lblUnit.setIcon(new ImageIcon(unit.getImage(lblUnit)));
+            addUnitSelectionListener(lblUnit, unit, UnitSelectionType.UNIT);
             lblPerson.setLabelFor(lblUnit);
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 1;
@@ -491,6 +530,34 @@ public class ForceViewPanel extends JScrollablePanel {
             gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
             pnlSubUnits.add(lblUnit, gridBagConstraints);
         }
+    }
+
+    private void addUnitSelectionListener(JLabel label, Unit unit, UnitSelectionType selectionType) {
+        if (unitSelectionListener == null) {
+            return;
+        }
+
+        addSelectionListener(label, () -> unitSelectionListener.unitSelected(unit, selectionType));
+    }
+
+    private void addFormationSelectionListener(JLabel label, Formation formation) {
+        if (formationSelectionListener == null) {
+            return;
+        }
+
+        addSelectionListener(label, () -> formationSelectionListener.formationSelected(formation));
+    }
+
+    private void addSelectionListener(JLabel label, Runnable selectionAction) {
+        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        label.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent evt) {
+                if (SwingUtilities.isLeftMouseButton(evt)) {
+                    selectionAction.run();
+                }
+            }
+        });
     }
 
     public String getForceSummary(Person person, Unit unit) {
@@ -535,9 +602,8 @@ public class ForceViewPanel extends JScrollablePanel {
             }
         }
 
-        int effectiveFatigue = getEffectiveFatigue(person.getAdjustedFatigue(), person.getPermanentFatigue(),
-              person.isClanPersonnel(), person.getSkillLevel(campaign, false, true));
-        if (campaign.getCampaignOptions().isUseFatigue() && (effectiveFatigue > 0)) {
+        int effectiveFatigue = getEffectiveFatigue(person, campaign);
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_FATIGUE) && (effectiveFatigue > 0)) {
             isFatigued = true;
             if (isInjured) {
                 toReturn.append(',');
@@ -561,9 +627,9 @@ public class ForceViewPanel extends JScrollablePanel {
     public String getForceSummary(Unit unit) {
         String toReturn = "<html><font size='4'><b>" + unit.getName() + "</b></font><br/>";
 
-        // Never factor in C3 in this check. It will cause the TO&E to lock up for large campaigns.
+        // Never factor in C3 or the TAG force bonus in this check. It will cause the TO&E to lock up for large campaigns.
         toReturn += "<font><b>BV:</b> " +
-                          unit.getEntity().calculateBattleValue(true, null == unit.getEntity().getCrew()) +
+                          unit.getEntity().calculateBattleValue(true, null == unit.getEntity().getCrew(), true) +
                           "<br/>";
         toReturn += unit.getStatus();
         Entity entity = unit.getEntity();
@@ -660,7 +726,7 @@ public class ForceViewPanel extends JScrollablePanel {
             Unit unit = campaign.getUnit(uid);
             if (null != unit) {
                 boolean crewExists = unit.getCommander() != null;
-                battleValue += unit.getEntity().calculateBattleValue(true, !crewExists);
+                battleValue += unit.getEntity().calculateBattleValue(true, !crewExists, true);
                 cost = cost.plus(unit.getEntity().getCost(true));
                 tonnage += unit.getEntity().getWeight();
                 number++;
@@ -668,7 +734,8 @@ public class ForceViewPanel extends JScrollablePanel {
         }
 
         if (formation.getFormationCommanderID() != null) {
-            Person forceCommander = campaign.getPerson(formation.getFormationCommanderID());
+            final java.util.UUID id = formation.getFormationCommanderID();
+            Person forceCommander = campaign.getPlayerForce().getHumanResources().getPerson(id);
 
             if (forceCommander != null) {
                 commander = forceCommander.getFullTitle();

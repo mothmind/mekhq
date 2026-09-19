@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2024-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,23 +33,14 @@
 package mekhq.campaign.randomEvents.personalities;
 
 import static megamek.common.compute.Compute.randomInt;
-import static mekhq.campaign.randomEvents.personalities.enums.Reasoning.*;
+import static mekhq.campaign.randomEvents.personalities.Reasoning.*;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 import megamek.codeUtilities.ObjectUtility;
 import megamek.common.enums.Gender;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.randomEvents.personalities.enums.Aggression;
-import mekhq.campaign.randomEvents.personalities.enums.Ambition;
-import mekhq.campaign.randomEvents.personalities.enums.Greed;
-import mekhq.campaign.randomEvents.personalities.enums.PersonalityQuirk;
-import mekhq.campaign.randomEvents.personalities.enums.PersonalityTraitType;
-import mekhq.campaign.randomEvents.personalities.enums.Reasoning;
-import mekhq.campaign.randomEvents.personalities.enums.Social;
 
 /**
  * This class is responsible for generating and managing personalities for characters. It assigns traits such as
@@ -62,14 +53,6 @@ import mekhq.campaign.randomEvents.personalities.enums.Social;
 public class PersonalityController {
     @Deprecated(since = "0.50.07", forRemoval = true)
     public final static int PERSONALITY_QUIRK_CHANCE = 10;
-
-    /**
-     * @deprecated use {@link #generatePersonality(Person)} instead
-     */
-    @Deprecated(since = "0.50.07", forRemoval = true)
-    public static void generatePersonality(Person person, boolean isBigPersonality) {
-        generatePersonality(person);
-    }
 
     /**
      * Generates a personality for the given person by assigning various personality characteristics such as aggression,
@@ -165,94 +148,6 @@ public class PersonalityController {
     }
 
     /**
-     * @deprecated use {@link #generatePersonality(Person, boolean)} instead
-     */
-    @Deprecated(since = "0.50.06", forRemoval = true)
-    public static void generateBigPersonality(Person person) {
-        // As this method is likely going to be applied over an existing personality profile, we
-        // wipe the old to ensure a clean slate.
-        person.setAggression(Aggression.NONE);
-        person.setAmbition(Ambition.NONE);
-        person.setGreed(Greed.NONE);
-        person.setSocial(Social.NONE);
-
-        // Then we generate a new personality
-        List<PersonalityTraitType> possibleTraits = new ArrayList<>(Arrays.asList(PersonalityTraitType.AGGRESSION,
-              PersonalityTraitType.AMBITION,
-              PersonalityTraitType.GREED,
-              PersonalityTraitType.SOCIAL));
-
-        Collections.shuffle(possibleTraits);
-
-        List<PersonalityTraitType> chosenTraits = new ArrayList<>();
-
-        PersonalityTraitType firstTrait = possibleTraits.get(0);
-        possibleTraits.remove(firstTrait);
-        chosenTraits.add(firstTrait);
-
-        PersonalityTraitType secondTrait = possibleTraits.get(0);
-        possibleTraits.remove(secondTrait);
-        chosenTraits.add(secondTrait);
-
-        if (randomInt(4) == 0) {
-            PersonalityTraitType thirdTrait = possibleTraits.get(0);
-            possibleTraits.remove(thirdTrait);
-            chosenTraits.add(thirdTrait);
-        }
-
-        if (randomInt(4) == 0) {
-            PersonalityTraitType forthTrait = possibleTraits.get(0);
-            chosenTraits.add(forthTrait);
-        }
-
-        for (PersonalityTraitType traitType : chosenTraits) {
-            switch (traitType) {
-                case AGGRESSION -> {
-                    String traitIndex = getTraitIndex(Aggression.MAJOR_TRAITS_START_INDEX);
-                    person.setAggression(Aggression.fromString(traitIndex));
-                }
-                case AMBITION -> {
-                    String traitIndex = getTraitIndex(Ambition.MAJOR_TRAITS_START_INDEX);
-                    person.setAmbition(Ambition.fromString(traitIndex));
-                }
-                case GREED -> {
-                    String traitIndex = getTraitIndex(Greed.MAJOR_TRAITS_START_INDEX);
-                    person.setGreed(Greed.fromString(traitIndex));
-                }
-                case SOCIAL -> {
-                    String traitIndex = getTraitIndex(Social.MAJOR_TRAITS_START_INDEX);
-                    person.setSocial(Social.fromString(traitIndex));
-                }
-                default -> {
-                }
-            }
-        }
-
-        // PERSONALITY QUIRK
-        generateAndApplyPersonalityQuirk(person);
-
-        // finally, write the description
-        writePersonalityDescription(person);
-        writeInterviewersNotes(person);
-    }
-
-    /**
-     * Generates and applies a personality quirk to the given person. This method ensures the quirk index is valid by
-     * rolling a random value between 1 and the number of quirk constants in the {@link PersonalityQuirk} enum.
-     *
-     * @param person the person to whom the personality quirk will be applied; their quirk attribute is updated based on
-     *               the rolled quirk
-     */
-    @Deprecated(since = "0.50.07", forRemoval = true)
-    public static void generateAndApplyPersonalityQuirk(Person person) {
-        // This ensures we're rolling a value between 1 and the maximum index in the enum
-        int traitRoll = randomInt(PersonalityQuirk.values().length) + 1;
-        String traitIndex = String.valueOf(traitRoll);
-
-        person.setPersonalityQuirk(PersonalityQuirk.fromString(traitIndex));
-    }
-
-    /**
      * Generates a trait index based on the provided starting index for major traits.
      *
      * <p>The method rolls a random integer between 1 and the provided index, and if the
@@ -330,8 +225,7 @@ public class PersonalityController {
 
         // Reasoning and personality quirk are handled differently to general personality traits.
         // Build the description proper
-        Reasoning reasoning = person.getReasoning();
-        String examResults = reasoning.getExamResults();
+        String examResults = person.getReasoning().getExamResults(person.getPerformanceExamScore());
         StringBuilder interviewersNotes = new StringBuilder("<html>");
 
         interviewersNotes.append(examResults);
@@ -343,6 +237,59 @@ public class PersonalityController {
         interviewersNotes.append("</html>");
 
         person.setPersonalityInterviewNotes(interviewersNotes.toString());
+    }
+
+    /**
+     * Generates a concatenated string of personality labels based on the attributes of the given person.
+     *
+     * <p>The method checks various personality traits and appends their respective labels to the result if they are
+     * not in their default or neutral state.</p>
+     *
+     * @param person The person whose personality traits are being analyzed and converted to labels.
+     *
+     * @return A string containing all applicable personality labels concatenated together. If no labels are applicable,
+     *       an empty string is returned.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static String getPersonalityLabels(Person person) {
+        StringBuilder personalityLabels = new StringBuilder();
+
+        Aggression aggression = person.getAggression();
+        if (!aggression.isNone()) {
+            appendLabel(personalityLabels, aggression.getLabel());
+        }
+
+        Ambition ambition = person.getAmbition();
+        if (!ambition.isNone()) {
+            appendLabel(personalityLabels, ambition.getLabel());
+        }
+
+        Greed greed = person.getGreed();
+        if (!greed.isNone()) {
+            appendLabel(personalityLabels, greed.getLabel());
+        }
+
+        Social social = person.getSocial();
+        if (!social.isNone()) {
+            appendLabel(personalityLabels, social.getLabel());
+        }
+
+        PersonalityQuirk personalityQuirk = person.getPersonalityQuirk();
+        if (!personalityQuirk.isNone()) {
+            appendLabel(personalityLabels, personalityQuirk.getLabel());
+        }
+
+        return personalityLabels.toString();
+    }
+
+    private static void appendLabel(StringBuilder personalityLabels, String label) {
+        if (!personalityLabels.isEmpty()) {
+            personalityLabels.append(", ");
+        }
+
+        personalityLabels.append(label);
     }
 
     /**

@@ -32,7 +32,6 @@
  */
 package mekhq.campaign.universe.factionStanding;
 
-import static megamek.codeUtilities.MathUtility.clamp;
 import static mekhq.campaign.universe.Faction.DEFAULT_CODE;
 import static mekhq.campaign.universe.Faction.MERCENARY_FACTION_CODE;
 import static mekhq.campaign.universe.Faction.PIRATE_FACTION_CODE;
@@ -40,7 +39,6 @@ import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STAND
 import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STANDING_LEVEL_6;
 import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STANDING_LEVEL_8;
 import static mekhq.campaign.universe.factionStanding.FactionStandingUtilities.PIRACY_SUCCESS_INDEX_FACTION_CODE;
-import static mekhq.gui.dialog.factionStanding.manualMissionDialogs.SimulateMissionDialog.handleFactionRegardUpdates;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
 import static mekhq.utilities.ReportingUtilities.CLOSING_SPAN_TAG;
@@ -51,30 +49,20 @@ import static mekhq.utilities.ReportingUtilities.spanOpeningWithCustomColor;
 
 import java.io.PrintWriter;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import javax.swing.ImageIcon;
 
 import megamek.codeUtilities.MathUtility;
 import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.Contract;
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.enums.MissionStatus;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.contractData.MissionStatus;
+import mekhq.campaign.mission.contract.utilities.ContractCharacteristics;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.factionHints.FactionHints;
-import mekhq.gui.dialog.factionStanding.manualMissionDialogs.ManualMissionDialog;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -312,6 +300,7 @@ public class FactionStandings {
      * @author Illiani
      * @since 0.50.07
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static double getMaximumOtherFactionRegard() {
         return MAXIMUM_OTHER_FACTION_REGARD;
     }
@@ -564,7 +553,7 @@ public class FactionStandings {
             regard += climateRegard.getOrDefault(factionCode, DEFAULT_REGARD);
         }
 
-        return clamp(regard, MINIMUM_REGARD, MAXIMUM_SAME_FACTION_REGARD);
+        return Math.clamp(regard, MINIMUM_REGARD, MAXIMUM_SAME_FACTION_REGARD);
     }
 
     /**
@@ -608,15 +597,17 @@ public class FactionStandings {
 
         factionCode = convertSpecialFaction(factionCode, gameYear);
 
-        double regardValue = clamp(newRegard, MINIMUM_REGARD, maximumRegard);
-        double currentRegard = getRegardForFaction(factionCode, false);
+        double regardValue = Math.clamp(newRegard, MINIMUM_REGARD, maximumRegard);
+
+        // We want the true value, adjusted for climate, for reporting purposes
+        double originalRegard = getRegardForFaction(factionCode, true);
 
         factionRegard.put(factionCode, regardValue);
 
-        double change = regardValue - currentRegard;
-
         if (includeReport) {
-            return getRegardChangedReport(change, gameYear, factionCode, regardValue, currentRegard);
+            double change = regardValue - originalRegard;
+            double newRegardAdjustedForClimate = getRegardForFaction(factionCode, true);
+            return getRegardChangedReport(change, gameYear, factionCode, newRegardAdjustedForClimate, originalRegard);
         }
 
         return "";
@@ -694,16 +685,25 @@ public class FactionStandings {
 
         double adjustedDelta = delta * regardMultiplier;
 
+        // We want the current raw value, not including climate as this value will be used to update the regard map
         double originalRegard = getRegardForFaction(factionCode, false);
+        // We also want the true value, adjusted for climate, for reporting purposes
+        double originalRegardAdjustedForClimate = getRegardForFaction(factionCode, true);
 
         double maximumRegard = Objects.equals(campaignFactionCode, factionCode) || campaignFactionCode == null
                                      ? MAXIMUM_SAME_FACTION_REGARD
                                      : MAXIMUM_OTHER_FACTION_REGARD;
-        double newRegard = clamp(originalRegard + adjustedDelta, MINIMUM_REGARD, maximumRegard);
+        double newRegard = Math.clamp(originalRegard + adjustedDelta, MINIMUM_REGARD, maximumRegard);
 
         factionRegard.put(factionCode, newRegard);
 
-        return getRegardChangedReport(adjustedDelta, gameYear, factionCode, newRegard, originalRegard);
+        // We want the true value, adjusted for climate, for reporting purposes
+        double newRegardAdjustedForClimate = getRegardForFaction(factionCode, true);
+        return getRegardChangedReport(adjustedDelta,
+              gameYear,
+              factionCode,
+              newRegardAdjustedForClimate,
+              originalRegardAdjustedForClimate);
     }
 
     /**
@@ -727,7 +727,7 @@ public class FactionStandings {
      * @since 0.50.07
      */
     public @Nullable FactionCensureLevel checkForCensure(Faction faction, LocalDate today,
-          List<Mission> activeMissions, boolean campaignInTransit) {
+          List<AbstractContract> activeMissions, boolean campaignInTransit) {
         if (faction.isAggregate()) {
             return null;
         }
@@ -755,11 +755,13 @@ public class FactionStandings {
      *
      * @param today the date to use when checking for censure expiration and applying any degradation
      *
+     * @return a {@link List} of HTML-formatted {@link String} reports of censure expiry events
+     *
      * @author Illiani
      * @since 0.50.07
      */
-    public void processCensureDegradation(final LocalDate today) {
-        factionJudgment.processCensureDegradation(today);
+    public List<String> processCensureDegradation(final LocalDate today) {
+        return factionJudgment.processCensureDegradation(today);
     }
 
     /**
@@ -791,7 +793,7 @@ public class FactionStandings {
             return null;
         }
 
-        double regard = getRegardForFaction(factionCode, true);
+        double regard = getRegardForFaction(factionCode, false);
         FactionStandingLevel factionStanding = FactionStandingUtilities.calculateFactionStandingLevel(regard);
 
         if (factionStanding.getStandingLevel() >= FactionJudgment.THRESHOLD_FOR_ACCOLADE) {
@@ -803,12 +805,6 @@ public class FactionStandings {
         return null;
     }
 
-    /** Use {@link #updateClimateRegard(Faction, LocalDate, double, boolean)} instead */
-    @Deprecated(since = "0.50.07", forRemoval = true)
-    public String updateClimateRegard(final Faction campaignFaction, final LocalDate today) {
-        return updateClimateRegard(campaignFaction, today, 1.0, false);
-    }
-
     /**
      * Updates the internal map representing the "climate regard"—an attitude or relationship level—between the
      * specified campaign faction and all other factions for the given date.
@@ -833,40 +829,9 @@ public class FactionStandings {
      * @since 0.50.07
      */
     public String updateClimateRegard(final Faction campaignFaction, final LocalDate today,
-          final double regardMultiplier, final boolean enableVerboseClimateRegard) {
-        return updateClimateRegard(campaignFaction, today, regardMultiplier, enableVerboseClimateRegard, false);
-    }
-
-    /**
-     * Updates the internal map representing the "climate regard"—an attitude or relationship level—between the
-     * specified campaign faction and all other factions for the given date.
-     *
-     * <p>The method iterates over all factions and assigns a regard value based on alliances, wars, rivalry, and
-     * whether the faction is untracked or invalid for the specified year.</p>
-     *
-     * <p>Existing climateRegard entries are removed.</p>
-     *
-     * <p>After updating, this method generates and returns an HTML-formatted report summarizing the new climate
-     * regard standings for all relevant factions.</p>
-     *
-     * @param campaignFaction            the {@link Faction} representing the campaign's primary faction
-     * @param today                      the {@link LocalDate} to use for validating factions and determining
-     *                                   relationships
-     * @param regardMultiplier           the regard multiplier set in campaign options
-     * @param enableVerboseClimateRegard {@code true} if the verbose climate regard campaign option is enabled
-     * @param useTestDirectory           {@code true} if called from within a Unit Test
-     *
-     * @return an HTML-formatted {@link String} report of faction climate regard changes
-     *
-     * @author Illiani
-     * @since 0.50.07
-     */
-    public String updateClimateRegard(final Faction campaignFaction, final LocalDate today,
-          final double regardMultiplier, boolean enableVerboseClimateRegard, boolean useTestDirectory) {
+          final double regardMultiplier, boolean enableVerboseClimateRegard) {
         Collection<Faction> allFactions = Factions.getInstance().getActiveFactions(today);
-        FactionHints factionHints = useTestDirectory ?
-                                          FactionHints.initializeTestInstance() :
-                                          FactionHints.getInstance();
+        FactionHints factionHints = FactionHints.getInstance();
         boolean isPirate = campaignFaction.isPirate();
 
         // Clear any existing climate regard entries
@@ -1026,8 +991,8 @@ public class FactionStandings {
      * @param delta          the amount of Regard gained or lost
      * @param gameYear       the current in-game year, used to render the appropriate faction name
      * @param factionCode    unique identifier for the faction whose Regard should be adjusted
-     * @param newRegard      the Regard value after the delta is applied
-     * @param originalRegard the Regard value before the delta is applied
+     * @param newRegard      the Regard value after the delta is applied (usually adjusted for political climate)
+     * @param originalRegard the Regard value before the delta is applied (usually adjusted for political climate)
      *
      * @return a formatted {@link String} describing the regard change, direction, and any milestone transition
      *
@@ -1070,7 +1035,7 @@ public class FactionStandings {
 
         // Build final report
         String deltaDirection;
-        if (newRegard > originalRegard) {
+        if (newRegard >= originalRegard) {
             reportingColor = getPositiveColor();
             deltaDirection = getTextAt(RESOURCE_BUNDLE, "factionStandings.change.increased");
         } else {
@@ -1111,6 +1076,7 @@ public class FactionStandings {
      * @author Illiani
      * @since 0.50.07
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public void resetFactionStanding(final String factionCode) {
         factionRegard.remove(factionCode);
     }
@@ -1183,6 +1149,13 @@ public class FactionStandings {
                     regardChangeReports.add(report);
                 }
             }
+        }
+
+        // We saw a lot of player confusion with players not realizing that annual regard decay was a thing. This
+        // notice was added to try and mitigate that.
+        if (!regardChangeReports.isEmpty()) {
+            String decayNotice = getTextAt(RESOURCE_BUNDLE, "factionStandings.change.decay");
+            regardChangeReports.addFirst(decayNotice);
         }
 
         return regardChangeReports;
@@ -1671,13 +1644,6 @@ public class FactionStandings {
         return regard;
     }
 
-    /** Use {@link #updateCampaignForPastMissions(List, ImageIcon, Faction, LocalDate, double)} instead */
-    @Deprecated(since = "0.50.07", forRemoval = true)
-    public List<String> updateCampaignForPastMissions(List<Mission> missions, ImageIcon campaignIcon,
-          Faction campaignFaction, LocalDate today) {
-        return updateCampaignForPastMissions(missions, campaignIcon, campaignFaction, today, 1.0);
-    }
-
     /**
      * Updates the campaign status for a list of past missions, adjusting faction standings, applying campaign icon and
      * faction, and generating a report of changes.
@@ -1697,7 +1663,7 @@ public class FactionStandings {
      * @author Illiani
      * @since 0.50.07
      */
-    public List<String> updateCampaignForPastMissions(List<Mission> missions, ImageIcon campaignIcon,
+    public List<String> updateCampaignForPastMissions(List<AbstractContract> missions, ImageIcon campaignIcon,
           Faction campaignFaction, LocalDate today, double regardMultiplier) {
         List<String> reports = new ArrayList<>();
 
@@ -1705,14 +1671,12 @@ public class FactionStandings {
 
         sortMissionsBasedOnStartDateAndClass(missions);
 
-        Map<Integer, List<Mission>> missionsByYear = new HashMap<>();
+        Map<Integer, List<AbstractContract>> missionsByYear = new HashMap<>();
         int currentYear = today.getYear();
 
-        for (Mission mission : missions) {
-            int missionYear = currentYear;
-            if (mission instanceof Contract contract) {
-                missionYear = contract.getStartDate().getYear();
-            }
+        for (AbstractContract mission : missions) {
+            LocalDate missionStartDate = mission.getStartDate();
+            int missionYear = (missionStartDate == null) ? currentYear : missionStartDate.getYear();
 
             missionsByYear.computeIfAbsent(missionYear, y -> new ArrayList<>()).add(mission);
         }
@@ -1721,52 +1685,31 @@ public class FactionStandings {
         List<Integer> sortedYears = new ArrayList<>(missionsByYear.keySet());
         Collections.sort(sortedYears);
         for (int year : sortedYears) {
-            List<Mission> missionsForYear = missionsByYear.get(year);
-            for (Mission mission : missionsForYear) {
+            List<AbstractContract> missionsForYear = missionsByYear.get(year);
+            for (AbstractContract mission : missionsForYear) {
                 MissionStatus missionStatus = mission.getStatus();
 
-                if (mission instanceof AtBContract atbContract) {
-                    int contractLength = atbContract.getLength();
+                int contractLength = mission.getLengthInMonths();
 
-                    // First try and fetch the enemy mercenary employer if none exists (because the enemy faction
-                    // isn't an employed mercenary), then fetch the actual enemy
-                    Faction enemyFaction = atbContract.getEnemyMercenaryEmployer();
-                    if (enemyFaction == null) {
-                        enemyFaction = atbContract.getEnemy();
-                    }
+                // A covert sponsor, if any, takes the standing change in the visible enemy's/employer's place.
+                Faction enemyFaction = mission.getStandingEnemyFaction();
 
-                    String report = processContractAccept(campaignFactionCode,
-                          enemyFaction,
-                          today,
-                          regardMultiplier,
-                          contractLength);
-                    if (report != null) {
-                        reports.add(report);
-                    }
+                // Honor the contract's standing characteristics (Professional Courtesy / Blood Feud for the enemy,
+                // Employer's Favorite / On Probation for the employer) so a rebuild from history matches live play.
+                String report = processContractAccept(campaignFactionCode,
+                      enemyFaction,
+                      today,
+                      regardMultiplier * ContractCharacteristics.getEnemyRegardMultiplier(mission),
+                      contractLength);
+                if (report != null) {
+                    reports.add(report);
+                }
 
-                    if (missionStatus != MissionStatus.ACTIVE) {
-                        reports.addAll(processContractCompletion(campaignFaction, atbContract.getEmployerFaction(),
-                              today, missionStatus, regardMultiplier, contractLength));
-                    }
-                } else {
-                    // Non-AtB missions have their Standings updated when the contract concludes
-                    if (missionStatus != MissionStatus.ACTIVE) {
-                        ManualMissionDialog dialog = new ManualMissionDialog(null,
-                              campaignIcon,
-                              campaignFaction,
-                              today,
-                              missionStatus,
-                              mission.getName(),
-                              mission.getLength());
-
-                        Faction employerChoice = dialog.getEmployerChoice();
-                        Faction enemyChoice = dialog.getEnemyChoice();
-                        MissionStatus statusChoice = dialog.getStatusChoice();
-                        int contractLength = dialog.getDurationChoice();
-
-                        reports.addAll(handleFactionRegardUpdates(campaignFaction, employerChoice,
-                              enemyChoice, statusChoice, today, this, regardMultiplier, contractLength));
-                    }
+                if (missionStatus != MissionStatus.ACTIVE) {
+                    reports.addAll(processContractCompletion(campaignFaction, mission.getStandingEmployerFaction(),
+                          today, missionStatus,
+                          regardMultiplier * ContractCharacteristics.getEmployerRegardMultiplier(mission),
+                          contractLength));
                 }
             }
 
@@ -1787,20 +1730,7 @@ public class FactionStandings {
      *
      * @param missions the list of missions to sort in-place
      */
-    private static void sortMissionsBasedOnStartDateAndClass(List<Mission> missions) {
-        missions.sort((mission1, mission2) -> {
-            boolean m1IsContract = mission1 instanceof Contract;
-            boolean m2IsContract = mission2 instanceof Contract;
-
-            if (m1IsContract && m2IsContract) {
-                return ((Contract) mission1).getStartDate().compareTo(((Contract) mission2).getStartDate());
-            } else if (m1IsContract) {
-                return -1; // mission1 comes before mission2
-            } else if (m2IsContract) {
-                return 1; // mission1 comes after mission2
-            } else {
-                return 0; // both are non-Contract, maintain relative order
-            }
-        });
+    private static void sortMissionsBasedOnStartDateAndClass(List<AbstractContract> missions) {
+        missions.sort(Comparator.comparing(AbstractContract::getStartDate));
     }
 }

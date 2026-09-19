@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -35,6 +35,8 @@ package mekhq.campaign.universe;
 import static java.awt.Color.BLACK;
 import static megamek.utilities.ImageUtilities.addTintToImageIcon;
 
+import java.awt.Image;
+import java.awt.image.ImageObserver;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -48,6 +50,7 @@ import javax.swing.ImageIcon;
 import megamek.client.ratgenerator.FactionRecord;
 import megamek.client.ratgenerator.RATGenerator;
 import megamek.common.annotations.Nullable;
+import megamek.common.universe.Faction2;
 import megamek.common.universe.Factions2;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
@@ -93,6 +96,7 @@ public class Factions {
         return ratGenerator;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public void setRATGenerator(RATGenerator ratGenerator) {
         this.ratGenerator = Objects.requireNonNull(ratGenerator);
     }
@@ -101,8 +105,34 @@ public class Factions {
         return getFactions().stream().filter(Faction::isPlayable).collect(Collectors.toList());
     }
 
+    /**
+     * Returns a collection of all {@link Faction} objects, optionally including command subfactions.
+     *
+     * <p>If {@code includeCommands} is {@code false}, factions whose short name contains a period ({@code '.'}) will
+     * be excluded.</p>
+     *
+     * @param includeCommands if true, include factions that represent command subfactions; if false, exclude them
+     *
+     * @return a {@link Collection} of {@link Faction} objects, filtered as specified
+     */
+    public Collection<Faction> getFactions(boolean includeCommands) {
+        return factions.values().stream()
+                     .filter(faction -> (includeCommands || !faction.getShortName().contains(".")))
+                     .toList();
+    }
+
+    /**
+     * Returns a collection of all {@link Faction} objects, <b>including</b> command subfactions (those whose short
+     * name contains a period ({@code '.'})).
+     *
+     * <p>This is a convenience method equivalent to calling {@link #getFactions(boolean)} with {@code true}. It
+     * returns everything, which is what this method returned before {@link #getFactions(boolean)} existed. Callers
+     * that want only the factions a character can belong to should pass {@code false} instead.</p>
+     *
+     * @return a {@link Collection} of every {@link Faction}, commands included
+     */
     public Collection<Faction> getFactions() {
-        return factions.values();
+        return getFactions(true);
     }
 
     /**
@@ -145,12 +175,42 @@ public class Factions {
         return new ArrayList<>(factions.keySet());
     }
 
-    public Faction getFaction(String name) {
-        Faction defaultFaction = new Faction();
-        return factions.getOrDefault(name, defaultFaction);
+    /**
+     * Returns the faction for the given faction code.
+     * <p>
+     * A code that is not a current faction key is then resolved through the historical faction-code aliases (see
+     * {@link Faction2#getAliases()}). When a faction consolidation retires a code, the surviving faction keeps the old
+     * code as an alias - for example {@code CEI} (Escorpion Imperio) and {@code SE} (Scorpion Empire) are both retired
+     * into {@code CGS} - so that campaign saves, planetary ownership, universe data and RAT availability tables that
+     * still use the retired code keep resolving to the surviving faction rather than to the placeholder faction.
+     *
+     * @param name the faction code, either a current faction key or a retired alias
+     *
+     * @return the matching faction, or a placeholder faction when the code matches neither a key nor an alias
+     */
+    public Faction getFaction(@Nullable String name) {
+        Faction faction = factions.get(name);
+        if (faction == null) {
+            faction = factions.get(canonicalKeyForAlias(name));
+        }
+        return (faction != null) ? faction : new Faction();
     }
 
-    public Faction getFactionFromFullNameAndYear(final String factionName, final int year) {
+    /**
+     * Resolves a possibly retired faction code to the key of the faction that kept it as an alias.
+     *
+     * @param factionCode the faction code to resolve, which may be {@code null}
+     *
+     * @return the surviving faction's key, or {@code null} when the code is not a known alias
+     */
+    private @Nullable String canonicalKeyForAlias(@Nullable String factionCode) {
+        return Factions2.getInstance()
+                     .getFaction(factionCode)
+                     .map(Faction2::getKey)
+                     .orElse(null);
+    }
+
+    public @Nullable Faction getFactionFromFullNameAndYear(final String factionName, final int year) {
         return factions.values().stream()
                      .filter(faction -> faction.getFullName(year).equals(factionName))
                      .findFirst()
@@ -204,8 +264,18 @@ public class Factions {
     /**
      * Loads Factions data from a file.
      *
+     * @param isForTesting whether to load the test faction data instead of the shipped data
      */
     public static Factions load(boolean isForTesting) {
+        // Factions2 pins its data directory the first time anything touches it, and #getFaction reaches it (through
+        // the alias lookup) for any code it cannot resolve directly. Something that resolves an unknown code before
+        // the faction data is loaded therefore pins the production directory, after which this flag would be silently
+        // ignored - and under test, where that directory is not on the path, every later lookup would come back as a
+        // blank faction. Clearing it first makes the flag mean what it says.
+        if (isForTesting) {
+            Factions2.setInstance(null);
+        }
+
         // Factions are populated from the new unified factions list instead of loading them directly
         Factions factionsObject = new Factions();
         Factions2.getInstance(isForTesting).getFactions().stream()
@@ -224,23 +294,78 @@ public class Factions {
     }
 
     /**
-     * Returns the logo ImageIcon for a specific faction and game year.
+     * Returns a faction logo as a black-tinted {@link ImageIcon}, resolved for the given game year.
      *
-     * <p>This method resolves the appropriate logo file for the given {@code factionCode} and {@code gameYear},
-     * accounting for historical changes in faction logos over time where applicable.</p>
+     * <p>The logo file is selected based on {@code factionCode}, with some factions returning different logos
+     * depending on {@code gameYear} to reflect historical changes. Unknown or unsupported faction codes fall back to a
+     * generic clan logo or the mercenary logo.</p>
      *
-     * <p>The resulting image is loaded from the predefined directory as a PNG file and tinted black.
-     * For unknown or missing faction codes, a default logo is used.</p>
+     * @param gameYear    the in-game year, used to resolve era-appropriate logos for applicable factions
+     * @param factionCode the faction identifier (e.g., {@code "FS"} for Federated Suns)
      *
-     * @param gameYear    the year in the game context, potentially affecting logo selection for some factions
-     * @param factionCode the code identifying the faction (e.g., "FS" for Federated Suns)
-     *
-     * @return an {@link ImageIcon} object for the specified faction, tinted black
+     * @return a black-tinted {@link ImageIcon} representing the faction's logo
      *
      * @author Illiani
      * @since 0.50.06
      */
     public static ImageIcon getFactionLogo(int gameYear, String factionCode) {
+        String address = getFactionLogoAddress(gameYear, factionCode);
+        ImageIcon icon = new ImageIcon(address);
+        icon = addTintToImageIcon(icon.getImage(), BLACK);
+
+        return icon;
+    }
+
+    /**
+     * Returns a faction logo as a scaled, black-tinted {@link ImageIcon}, resolved for the given game year.
+     *
+     * <p>Scaling is performed on the original base image using {@link Image#SCALE_SMOOTH} to preserve
+     * quality. The target height is derived proportionally from the base image's aspect ratio and the requested
+     * {@code targetPixelWidth}, with a minimum width of {@code 1} pixel enforced.</p>
+     *
+     * @param gameYear         the in-game year, used to resolve era-appropriate logos for applicable factions
+     * @param factionCode      the faction identifier (e.g., {@code "FS"} for Federated Suns)
+     * @param targetPixelWidth the desired width in pixels; clamped to a minimum of {@code 1}
+     *
+     * @return a proportionally scaled, black-tinted {@link ImageIcon} representing the faction's logo
+     *
+     * @author Illiani
+     * @since 0.51.0
+     */
+    public static ImageIcon getFactionLogoWithScaling(int gameYear, String factionCode, int targetPixelWidth) {
+        ImageIcon icon = getFactionLogo(gameYear, factionCode);
+
+        Image baseImage = icon.getImage();
+
+        // The following sorcery is due to the compressed manner in which image icons scale. We need to manipulate the
+        // original base image, otherwise it looks grainy and terrible.
+        ImageObserver observer = (img, infoFlags, x, y, width, height) -> true;
+        int baseImageHeight = baseImage.getHeight(observer);
+        int baseImageWidth = baseImage.getWidth(observer);
+        int targetWidth = Math.max(1, targetPixelWidth);
+
+        int height = (int) Math.ceil((double) targetWidth * baseImageHeight / baseImageWidth);
+
+        return new ImageIcon(baseImage.getScaledInstance(targetWidth, height, Image.SCALE_SMOOTH));
+    }
+
+    /**
+     * Resolves the file path for a faction's logo image, accounting for era-based logo changes.
+     *
+     * <p>Most factions map to a fixed logo file. A small number of factions — such as Clan Ghost
+     * Bear and Clan Diamond Shark/Sea Fox — return different logos depending on {@code gameYear} to reflect historical
+     * transitions. Unrecognized faction codes fall back to a generic clan logo for clan factions, or the mercenary logo
+     * otherwise.</p>
+     *
+     * @param gameYear    the in-game year, used to select the correct logo for era-sensitive factions
+     * @param factionCode the faction identifier (e.g., {@code "DC"} for Draconis Combine)
+     *
+     * @return the relative file path to the faction's logo PNG, rooted at {@code data/images/universe/factions/}
+     *
+     * @author Illiani
+     * @since 0.51.0
+     */
+    private static String getFactionLogoAddress(int gameYear, String factionCode) {
         final String IMAGE_DIRECTORY = "data/images/universe/factions/";
         final String FILE_TYPE = ".png";
 
@@ -344,9 +469,6 @@ public class Factions {
             }
         };
 
-        ImageIcon icon = new ImageIcon(IMAGE_DIRECTORY + key + FILE_TYPE);
-        icon = addTintToImageIcon(icon.getImage(), BLACK);
-
-        return icon;
+        return IMAGE_DIRECTORY + key + FILE_TYPE;
     }
 }

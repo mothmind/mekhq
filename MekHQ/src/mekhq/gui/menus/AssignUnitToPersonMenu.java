@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -53,11 +53,13 @@ import megamek.common.units.Tank;
 import megamek.common.units.VTOL;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.location.IPlace;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.JScrollableMenu;
 import mekhq.gui.sorter.PersonTitleSorter;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * This is a standard menu that takes either a unit or multiple units that require the same tech type, and allows the
@@ -106,15 +108,27 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
         // units has
         // any crew or a tech
         if (Stream.of(units).anyMatch(unit -> (unit.getTech() != null) || !unit.getCrew().isEmpty())) {
-            final JMenuItem miUnassignCrew = new JMenuItem(resources.getString("miUnassignCrew.text"));
-            miUnassignCrew.setName("miUnassignCrew");
-            miUnassignCrew.addActionListener(evt -> {
-                for (final Unit unit : units) {
-                    unit.clearCrew();
-                }
-            });
-            add(miUnassignCrew);
+            String key = "miUnassignCrew";
+            boolean keepTechs = false;
+            removeCrew(units, key, keepTechs);
         }
+
+        if (Stream.of(units).anyMatch(unit -> !unit.getCrew().isEmpty())) {
+            String key = "miUnassignNonTechCrew";
+            boolean keepTechs = true;
+            removeCrew(units, key, keepTechs);
+        }
+    }
+
+    private void removeCrew(Unit[] units, String key, boolean keepTechs) {
+        final JMenuItem menuItem = new JMenuItem(resources.getString(key + ".text"));
+        menuItem.setName(key);
+        menuItem.addActionListener(evt -> {
+            for (final Unit unit : units) {
+                unit.clearCrew(keepTechs);
+            }
+        });
+        add(menuItem);
     }
 
     private void createPersonAssignmentMenus(final Campaign campaign, final Unit... units) {
@@ -149,20 +163,23 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
         final boolean canTakeTechOfficer = units[0].canTakeTechOfficer();
         final boolean usesSoldiers = units[0].usesSoldiers();
         final boolean isConventionalInfantry = units[0].isConventionalInfantry();
-        final boolean isUseAltAdvancedMedical = campaign.getCampaignOptions().isUseAlternativeAdvancedMedical();
-        final boolean isUseImplants = campaign.getCampaignOptions().isUseImplants();
+        final boolean isUseAltAdvancedMedical = campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL);
+        final boolean isUseImplants = campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS);
 
         // Skip People (by filtering them out) if they are:
         // 1) Inactive
         // 2) Prisoner
         // 3) Already assigned to a unit
+        // 4) At a different IPlace than the unit
         // Then sorts the remainder based on their full title
-        List<Person> personnel = campaign.getPersonnel()
+        final IPlace unitPlace = units[0].getPlace();
+        List<Person> personnel = campaign.getPlayerForce().getPersonnel().values()
                                        .stream()
                                        .filter(person -> person.getStatus().isActive())
                                        .filter(person -> !person.getPrisonerStatus().isCurrentPrisoner())
                                        .filter(Person::isEmployed)
                                        .filter(person -> person.getUnit() == null)
+                                       .filter(person -> unitPlace == null || person.getPlace() == unitPlace)
                                        .sorted(new PersonTitleSorter().reversed())
                                        .collect(Collectors.toList());
 
@@ -325,8 +342,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
                                 final Unit oldUnit = person.getUnit();
                                 boolean useTransfers = false;
                                 if (oldUnit != null) {
-                                    oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                                    useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                    oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                    useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                 }
 
                                 ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -709,8 +726,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -728,8 +745,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -746,8 +763,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -764,8 +781,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -782,8 +799,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -800,8 +817,8 @@ public class AssignUnitToPersonMenu extends JScrollableMenu {
             final Unit oldUnit = person.getUnit();
             boolean useTransfers = false;
             if (oldUnit != null) {
-                oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
             }
 
             ensureRecruitmentDate(campaign.getLocalDate(), person);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,14 +33,17 @@
 package mekhq.gui.dialog;
 
 import static java.lang.Math.min;
-import static megamek.codeUtilities.MathUtility.clamp;
 import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
-import static mekhq.campaign.personnel.Person.*;
-import static mekhq.campaign.personnel.skills.Aging.getMilestone;
+import static mekhq.campaign.personnel.ATOWTraits.BLOODMARK;
+import static mekhq.campaign.personnel.ATOWTraits.CONNECTIONS;
+import static mekhq.campaign.personnel.ATOWTraits.EXTRA_INCOME;
+import static mekhq.campaign.personnel.ATOWTraits.FAME;
+import static mekhq.campaign.personnel.ATOWTraits.UNLUCKY;
+import static mekhq.campaign.personnel.ATOWTraits.WEALTH;
 import static mekhq.campaign.personnel.skills.Skill.getCountUpMaxValue;
 import static mekhq.campaign.randomEvents.personalities.PersonalityController.writeInterviewersNotes;
 import static mekhq.campaign.randomEvents.personalities.PersonalityController.writePersonalityDescription;
-import static mekhq.campaign.randomEvents.personalities.enums.PersonalityQuirk.personalityQuirksSortedAlphabetically;
+import static mekhq.campaign.randomEvents.personalities.PersonalityQuirk.personalityQuirksSortedAlphabetically;
 
 import java.awt.Component;
 import java.awt.GridBagConstraints;
@@ -49,14 +52,7 @@ import java.awt.Insets;
 import java.awt.event.ActionEvent;
 import java.time.LocalDate;
 import java.time.Period;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.Enumeration;
-import java.util.Hashtable;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.ResourceBundle;
+import java.util.*;
 import javax.swing.*;
 
 import megamek.client.generator.RandomCallsignGenerator;
@@ -69,6 +65,7 @@ import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.util.UIUtil;
 import megamek.codeUtilities.MathUtility;
 import megamek.common.TechConstants;
+import megamek.common.annotations.Nullable;
 import megamek.common.enums.Gender;
 import megamek.common.equipment.EquipmentType;
 import megamek.common.options.IOption;
@@ -78,38 +75,38 @@ import megamek.common.options.OptionsConstants;
 import megamek.common.ui.FastJScrollPane;
 import megamek.common.units.Crew;
 import megamek.common.units.Entity;
-import megamek.common.universe.FactionTag;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.Bloodname;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.SpecialAbility;
+import mekhq.campaign.personnel.enums.BloodGroup;
 import mekhq.campaign.personnel.enums.Phenotype;
 import mekhq.campaign.personnel.enums.education.EducationLevel;
 import mekhq.campaign.personnel.skills.Skill;
 import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.personnel.skills.SkillType;
-import mekhq.campaign.personnel.skills.enums.AgingMilestone;
-import mekhq.campaign.randomEvents.personalities.enums.Aggression;
-import mekhq.campaign.randomEvents.personalities.enums.Ambition;
-import mekhq.campaign.randomEvents.personalities.enums.Greed;
-import mekhq.campaign.randomEvents.personalities.enums.PersonalityQuirk;
-import mekhq.campaign.randomEvents.personalities.enums.Reasoning;
-import mekhq.campaign.randomEvents.personalities.enums.Social;
+import mekhq.campaign.randomEvents.personalities.Aggression;
+import mekhq.campaign.randomEvents.personalities.Ambition;
+import mekhq.campaign.randomEvents.personalities.Greed;
+import mekhq.campaign.randomEvents.personalities.PersonalityQuirk;
+import mekhq.campaign.randomEvents.personalities.Reasoning;
+import mekhq.campaign.randomEvents.personalities.Social;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.PlanetarySystem;
-import mekhq.gui.baseComponents.AbstractMHQScrollablePanel;
 import mekhq.gui.baseComponents.DefaultMHQScrollablePanel;
 import mekhq.gui.control.EditKillLogControl;
 import mekhq.gui.control.EditLogControl;
 import mekhq.gui.control.EditLogControl.LogType;
 import mekhq.gui.control.EditScenarioLogControl;
 import mekhq.gui.utilities.MarkdownEditorPanel;
+import mekhq.gui.utilities.OriginFactionPickerHelper;
 
 /**
  * This dialog is used to both hire new pilots and to edit existing ones
@@ -139,8 +136,8 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     private JButton btnRetirementDate;
     private JComboBox<Gender> choiceGender;
     private JLabel lblAge;
-    private AbstractMHQScrollablePanel skillsPanel;
-    private AbstractMHQScrollablePanel optionsPanel;
+    private DefaultMHQScrollablePanel skillsPanel;
+    private DefaultMHQScrollablePanel optionsPanel;
     private JTextField textToughness;
     private JTextField textConnections;
     private JTextField textWealth;
@@ -150,6 +147,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     private JTextField textExtraIncome;
     private JTextField textFatigue;
     private JComboBox<EducationLevel> textEducationLevel;
+    private JComboBox<BloodGroup> comboBloodtype;
     private JTextField textLoyalty;
     private JTextField textPreNominal;
     private JTextField textGivenName;
@@ -159,9 +157,17 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     private JTextField textBloodname;
     private MarkdownEditorPanel txtBio;
     private JComboBox<Faction> choiceFaction;
+    private JCheckBox chkShowAllFactions;
     private JComboBox<PlanetarySystem> choiceSystem;
     private DefaultComboBoxModel<PlanetarySystem> allSystems;
-    private JCheckBox chkOnlyOurFaction;
+    // Per-(system,birthdate) owner-resolution cache. ownersAt(...) walks every event on every planet
+    // in a system, and the picker calls it twice per system per filter pass plus once per visible
+    // dropdown row in the renderer. With ~9k systems loaded that's measurable. Identity-keyed because
+    // PlanetarySystem instances are reused across calls. Cleared whenever birthdate changes.
+    // (Copilot review on PR #8935.)
+    private final java.util.IdentityHashMap<PlanetarySystem, Set<Faction>> ownersCache = new java.util.IdentityHashMap<>();
+    private LocalDate ownersCacheBirthdate;
+    private JCheckBox chkShowAllWorlds;
     private JComboBox<Planet> choicePlanet;
     private JCheckBox chkClan;
     private JComboBox<Phenotype> choicePhenotype;
@@ -262,6 +268,19 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         JLabel lblToughness = new JLabel();
         textEducationLevel = new JComboBox<>();
         JLabel lblEducationLevel = new JLabel();
+        JLabel lblBloodtype = new JLabel();
+        comboBloodtype = new JComboBox<>(BloodGroup.values());
+        comboBloodtype.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(final JList<?> list, final Object value, final int index,
+                    final boolean isSelected, final boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value instanceof BloodGroup bg) {
+                    setText(bg.getDisplayLabel());
+                }
+                return this;
+            }
+        });
         FastJScrollPane scrOptions = new FastJScrollPane();
         FastJScrollPane scrSkills = new FastJScrollPane();
         JPanel panButtons = new JPanel();
@@ -286,7 +305,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblName, gridBagConstraints);
 
         gridBagConstraints = new GridBagConstraints();
@@ -351,7 +370,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblBloodname, gridBagConstraints);
 
             textBloodname.setMinimumSize(UIUtil.scaleForGUI(150, 28));
@@ -378,7 +397,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblNickname, gridBagConstraints);
 
             textNickname.setText(person.getCallsign());
@@ -407,7 +426,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblGender, gridBagConstraints);
 
         choiceGender = new JComboBox<>(Gender.values());
@@ -419,7 +438,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choiceGender, gridBagConstraints);
 
         y++;
@@ -428,10 +447,19 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(new JLabel("Origin Faction:"), gridBagConstraints);
 
-        DefaultComboBoxModel<Faction> factionsModel = getFactionsComboBoxModel();
+        // Decide the initial faction-picker model up front so we can construct the JComboBox with
+        // the right contents from the start. The earlier approach (build strict, attach listener,
+        // then maybe rebuild) fired the choiceFaction selection-change listener during init, while
+        // chkClan and chkOnlyOurFaction were still null — Copilot review on PR #8937. Build now,
+        // attach listener after, and the rebuild path is reserved for the post-construction toggle.
+        boolean originSurvivesStrictFilter = OriginFactionPickerHelper.wouldStrictFilterAdmit(
+              person.getOriginFaction(), person, campaign.getGameYear(), person.getRecruitment());
+        boolean openExpanded = person.getOriginFaction() != null && !originSurvivesStrictFilter;
+        DefaultComboBoxModel<Faction> factionsModel = OriginFactionPickerHelper.buildModel(
+              person, campaign.getGameYear(), person.getRecruitment(), openExpanded);
         choiceFaction = new JComboBox<>(factionsModel);
         choiceFaction.setRenderer(new DefaultListCellRenderer() {
             @Override
@@ -458,7 +486,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             // We don't have to call backgroundChanged because it is already
             // called when we update the chkClan checkbox.
 
-            if (chkOnlyOurFaction.isSelected()) {
+            if (!chkShowAllWorlds.isSelected()) {
                 filterPlanetarySystemsForOurFaction(true);
             }
         });
@@ -468,8 +496,26 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choiceFaction, gridBagConstraints);
+
+        // "Show All Factions" sibling checkbox. Default unchecked = strict lifespan filter (the
+        // canonically correct view); checked = unfiltered (escape hatch for long-lived or
+        // unusual-origin characters). State is set to mirror the model we just built, so the
+        // checkbox is consistent with what's displayed without needing to fire the toggle handler
+        // during construction. See issue #8929.
+        chkShowAllFactions = new JCheckBox("Show All Factions");
+        chkShowAllFactions.setSelected(openExpanded);
+        chkShowAllFactions.addActionListener(e -> rebuildFactionsModelPreservingSelection());
+
+        gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 2;
+        gridBagConstraints.gridy = y;
+        gridBagConstraints.gridwidth = 1;
+        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
+        panDemographics.add(chkShowAllFactions, gridBagConstraints);
 
         y++;
 
@@ -477,30 +523,46 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(new JLabel("Origin System:"), gridBagConstraints);
 
         DefaultComboBoxModel<Planet> planetsModel = new DefaultComboBoxModel<>();
         choicePlanet = new JComboBox<>(planetsModel);
 
         allSystems = getPlanetarySystemsComboBoxModel();
-        choiceSystem = new JComboBox<>(allSystems);
+        Faction originFaction = person.getOriginFaction();
+        DefaultComboBoxModel<PlanetarySystem> initialSystems = (originFaction != null)
+                                                                     ? getPlanetarySystemsComboBoxModel(originFaction)
+                                                                     : allSystems;
+        // If the person already has an origin planet that the faction-filtered view excludes (e.g.,
+        // a Tharkad-origin character whose faction is now FedSuns), fall back to the all-worlds view
+        // so we don't silently drop their existing assignment when they click OK. Tracked back to the
+        // checkbox state below via showAllWorldsInitial. (Copilot review on PR #8935.)
+        PlanetarySystem existingOriginSystem = (person.getOriginPlanet() != null)
+                                                     ? person.getOriginPlanet().getParentSystem()
+                                                     : null;
+        boolean showAllWorldsInitial = false;
+        if (existingOriginSystem != null && initialSystems != allSystems
+                  && initialSystems.getIndexOf(existingOriginSystem) < 0) {
+            initialSystems = allSystems;
+            showAllWorldsInitial = true;
+        }
+        choiceSystem = new JComboBox<>(initialSystems);
         choiceSystem.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(final JList<?> list, final Object value, final int index,
                   final boolean isSelected, final boolean cellHasFocus) {
                 super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
                 if (value instanceof PlanetarySystem system) {
-                    setText(system.getName(campaign.getLocalDate()));
+                    setText(formatSystemForBirthdate(system));
                 }
 
                 return this;
             }
         });
-        if (person.getOriginPlanet() != null) {
-            PlanetarySystem planetarySystem = person.getOriginPlanet().getParentSystem();
-            choiceSystem.setSelectedIndex(allSystems.getIndexOf(planetarySystem));
-            updatePlanetsComboBoxModel(planetsModel, planetarySystem);
+        if (existingOriginSystem != null) {
+            choiceSystem.setSelectedIndex(initialSystems.getIndexOf(existingOriginSystem));
+            updatePlanetsComboBoxModel(planetsModel, existingOriginSystem);
         }
         choiceSystem.addActionListener(evt -> {
             // Update the clan check box based on the new selected faction
@@ -516,11 +578,12 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choiceSystem, gridBagConstraints);
 
-        chkOnlyOurFaction = new JCheckBox("Faction Specific");
-        chkOnlyOurFaction.addActionListener(e -> filterPlanetarySystemsForOurFaction(chkOnlyOurFaction.isSelected()));
+        chkShowAllWorlds = new JCheckBox("Show All Worlds");
+        chkShowAllWorlds.setSelected(showAllWorldsInitial);
+        chkShowAllWorlds.addActionListener(e -> filterPlanetarySystemsForOurFaction(!chkShowAllWorlds.isSelected()));
 
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 2;
@@ -528,8 +591,8 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
-        panDemographics.add(chkOnlyOurFaction, gridBagConstraints);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
+        panDemographics.add(chkShowAllWorlds, gridBagConstraints);
 
         y++;
 
@@ -537,7 +600,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(new JLabel("Origin Planet:"), gridBagConstraints);
 
         choicePlanet.setRenderer(new DefaultListCellRenderer() {
@@ -562,7 +625,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choicePlanet, gridBagConstraints);
 
         y++;
@@ -571,7 +634,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(new JLabel("Phenotype:"), gridBagConstraints);
 
         DefaultComboBoxModel<Phenotype> phenotypeModel = new DefaultComboBoxModel<>();
@@ -589,7 +652,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choicePhenotype, gridBagConstraints);
 
         chkClan = new JCheckBox("Clan Personnel");
@@ -601,7 +664,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-        gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(chkClan, gridBagConstraints);
 
         y++;
@@ -612,7 +675,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblBirthday, gridBagConstraints);
 
         btnDate = new JButton(MekHQ.getMHQOptions().getDisplayFormattedDate(birthdate));
@@ -630,19 +693,19 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblAge, gridBagConstraints);
 
         y++;
 
-        if (campaign.getCampaignOptions().isUseTimeInService() && (recruitment != null)) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_TIME_IN_SERVICE) && (recruitment != null)) {
             lblRecruitment.setText(resourceMap.getString("lblRecruitment.text"));
             lblRecruitment.setName("lblRecruitment");
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblRecruitment, gridBagConstraints);
 
             btnServiceDate = new JButton(MekHQ.getMHQOptions().getDisplayFormattedDate(recruitment));
@@ -657,14 +720,14 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             y++;
         }
 
-        if (campaign.getCampaignOptions().isUseTimeInRank() && (lastRankChangeDate != null)) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_TIME_IN_RANK) && (lastRankChangeDate != null)) {
             JLabel lblLastRankChangeDate = new JLabel(resourceMap.getString("lblLastRankChangeDate.text"));
             lblLastRankChangeDate.setName("lblLastRankChangeDate");
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblLastRankChangeDate, gridBagConstraints);
 
             btnRankDate = new JButton(MekHQ.getMHQOptions().getDisplayFormattedDate(lastRankChangeDate));
@@ -686,7 +749,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblRetirement, gridBagConstraints);
 
             btnRetirementDate = new JButton(MekHQ.getMHQOptions().getDisplayFormattedDate(retirement));
@@ -701,7 +764,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             y++;
         }
 
-        if (campaign.getCampaignOptions().isUseToughness()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_TOUGHNESS)) {
             lblToughness.setText(resourceMap.getString("lblToughness.text"));
             lblToughness.setName("lblToughness");
 
@@ -712,7 +775,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblToughness, gridBagConstraints);
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 1;
@@ -734,7 +797,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblConnections, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -755,7 +818,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblWealth, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -769,14 +832,14 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         lblReputation.setText(resourceMap.getString("lblReputation.text"));
         lblReputation.setName("lblReputation");
 
-        textReputation.setText(Integer.toString(person.getReputation()));
+        textReputation.setText(Integer.toString(person.getFame()));
         textReputation.setName("textReputation");
 
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblReputation, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -797,7 +860,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblUnlucky, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -818,7 +881,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblBloodmark, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -839,7 +902,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblExtraIncome, gridBagConstraints);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 1;
@@ -850,7 +913,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
 
         y++;
 
-        if (campaign.getCampaignOptions().isUseFatigue()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_FATIGUE)) {
             lblFatigue.setText(resourceMap.getString("lblFatigue.text"));
             lblFatigue.setName("lblFatigue");
 
@@ -861,7 +924,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblFatigue, gridBagConstraints);
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 1;
@@ -873,7 +936,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             y++;
         }
 
-        if (campaign.getCampaignOptions().isUseEducationModule()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_EDUCATION_MODULE)) {
             lblEducationLevel.setText(resourceMap.getString("lblEducationLevel.text"));
             lblEducationLevel.setName("lblEducationLevel");
 
@@ -887,7 +950,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblEducationLevel, gridBagConstraints);
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 1;
@@ -899,8 +962,28 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             y++;
         }
 
-        if ((campaign.getCampaignOptions().isUseLoyaltyModifiers()) &&
-                  (!campaign.getCampaignOptions().isUseHideLoyalty())) {
+        lblBloodtype.setText(resourceMap.getString("lblBloodtype.text"));
+        lblBloodtype.setName("lblBloodtype");
+
+        comboBloodtype.setSelectedItem(person.getBloodGroup());
+
+        gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = y;
+        gridBagConstraints.anchor = GridBagConstraints.WEST;
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
+        panDemographics.add(lblBloodtype, gridBagConstraints);
+        gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 1;
+        gridBagConstraints.gridy = y;
+        gridBagConstraints.anchor = GridBagConstraints.WEST;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
+        panDemographics.add(comboBloodtype, gridBagConstraints);
+
+        y++;
+
+        if ((campaign.getCampaignOptions().get(CampaignOption.USE_LOYALTY_MODIFIERS)) &&
+                  (!campaign.getCampaignOptions().get(CampaignOption.USE_HIDE_LOYALTY))) {
             lblLoyalty.setText(resourceMap.getString("lblLoyalty.text"));
             lblLoyalty.setName("lblLoyalty");
 
@@ -911,7 +994,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(lblLoyalty, gridBagConstraints);
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 1;
@@ -942,7 +1025,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         choiceUnitTech.setSelectedIndex(person.getOriginalUnitTech());
 
         JLabel lblShares = new JLabel();
-        lblShares.setText(person.getNumShares(campaign, campaign.getCampaignOptions().isSharesForAll()) + " shares");
+        lblShares.setText(person.getNumShares(campaign, campaign.getCampaignOptions().get(CampaignOption.SHARES_FOR_ALL)) + " shares");
 
         chkFounder = new JCheckBox("Founding member");
         chkFounder.setSelected(person.isFounder());
@@ -994,7 +1077,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(lblUnit, gridBagConstraints);
 
         gridBagConstraints.gridx = 1;
@@ -1013,7 +1096,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridy = y;
         gridBagConstraints.gridwidth = 3;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(choiceOriginalUnit, gridBagConstraints);
 
         y++;
@@ -1022,10 +1105,10 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.gridy = y;
         gridBagConstraints.gridwidth = 2;
         gridBagConstraints.anchor = GridBagConstraints.WEST;
-        gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+        gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
         panDemographics.add(chkFounder, gridBagConstraints);
 
-        if (campaign.getCampaignOptions().isUseShareSystem()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_SHARE_SYSTEM)) {
             gridBagConstraints.gridx = 2;
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 1;
@@ -1036,7 +1119,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         y++;
 
         // region random personality
-        if (campaign.getCampaignOptions().isUseRandomPersonalities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_PERSONALITIES)) {
             JLabel labelAggression = new JLabel();
             labelAggression.setText("Aggression:");
             labelAggression.setName("labelAggression");
@@ -1044,7 +1127,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelAggression, gridBagConstraints);
 
             comboAggression = new MMComboBox<>("comboAggression", Aggression.values());
@@ -1054,7 +1137,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboAggression, gridBagConstraints);
 
             spnAggression = new JSpinner(new SpinnerNumberModel(person.getAggressionDescriptionIndex(),
@@ -1064,7 +1147,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y++;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(spnAggression, gridBagConstraints);
 
             JLabel labelAmbition = new JLabel();
@@ -1074,7 +1157,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelAmbition, gridBagConstraints);
 
             comboAmbition = new MMComboBox<>("comboAmbition", Ambition.values());
@@ -1084,7 +1167,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboAmbition, gridBagConstraints);
 
             spnAmbition = new JSpinner(new SpinnerNumberModel(person.getAmbitionDescriptionIndex(),
@@ -1094,7 +1177,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y++;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(spnAmbition, gridBagConstraints);
 
             JLabel labelGreed = new JLabel();
@@ -1104,7 +1187,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelGreed, gridBagConstraints);
 
             comboGreed = new MMComboBox<>("comboGreed", Greed.values());
@@ -1114,7 +1197,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboGreed, gridBagConstraints);
 
             spnGreed = new JSpinner(new SpinnerNumberModel(person.getGreedDescriptionIndex(),
@@ -1124,7 +1207,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y++;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(spnGreed, gridBagConstraints);
 
             JLabel labelSocial = new JLabel();
@@ -1134,7 +1217,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelSocial, gridBagConstraints);
 
             comboSocial = new MMComboBox<>("comboSocial", Social.values());
@@ -1144,7 +1227,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboSocial, gridBagConstraints);
 
             spnSocial = new JSpinner(new SpinnerNumberModel(person.getSocialDescriptionIndex(),
@@ -1154,7 +1237,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y++;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(spnSocial, gridBagConstraints);
 
             JLabel labelPersonalityQuirk = new JLabel();
@@ -1164,7 +1247,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelPersonalityQuirk, gridBagConstraints);
 
             comboPersonalityQuirk = new MMComboBox<>("comboPersonalityQuirk", personalityQuirksSortedAlphabetically());
@@ -1174,7 +1257,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboPersonalityQuirk, gridBagConstraints);
 
             spnPersonalityQuirk = new JSpinner(new SpinnerNumberModel(person.getPersonalityQuirkDescriptionIndex(),
@@ -1184,11 +1267,15 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y++;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(spnPersonalityQuirk, gridBagConstraints);
 
             y++;
+        }
+        // endregion random personality
 
+        // region random talent
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT)) {
             JLabel labelReasoning = new JLabel();
             labelReasoning.setText("Talent:");
             labelReasoning.setName("labelReasoning");
@@ -1196,7 +1283,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridx = 0;
             gridBagConstraints.gridy = y;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(labelReasoning, gridBagConstraints);
 
             comboReasoning = new MMComboBox<>("comboReasoning", Reasoning.values());
@@ -1206,11 +1293,12 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 2;
             gridBagConstraints.anchor = GridBagConstraints.WEST;
-            gridBagConstraints.insets = new Insets(0, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(0, UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(comboReasoning, gridBagConstraints);
 
             y++;
         }
+        // endregion random talent
 
         if (person.hasDarkSecret()) {
             chkDarkSecretRevealed = new JCheckBox("Dark Secret Revealed");
@@ -1221,7 +1309,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             gridBagConstraints.gridwidth = 1;
             gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
             gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
-            gridBagConstraints.insets = new Insets(5, 5, 0, 0);
+            gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), 0, 0);
             panDemographics.add(chkDarkSecretRevealed, gridBagConstraints);
 
             y++;
@@ -1238,7 +1326,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         gridBagConstraints.weighty = 1.0;
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
+        gridBagConstraints.insets = new Insets(UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5), UIUtil.scaleForGUI(5));
         panDemographics.add(txtBio, gridBagConstraints);
 
         FastJScrollPane scrollPane = new FastJScrollPane(panDemographics);
@@ -1267,9 +1355,9 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         scrOptions.setPreferredSize(UIUtil.scaleForGUI(500, 500));
 
         tabStats.addTab(resourceMap.getString("scrSkills.TabConstraints.tabTitle"), scrSkills);
-        if (campaign.getCampaignOptions().isUseAbilities() ||
-                  campaign.getCampaignOptions().isUseEdge() ||
-                  campaign.getCampaignOptions().isUseImplants()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_ABILITIES) ||
+                  campaign.getCampaignOptions().get(CampaignOption.USE_EDGE) ||
+                  campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS)) {
             tabStats.addTab(resourceMap.getString("scrOptions.TabConstraints.tabTitle"), scrOptions);
         }
         tabStats.add(resourceMap.getString("panLog.TabConstraints.tabTitle"),
@@ -1339,8 +1427,8 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
 
             // Add units to the combo box based on the person's capabilities
             if (person.canDrive(entity,
-                  campaign.getCampaignOptions().isUseAlternativeAdvancedMedical(),
-                  campaign.getCampaignOptions().isUseImplants())) {
+                  campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL),
+                  campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS))) {
                 choiceOriginalUnit.addItem(unit);
                 continue; // Skip further checks if already added
             }
@@ -1369,67 +1457,434 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         }
     }
 
-    private DefaultComboBoxModel<Faction> getFactionsComboBoxModel() {
-        int year = campaign.getGameYear();
-        List<Faction> orderedFactions = Factions.getInstance()
-                                              .getFactions()
-                                              .stream()
-                                              .sorted((a, b) -> a.getFullName(year)
-                                                                      .compareToIgnoreCase(b.getFullName(year)))
-                                              .toList();
-
-        DefaultComboBoxModel<Faction> factionsModel = new DefaultComboBoxModel<>();
-        for (Faction faction : orderedFactions) {
-            // Always include the person's faction
-            if (faction.equals(person.getOriginFaction())) {
-                factionsModel.addElement(faction);
-            } else {
-                if (faction.is(FactionTag.HIDDEN) || faction.is(FactionTag.SPECIAL)) {
-                    continue;
-                }
-
-                // Allow factions between the person's birthday
-                // and when they were recruited, or now if we're
-                // not tracking recruitment.
-                int endYear = person.getRecruitment() != null ?
-                                    Math.min(person.getRecruitment().getYear(), year) :
-                                    year;
-                if (faction.validBetween(person.getDateOfBirth().getYear(), endYear)) {
-                    factionsModel.addElement(faction);
-                }
-            }
-        }
-
-        return factionsModel;
+    /**
+     * Rebuilds {@code choiceFaction}'s model after a "Show All Factions" toggle, preserving the current selection
+     * across the swap. If there was no current selection (or the previously selected faction has been filtered out by
+     * the new model), the index is explicitly set to {@code -1} — otherwise Swing's combobox auto-selects the first
+     * item on a model swap, which would silently assign an unintended origin when OK is clicked. (Copilot review on PR
+     * #8937.)
+     */
+    private void rebuildFactionsModelPreservingSelection() {
+        Faction current = (Faction) choiceFaction.getSelectedItem();
+        DefaultComboBoxModel<Faction> rebuilt = OriginFactionPickerHelper.buildModel(
+              person, campaign.getGameYear(), person.getRecruitment(), chkShowAllFactions.isSelected());
+        choiceFaction.setModel(rebuilt);
+        int idx = (current != null) ? rebuilt.getIndexOf(current) : -1;
+        choiceFaction.setSelectedIndex(idx);
     }
 
+    // =========================================================================================
+    // Origin-system picker — birthworld semantics (issue #8934)
+    //
+    // The picker decides what worlds to show in five steps. Running example: Koji,
+    // born 3047-09-25, FedSuns origin, in a 3071 campaign.
+    //
+    // 1. Drop worlds that don't belong. Three filters run first:
+    //    a. Drop connector systems. Some YAML files under connector_systems/ are not real
+    //       worlds. They are routing helpers for jump paths. PlanetarySystem.isConnector
+    //       is set at YAML load time and skipped here.
+    //    b. Drop worlds with no people at the birthdate. A character born in 3047 cannot
+    //       come from a world that was empty in 3047.
+    //    c. (Filtered view only) Match faction by family tree. The old check asked: does
+    //       the world's owner equal the chosen faction? That fails for Koji — New Avalon
+    //       reads as FC in 3047, not FS. The new check also accepts a parent or child of
+    //       the chosen faction. FedCom is FedSuns and Lyran joined, so a FedSuns pick
+    //       matches a world that reads as FedCom. See isFactionMatch.
+    //
+    // 2. Look up the owner at the right date. Two things were wrong before:
+    //    a. The dialog has its own date field. The date picker writes to a local
+    //       'birthdate' field. The person's saved date only updates when OK is clicked.
+    //       The old code read the saved date, so date-picker changes had no effect until
+    //       reopening the dialog. Now everything reads the local 'birthdate'. The date
+    //       picker also fires a refresh.
+    //    b. The standard owner-lookup uses a cache that lies. Planet.getFactionSet(date)
+    //       keeps a running cursor that walks events forward. If the campaign already
+    //       rendered 3071, the cursor stopped there. Then asking about 3047 gives you
+    //       3067 data. New Avalon at 3047-09-25 was returning the 3067 DIS marker for
+    //       this reason. The new helper ownersAt(system, date) reads the events list
+    //       directly. No cursor, no surprise.
+    //
+    // 3. Apply "to the victor" rules inside ownersAt. BattleTech treats world citizenship
+    //    as who holds the world long term, not who happens to hold it during a war.
+    //    ownersAt swaps the listed owner for the world's eventual owner when:
+    //      - The listed owner is DIS (disputed). Whoever wins gets the world.
+    //      - The listed owner is a faction that ends within 100 years of the birthdate.
+    //
+    //    The 100-year rule is the heart of it. FedCom ends in 3067. A character born in
+    //    3047 will outlive the FedCom merger. They are FedSuns or Lyran stock, depending
+    //    on who keeps the world. But a character born in 2470 under the Star League keeps
+    //    SL — the Star League ends in 2786, more than 300 years later, and the player
+    //    picked that era for a reason.
+    //
+    //    Examples:
+    //      New Avalon  3047  listed FC (ends 3067)        eventual FS  -> swap to FS
+    //      Tharkad     3047  listed FC (ends 3067)        eventual LA  -> swap to LA
+    //      Hesperus II 3047  listed LA (no end)           eventual LA  -> keep LA
+    //      Terra       2470  listed SL (ends 2786, 316y)  various      -> keep SL
+    //
+    // 4. Show the owner in each row. Each dropdown row reads "World [OWNER]". Koji's view
+    //    shows "New Avalon [FS]" even though the raw data says FC — the to-the-victor rule
+    //    did the swap. See formatSystemForBirthdate.
+    //
+    // 5. Default the checkbox to filtered. The list should show worlds that could be home
+    //    to this faction's people. Showing the whole universe by default broke that. The
+    //    checkbox is now "Show All Worlds": off = filtered (default), on = everything.
+    //
+    // Performance: ownersAt walks all planets and events. cachedOwnersAt caches the result
+    // per system, keyed by birthdate. During a single filter pass each system is resolved
+    // once. The cache clears when 'birthdate' changes.
+    // =========================================================================================
+
     private DefaultComboBoxModel<PlanetarySystem> getPlanetarySystemsComboBoxModel() {
+        // Unfiltered "all systems" model used when "Show All Worlds" is on. See header above.
         DefaultComboBoxModel<PlanetarySystem> model = new DefaultComboBoxModel<>();
+        LocalDate birthDate = birthdate;
 
         List<PlanetarySystem> orderedSystems = campaign.getSystems()
                                                      .stream()
-                                                     .sorted(Comparator.comparing(a -> a.getName(campaign.getLocalDate())))
+                                                     .filter(a -> !a.isConnector())
+                                                     // A world counts as a valid birth world if it either has a real
+                                                     // owner faction at the birthdate OR still had a recorded
+                                                     // population then.
+                                                       .filter(a -> hadPopulationAt(a) ||
+                                                                            isInhabitedAt(cachedOwnersAt(a)))
+                                                     .sorted(Comparator.comparing(a -> a.getName(birthDate)))
                                                      .toList();
         for (PlanetarySystem system : orderedSystems) {
             model.addElement(system);
         }
+
         return model;
     }
 
     private DefaultComboBoxModel<PlanetarySystem> getPlanetarySystemsComboBoxModel(Faction faction) {
+        // Faction-filtered model used when "Show All Worlds" is off. See header above.
         DefaultComboBoxModel<PlanetarySystem> model = new DefaultComboBoxModel<>();
+        LocalDate birthDate = birthdate;
 
         List<PlanetarySystem> orderedSystems = campaign.getSystems()
                                                      .stream()
-                                                     .filter(a -> a.getFactionSet(person.getDateOfBirth())
-                                                                        .contains(faction))
-                                                     .sorted(Comparator.comparing(a -> a.getName(person.getDateOfBirth())))
+                                                     .filter(a -> !a.isConnector())
+                                                     .filter(a -> {
+                                                         Set<Faction> owners = cachedOwnersAt(a);
+                                                         return isInhabitedAt(owners) &&
+                                                                      isFactionMatch(owners, faction);
+                                                     })
+                                                     .sorted(Comparator.comparing(a -> a.getName(birthDate)))
                                                      .toList();
         for (PlanetarySystem system : orderedSystems) {
             model.addElement(system);
         }
 
         return model;
+    }
+
+    /**
+     * Returns {@link #ownersAt(PlanetarySystem, LocalDate)} cached per system for the dialog's current
+     * {@code birthdate}. The cache is invalidated when {@code birthdate} changes, so a single filter pass resolves each
+     * system at most once even when both the inhabited and faction filters apply.
+     */
+    private Set<Faction> cachedOwnersAt(PlanetarySystem system) {
+        if (!java.util.Objects.equals(birthdate, ownersCacheBirthdate)) {
+            ownersCache.clear();
+            ownersCacheBirthdate = birthdate;
+        }
+        return ownersCache.computeIfAbsent(system, s -> ownersAt(s, birthdate));
+    }
+
+    /**
+     * Renders the dropdown label as e.g. {@code "New Avalon [FS]"} — the date-aware system name with the resolved owner
+     * faction code(s) appended in brackets. Owner is computed by {@link #ownersAt(PlanetarySystem, LocalDate)} which
+     * applies to-the-victor citizenship rules, so a 3047-born character sees New Avalon as {@code [FS]} rather than the
+     * transitional {@code [FC]}. Multiple owners come out comma-separated, e.g. {@code "World [FACTA, FACTB]"}. Visible
+     * in both filtered and "Show All Worlds" modes — useful both for player context and for spotting data-side
+     * anomalies at a glance.
+     */
+    private String formatSystemForBirthdate(PlanetarySystem system) {
+        String name = system.getName(birthdate);
+        Set<Faction> owners = cachedOwnersAt(system);
+        if (owners.isEmpty()) {
+            return name;
+        }
+        StringBuilder codes = new StringBuilder();
+        for (Faction faction : owners) {
+            if (faction == null) {
+                continue;
+            }
+            if (codes.length() > 0) {
+                codes.append(", ");
+            }
+            codes.append(faction.getShortName());
+        }
+        return codes.length() == 0 ? name : name + " [" + codes + "]";
+    }
+
+    /**
+     * Cache-bypassing point-in-time owner lookup with to-the-victor citizenship semantics.
+     *
+     * <p>{@link Planet#getFactionSet(LocalDate)} routes through {@code Planet.CurrentEvents}, a
+     * stateful per-planet event-stream cache that can return stale-forward state when warmed at a later date and
+     * queried at an earlier one (observed during #8934 testing — New Avalon at 3047-09-25 returning 3067-12-31's
+     * {@code DIS} marker because the cache had already advanced for a campaign-date render). We walk
+     * {@link Planet#getEvents()} directly (TreeMap-ordered, deterministic) instead.</p>
+     *
+     * <p>BattleTech canon treats world-citizenship as defined by whoever ends up holding the world
+     * long-term, not by transient umbrella states or active disputes. We substitute the snapshot with the world's
+     * eventual stable owner when:</p>
+     *
+     * <ul>
+     *   <li>The snapshot is a {@code DIS} (Disputed) marker — to the victor goes the spoils.</li>
+     *   <li>The snapshot owner is a faction with a defined dissolution year within 100 years of {@code when}
+     *   <b>and</b> the eventual owner already held this world at or before {@code when}. The second condition
+     *   restricts substitution to a transient umbrella/overlay state the world reverts out of, and excludes a
+     *   continuous polity that merely renames into a brand-new successor (see below). This catches FedCom-era
+     *   births (FC ends 3067, well within a 3047 character's lifespan) without retroactively rewriting
+     *   deep-history births where the dissolution is centuries off (a 2470 Star League birth keeps SL — the
+     *   player chose that era deliberately).</li>
+     * </ul>
+     *
+     * <p>"Eventual stable owner" is the most-recent non-{@code DIS} faction event in the planet's
+     * own future timeline. If the world has no future faction events (data ends at the snapshot),
+     * or if the eventual owner is the same as the snapshot, the snapshot is used as-is. The
+     * {@code ABN} (Abandoned) marker is dropped only when other real owners are present. The owner decision
+     * itself lives in {@link #chooseDisplayedOwner}.</p>
+     *
+     * <p>Concrete cases:</p>
+     *
+     * <ul>
+     *   <li>New Avalon at 3047, snapshot {@code FC} (ends 3067, within 100y), eventual {@code FS} (held it
+     *   before the FedCom overlay): substitutes — a 3047-born NA citizen is FedSuns-stock.</li>
+     *   <li>Tharkad at 3047, snapshot {@code FC}, eventual {@code LA} (held it before): substitutes to
+     *   {@code LA}, putting the world on the Lyran side as it ends up.</li>
+     *   <li>New Avalon at 3070, snapshot {@code DIS}, eventual {@code FS}: substitutes.</li>
+     *   <li>Mishkadrill at 3025, snapshot {@code OA} (Outworlds Alliance, ends 3082, within 100y), eventual
+     *   {@code RA} (Raven Alliance — the rename, never owned the world before 3083): kept as {@code OA}. A
+     *   pre-3083 character is Outworlds-stock, and the OA origin filter still finds the world.</li>
+     *   <li>Terra at 2470, snapshot {@code SL} (ends ~2786, 316y off), eventual modern owner: kept
+     *   as {@code SL} — the era is intentional.</li>
+     *   <li>Hesperus II at 3047, snapshot {@code LA} (no end year), eventual {@code LA}: kept.</li>
+     * </ul>
+     */
+    private static final int DISSOLUTION_PROXIMITY_YEARS = 100;
+
+    private static Set<Faction> ownersAt(PlanetarySystem system, LocalDate when) {
+        Set<Faction> result = new HashSet<>();
+        if (when == null) {
+            return result;
+        }
+        for (Planet planet : system.getPlanets()) {
+            java.util.List<Planet.PlanetaryEvent> events = planet.getEvents();
+            if (events == null) {
+                continue;
+            }
+            List<String> snapshot = null;
+            List<String> eventualOwner = null;
+            // Every faction code that owned this world at or before `when`. Lets us tell a transient
+            // overlay the world reverts out of (the eventual owner also held it earlier — e.g. FedCom
+            // over Davion/Lyran worlds) from a continuous polity that simply renames into a brand-new
+            // successor (the eventual owner is new — e.g. Outworlds Alliance -> Raven Alliance). Only
+            // the former is substituted; see chooseDisplayedOwner.
+            Set<String> priorOwnerCodes = new HashSet<>();
+            for (Planet.PlanetaryEvent event : events) {
+                if (event.date == null || event.faction == null || event.faction.getValue() == null) {
+                    continue;
+                }
+                List<String> codes = event.faction.getValue();
+                if (event.date.isAfter(when)) {
+                    if (!isDisputedOnly(codes)) {
+                        eventualOwner = codes;
+                    }
+                } else {
+                    snapshot = codes;
+                    priorOwnerCodes.addAll(codes);
+                }
+            }
+            // No snapshot means the world wasn't owned at `when` — uncolonized. Don't substitute a
+            // future colonization event, or we'd incorrectly mark pre-colonial dates as inhabited
+            // and pollute the picker (Copilot review on PR #8935).
+            List<String> displayed = chooseDisplayedOwner(snapshot, eventualOwner, priorOwnerCodes,
+                  anyDissolvesNear(snapshot, when));
+            addCodes(result, displayed);
+        }
+        if (result.size() > 1) {
+            result.remove(Factions.getInstance().getFaction("ABN"));
+        }
+        return result;
+    }
+
+    /**
+     * Decides which owner code list to credit a world to: the era-correct {@code snapshot} owner, or its
+     * {@code eventualOwner} when the snapshot is merely a transient state the world ends up leaving.
+     *
+     * <p>The snapshot is replaced by the eventual owner only when it is genuinely transient:</p>
+     * <ul>
+     *   <li>The snapshot is a {@code DIS} (Disputed) marker — to the victor goes the spoils; always substitute.</li>
+     *   <li>The snapshot faction dissolves within {@link #DISSOLUTION_PROXIMITY_YEARS} of {@code when}
+     *   ({@code snapshotDissolvesNear}) <b>and</b> the eventual owner already held this world at or before
+     *   {@code when} (its codes intersect {@code priorOwnerCodes}).</li>
+     * </ul>
+     *
+     * <p>The second clause is the key distinction. A temporary umbrella/overlay state that the world reverts out
+     * of has the eventual owner present earlier in the timeline (FedCom over Davion/Lyran worlds reverts to
+     * {@code FS}/{@code LA}), so it substitutes. A continuous polity that merely renames into a brand-new successor
+     * (Outworlds Alliance -> Raven Alliance, Clan Wolf -> Wolf Empire) has a successor that never owned the world
+     * before the rename, so it is <b>not</b> substituted and the era-correct owner is kept. Substituting it would
+     * credit a pre-rename character to a state that does not yet exist and, worse, make the origin-faction world
+     * filter return no worlds for the still-extant pre-rename faction.</p>
+     *
+     * @param snapshot              the owner code(s) at {@code when}, or {@code null} if the world was uncolonized
+     * @param eventualOwner         the world's latest future non-disputed owner code(s), or {@code null} if none
+     * @param priorOwnerCodes       every faction code that owned the world at or before {@code when}
+     * @param snapshotDissolvesNear whether a snapshot faction dissolves within the proximity window of {@code when}
+     *
+     * @return the owner code list to credit: {@code eventualOwner} when substituting, otherwise {@code snapshot}
+     */
+    @Nullable
+    static List<String> chooseDisplayedOwner(@Nullable List<String> snapshot, @Nullable List<String> eventualOwner,
+          Set<String> priorOwnerCodes, boolean snapshotDissolvesNear) {
+        boolean canSubstitute = (snapshot != null) && (eventualOwner != null) && !sameCodes(snapshot, eventualOwner);
+        if (!canSubstitute) {
+            return snapshot;
+        }
+        boolean eventualOwnerHeldWorldBefore = intersects(eventualOwner, priorOwnerCodes);
+        boolean snapshotIsTransient = isDisputedOnly(snapshot)
+                                            || (snapshotDissolvesNear && eventualOwnerHeldWorldBefore);
+        return snapshotIsTransient ? eventualOwner : snapshot;
+    }
+
+    /**
+     * @return {@code true} if any code in {@code codes} is present in {@code priorOwnerCodes}
+     */
+    private static boolean intersects(@Nullable List<String> codes, Set<String> priorOwnerCodes) {
+        if (codes == null) {
+            return false;
+        }
+        for (String code : codes) {
+            if (priorOwnerCodes.contains(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean anyDissolvesNear(java.util.List<String> codes, LocalDate when) {
+        if (codes == null || when == null) {
+            return false;
+        }
+        int proximityYear = when.getYear() + DISSOLUTION_PROXIMITY_YEARS;
+        for (String code : codes) {
+            Faction faction = Factions.getInstance().getFaction(code);
+            if (faction != null && faction.getEndYear() < 9999 && faction.getEndYear() <= proximityYear) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isDisputedOnly(java.util.List<String> codes) {
+        if (codes == null || codes.isEmpty()) {
+            return false;
+        }
+        for (String code : codes) {
+            if (!"DIS".equals(code)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameCodes(java.util.List<String> a, java.util.List<String> b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return new HashSet<>(a).equals(new HashSet<>(b));
+    }
+
+    private static void addCodes(Set<Faction> sink, java.util.List<String> codes) {
+        if (codes == null) {
+            return;
+        }
+        for (String code : codes) {
+            Faction faction = Factions.getInstance().getFaction(code);
+            if (faction != null) {
+                sink.add(faction);
+            }
+        }
+    }
+
+    /**
+     * @return {@code true} if {@code chosen} directly controls the world at the queried date OR is lineage-compatible
+     *       (predecessor/successor) with one of the actual owners. Excludes meta umbrella codes ({@code IS},
+     *       {@code CLAN.IS}, {@code Periphery.*}, {@code CLAN.*}) so two unrelated Inner Sphere factions don't match
+     *       via the abstract IS umbrella.
+     */
+    private static boolean isFactionMatch(Set<Faction> owners, Faction chosen) {
+        if (owners == null || owners.isEmpty()) {
+            return false;
+        }
+        if (owners.contains(chosen)) {
+            return true;
+        }
+        String chosenCode = chosen.getShortName();
+        String[] chosenAlts = chosen.getAlternativeFactionCodes();
+        for (Faction owner : owners) {
+            if (owner == null) {
+                continue;
+            }
+            String ownerCode = owner.getShortName();
+            if (containsRealCode(owner.getAlternativeFactionCodes(), chosenCode)
+                      || containsRealCode(chosenAlts, ownerCode)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsRealCode(String[] codes, String target) {
+        if (codes == null) {
+            return false;
+        }
+        for (String code : codes) {
+            if (code == null || isMetaFactionCode(code)) {
+                continue;
+            }
+            if (target.equals(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isMetaFactionCode(String code) {
+        return "IS".equals(code) || "CLAN.IS".equals(code)
+                     || code.startsWith("Periphery.") || code.startsWith("CLAN.");
+    }
+
+    /**
+     * @return {@code true} if the resolved owner set has at least one real (non-abandoned) faction.
+     *       {@code ownersAt(...)} already drops the {@code ABN} marker when other factions are present; a system whose
+     *       ONLY faction is {@code ABN} would still come back non-empty here, so we reject that case explicitly.
+     */
+    private static boolean isInhabitedAt(Set<Faction> owners) {
+        if (owners.isEmpty()) {
+            return false;
+        }
+        if (owners.size() == 1) {
+            Faction only = owners.iterator().next();
+            return only != null && !"ABN".equals(only.getShortName());
+        }
+        return true;
+    }
+
+    /**
+     * @return {@code true} if {@code system} had a recorded population greater than zero on the dialog's current
+     *       {@code birthdate}. Used as a fallback to {@link #isInhabitedAt(Set)} so an abandoned world (owner set is
+     *       {@code ABN}-only, which {@code isInhabitedAt} rejects) is still offered as a birthworld when people were
+     *       actually living there. Returns {@code false} when {@code birthdate} is unset, since population is
+     *       date-scoped.
+     */
+    private boolean hadPopulationAt(PlanetarySystem system) {
+        return birthdate != null && system.getPopulation(birthdate) > 0;
     }
 
     private void filterPlanetarySystemsForOurFaction(boolean onlyOurFaction) {
@@ -1500,40 +1955,42 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         person.setPhenotype((Phenotype) choicePhenotype.getSelectedItem());
         person.setClanPersonnel(chkClan.isSelected());
 
-        if (campaign.getCampaignOptions().isUseToughness()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_TOUGHNESS)) {
             int currentValue = person.getDirectToughness();
             person.setToughness(MathUtility.parseInt(textToughness.getText(), currentValue));
         }
 
         int currentValue = person.getConnections();
         int newValue = MathUtility.parseInt(textConnections.getText(), currentValue);
-        person.setConnections(clamp(newValue, MINIMUM_CONNECTIONS, MAXIMUM_CONNECTIONS));
+        person.setConnections(Math.clamp(newValue, CONNECTIONS.getMinimum(), CONNECTIONS.getMaximum()));
 
         currentValue = person.getWealth();
         newValue = MathUtility.parseInt(textWealth.getText(), currentValue);
-        person.setWealth(clamp(newValue, MINIMUM_WEALTH, MAXIMUM_WEALTH));
+        person.setWealth(Math.clamp(newValue, WEALTH.getMinimum(), WEALTH.getMaximum()));
 
-        currentValue = person.getReputation();
+        currentValue = person.getFame();
         newValue = MathUtility.parseInt(textReputation.getText(), currentValue);
-        person.setReputation(clamp(newValue, MINIMUM_REPUTATION, MAXIMUM_REPUTATION));
+        person.setFame(Math.clamp(newValue, FAME.getMinimum(), FAME.getMaximum()));
 
         currentValue = person.getUnlucky();
         newValue = MathUtility.parseInt(textUnlucky.getText(), currentValue);
-        person.setUnlucky(clamp(newValue, MINIMUM_UNLUCKY, MAXIMUM_UNLUCKY));
+        person.setUnlucky(Math.clamp(newValue, UNLUCKY.getMinimum(), UNLUCKY.getMaximum()));
 
         currentValue = person.getBloodmark();
         newValue = MathUtility.parseInt(textBloodmark.getText(), currentValue);
-        person.setBloodmark(clamp(newValue, MINIMUM_BLOODMARK, MAXIMUM_BLOODMARK));
+        person.setBloodmark(Math.clamp(newValue, BLOODMARK.getMinimum(), BLOODMARK.getMaximum()));
 
         currentValue = person.getExtraIncomeTraitLevel();
         newValue = MathUtility.parseInt(textExtraIncome.getText(), currentValue);
-        person.setExtraIncomeFromTraitLevel(clamp(newValue, MINIMUM_EXTRA_INCOME, MAXIMUM_EXTRA_INCOME));
+        person.setExtraIncomeFromTraitLevel(Math.clamp(newValue, EXTRA_INCOME.getMinimum(), EXTRA_INCOME.getMaximum()));
 
-        if (campaign.getCampaignOptions().isUseEducationModule()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_EDUCATION_MODULE)) {
             person.setEduHighestEducation((EducationLevel) textEducationLevel.getSelectedItem());
         }
 
-        if (campaign.getCampaignOptions().isUseLoyaltyModifiers()) {
+        person.setBloodGroup((BloodGroup) comboBloodtype.getSelectedItem());
+
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_LOYALTY_MODIFIERS)) {
             currentValue = person.getBaseLoyalty();
             person.setLoyalty(MathUtility.parseInt(textLoyalty.getText(), currentValue));
         }
@@ -1551,7 +2008,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
 
         person.setFounder(chkFounder.isSelected());
 
-        if (campaign.getCampaignOptions().isUseRandomPersonalities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_PERSONALITIES)) {
             person.setAggression(comboAggression.getSelectedItem());
             person.setAggressionDescriptionIndex((int) spnAggression.getValue());
 
@@ -1567,10 +2024,12 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             person.setPersonalityQuirk(comboPersonalityQuirk.getSelectedItem());
             person.setPersonalityQuirkDescriptionIndex((int) spnPersonalityQuirk.getValue());
 
-            person.setReasoning(comboReasoning.getSelectedItem());
-
             writePersonalityDescription(person);
             writeInterviewersNotes(person);
+        }
+
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT)) {
+            person.setReasoning(comboReasoning.getSelectedItem());
         }
 
         if (person.hasDarkSecret()) {
@@ -1596,7 +2055,7 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     }
 
     private void randomName() {
-        String factionCode = campaign.getCampaignOptions().isUseOriginFactionForNames() ?
+        String factionCode = campaign.getCampaignOptions().get(CampaignOption.USE_ORIGIN_FACTION_FOR_NAMES) ?
                                    person.getOriginFaction().getShortName() :
                                    RandomNameGenerator.getInstance().getChosenFaction();
 
@@ -1609,9 +2068,12 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     }
 
     private void randomBloodname() {
-        Faction faction = campaign.getFaction().isClan() ?
-                                campaign.getFaction() :
-                                (Faction) choiceFaction.getSelectedItem();
+        Faction faction;
+        if (campaign.getPlayerForce().getFaction().isClan()) {
+            faction = campaign.getPlayerForce().getFaction();
+        } else {
+            faction = (mekhq.campaign.universe.Faction) choiceFaction.getSelectedItem();
+        }
         faction = ((faction != null) && faction.isClan()) ? faction : person.getOriginFaction();
         Bloodname bloodname = Bloodname.randomBloodname(faction.getShortName(),
               selectedPhenotype,
@@ -1627,7 +2089,6 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         JLabel lblValue;
         JLabel lblLevel;
         JLabel lblBonus;
-        JLabel lblAging;
         JSpinner spnLevel;
         JSpinner spnBonus;
 
@@ -1640,9 +2101,8 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         constraints.insets = new Insets(0, 10, 0, 0);
         constraints.gridx = 0;
 
-        AgingMilestone milestone = getMilestone(person.getAge(campaign.getLocalDate()));
         SkillModifierData skillModifierData = person.getSkillModifierData(
-              campaign.getCampaignOptions().isUseAgeEffects(), campaign.isClanCampaign(), campaign.getLocalDate(),
+              campaign.getCampaignOptions().get(CampaignOption.USE_AGE_EFFECTS), campaign.getPlayerForce().isClanForce(), campaign.getLocalDate(),
               true);
 
         List<String> sortedSkillNames = getSortedSkills();
@@ -1674,13 +2134,13 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
                 Skill skill = person.getSkill(type);
                 // We had errors where player modified their skills beyond these values which then caused the
                 // JSpinners to break. This code here ensures that we self correct the values.
-                level = clamp(skill.getLevel(), 0, 10);
-                bonus = clamp(skill.getBonus(), -8, 8);
+                level = Math.clamp(skill.getLevel(), 0, 10);
+                bonus = Math.clamp(skill.getBonus(), -8, 8);
             }
             spnLevel = new JSpinner(new SpinnerNumberModel(level, 0, 10, 1));
             spnLevel.addChangeListener(evt -> changeSkillValue(type));
             spnLevel.setEnabled(chkSkill.isSelected());
-            spnBonus = new JSpinner(new SpinnerNumberModel(clamp(bonus, -8, 8), -8, 8, 1));
+            spnBonus = new JSpinner(new SpinnerNumberModel(Math.clamp(bonus, -8, 8), -8, 8, 1));
             spnBonus.addChangeListener(evt -> changeSkillValue(type));
             spnBonus.setEnabled(chkSkill.isSelected());
             skillLevels.put(type, spnLevel);
@@ -1750,7 +2210,6 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
     private void setSkills() {
         for (int i = 0; i < SkillType.getSkillList().length; i++) {
             final String type = SkillType.getSkillList()[i];
-            AgingMilestone milestone = getMilestone(person.getAge(campaign.getLocalDate()));
             if (skillChecks.get(type).isSelected()) {
                 int level = (Integer) skillLevels.get(type).getModel().getValue();
                 int bonus = (Integer) skillBonus.get(type).getModel().getValue();
@@ -1788,24 +2247,29 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             IOptionGroup group = i.nextElement();
 
             if (group.getKey().equalsIgnoreCase(PersonnelOptions.LVL3_ADVANTAGES) &&
-                      !campaign.getCampaignOptions().isUseAbilities()) {
+                      !campaign.getCampaignOptions().get(CampaignOption.USE_ABILITIES)) {
                 continue;
             }
 
             if (group.getKey().equalsIgnoreCase(PersonnelOptions.EDGE_ADVANTAGES) &&
-                      !campaign.getCampaignOptions().isUseEdge()) {
+                      !campaign.getCampaignOptions().get(CampaignOption.USE_EDGE)) {
                 continue;
             }
 
             if (group.getKey().equalsIgnoreCase(PersonnelOptions.MD_ADVANTAGES) &&
-                      !campaign.getCampaignOptions().isUseImplants()) {
+                      !campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS)) {
                 continue;
             }
 
             addGroup(group, gridBag, c);
 
             for (Enumeration<IOption> j = group.getOptions(); j.hasMoreElements(); ) {
-                addOption(j.nextElement(), gridBag, c);
+                IOption option = j.nextElement();
+                // Edge isn't processed here. MegaMek treats edge as a type of SPA, whereas in MekHQ Edge is an
+                // Attribute score (as per ATOW).
+                if (!option.getName().equals("edge")) {
+                    addOption(option, gridBag, c);
+                }
             }
         }
     }
@@ -1900,11 +2364,9 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             return;
         }
 
-        boolean isClanCampaign = campaign.isClanCampaign();
-        boolean isUseAgeEffects = campaign.getCampaignOptions().isUseAgeEffects();
+        boolean isClanCampaign = campaign.getPlayerForce().isClanForce();
+        boolean isUseAgeEffects = campaign.getCampaignOptions().get(CampaignOption.USE_AGE_EFFECTS);
         LocalDate today = campaign.getLocalDate();
-
-        SkillType skillType = SkillType.getType(type);
 
         int level = (Integer) skillLevels.get(type).getModel().getValue();
         int bonus = (Integer) skillBonus.get(type).getModel().getValue();
@@ -1932,6 +2394,10 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
             birthdate = dc.getDate();
             btnDate.setText(MekHQ.getMHQOptions().getDisplayFormattedDate(birthdate));
             lblAge.setText(getAge() + " " + resourceMap.getString("age"));
+            // The system picker filters and sorts by birthdate, so a date change has to rebuild
+            // both the cached "all worlds" model and (if visible) the active filtered model.
+            allSystems = getPlanetarySystemsComboBoxModel();
+            filterPlanetarySystemsForOurFaction(!chkShowAllWorlds.isSelected());
         }
     }
 
@@ -1974,72 +2440,12 @@ public class CustomizePersonDialog extends JDialog implements DialogOptionListen
         final Phenotype newPhenotype = (Phenotype) choicePhenotype.getSelectedItem();
         if ((chkClan.isSelected()) || (Objects.requireNonNull(newPhenotype).isNone())) {
             if ((newPhenotype != null) && (newPhenotype != selectedPhenotype)) {
-                switch (selectedPhenotype) {
-                    case MEKWARRIOR:
-                        decreasePhenotypeBonus(SkillType.S_GUN_MEK);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_MEK);
-                        break;
-                    case ELEMENTAL:
-                        decreasePhenotypeBonus(SkillType.S_GUN_BA);
-                        decreasePhenotypeBonus(SkillType.S_ANTI_MEK);
-                        break;
-                    case AEROSPACE:
-                        decreasePhenotypeBonus(SkillType.S_GUN_AERO);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_AERO);
-                        decreasePhenotypeBonus(SkillType.S_GUN_JET);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_JET);
-                        break;
-                    case VEHICLE:
-                        decreasePhenotypeBonus(SkillType.S_GUN_VEE);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_GVEE);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_NVEE);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_VTOL);
-                        break;
-                    case PROTOMEK:
-                        decreasePhenotypeBonus(SkillType.S_GUN_PROTO);
-                        break;
-                    case NAVAL:
-                        decreasePhenotypeBonus(SkillType.S_TECH_VESSEL);
-                        decreasePhenotypeBonus(SkillType.S_GUN_SPACE);
-                        decreasePhenotypeBonus(SkillType.S_PILOT_SPACE);
-                        decreasePhenotypeBonus(SkillType.S_NAVIGATION);
-                        break;
-                    default:
-                        break;
+                for (String skillType : selectedPhenotype.getBonusSkills()) {
+                    decreasePhenotypeBonus(skillType);
                 }
 
-                switch (newPhenotype) {
-                    case MEKWARRIOR:
-                        increasePhenotypeBonus(SkillType.S_GUN_MEK);
-                        increasePhenotypeBonus(SkillType.S_PILOT_MEK);
-                        break;
-                    case ELEMENTAL:
-                        increasePhenotypeBonus(SkillType.S_GUN_BA);
-                        increasePhenotypeBonus(SkillType.S_ANTI_MEK);
-                        break;
-                    case AEROSPACE:
-                        increasePhenotypeBonus(SkillType.S_GUN_AERO);
-                        increasePhenotypeBonus(SkillType.S_PILOT_AERO);
-                        increasePhenotypeBonus(SkillType.S_GUN_JET);
-                        increasePhenotypeBonus(SkillType.S_PILOT_JET);
-                        break;
-                    case VEHICLE:
-                        increasePhenotypeBonus(SkillType.S_GUN_VEE);
-                        increasePhenotypeBonus(SkillType.S_PILOT_GVEE);
-                        increasePhenotypeBonus(SkillType.S_PILOT_NVEE);
-                        increasePhenotypeBonus(SkillType.S_PILOT_VTOL);
-                        break;
-                    case PROTOMEK:
-                        increasePhenotypeBonus(SkillType.S_GUN_PROTO);
-                        break;
-                    case NAVAL:
-                        increasePhenotypeBonus(SkillType.S_TECH_VESSEL);
-                        increasePhenotypeBonus(SkillType.S_GUN_SPACE);
-                        increasePhenotypeBonus(SkillType.S_PILOT_SPACE);
-                        increasePhenotypeBonus(SkillType.S_NAVIGATION);
-                        break;
-                    default:
-                        break;
+                for (String skillType : newPhenotype.getBonusSkills()) {
+                    increasePhenotypeBonus(skillType);
                 }
 
                 selectedPhenotype = newPhenotype;

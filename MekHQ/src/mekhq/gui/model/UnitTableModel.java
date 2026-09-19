@@ -53,6 +53,7 @@ import megamek.common.units.SmallCraft;
 import megamek.common.units.SpaceStation;
 import megamek.common.units.UnitType;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
@@ -94,7 +95,13 @@ public class UnitTableModel extends DataTableModel<Unit> {
     public static final int COL_MODE = 21;
     public static final int COL_SHIP_TRANSPORT = 22;
     public static final int COL_TAC_TRANSPORT = 23;
-    public static final int N_COL = 24;
+    public static final int COL_LOCATION_SYSTEM = 24;
+    public static final int COL_LOCATION_PLANET = 25;
+    public static final int COL_LOCATION_NAME = 26;
+    public static final int COL_DESTINATION_SYSTEM = 27;
+    public static final int COL_DESTINATION_PLANET = 28;
+    public static final int COL_DESTINATION_NAME = 29;
+    public static final int N_COL = 30;
 
     private final Campaign campaign;
     //endregion Variable Declarations
@@ -136,6 +143,12 @@ public class UnitTableModel extends DataTableModel<Unit> {
             case COL_MODE -> "Mode";
             case COL_SHIP_TRANSPORT -> "Ship Transport";
             case COL_TAC_TRANSPORT -> "Tactical Transport";
+            case COL_LOCATION_NAME -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.locationName");
+            case COL_LOCATION_SYSTEM -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.locationSystem");
+            case COL_LOCATION_PLANET -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.locationPlanet");
+            case COL_DESTINATION_NAME -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.destinationName");
+            case COL_DESTINATION_SYSTEM -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.destinationSystem");
+            case COL_DESTINATION_PLANET -> getTextAt(RESOURCE_BUNDLE, "UnitTableModel.col.destinationPlanet");
             default -> "?";
         };
     }
@@ -146,6 +159,9 @@ public class UnitTableModel extends DataTableModel<Unit> {
             case COL_TYPE, COL_WEIGHT_CLASS, COL_SITE -> 50;
             case COL_COST, COL_STATUS, COL_MODE, COL_CREW -> 40;
             case COL_PARTS -> 10;
+            case COL_LOCATION_NAME, COL_DESTINATION_NAME -> 130;
+            case COL_LOCATION_SYSTEM, COL_LOCATION_PLANET,
+                  COL_DESTINATION_SYSTEM, COL_DESTINATION_PLANET -> 100;
             default -> 20;
         };
     }
@@ -178,7 +194,7 @@ public class UnitTableModel extends DataTableModel<Unit> {
             case COL_STATUS -> unit.isRefitting() ? unit.getRefit().getDesc() : null;
             case COL_CREW_STATE -> unit.getCrewState().getToolTipText();
             case COL_CREW -> getCrewTooltip(unit);
-            case COL_QUIRKS -> unit.getQuirksList();
+            case COL_QUIRKS -> unit.getQuirksListHTML();
             default -> null;
         };
     }
@@ -210,7 +226,7 @@ public class UnitTableModel extends DataTableModel<Unit> {
         List<String> reports = new ArrayList<>();
 
         Campaign campaign = unit.getCampaign();
-        boolean isClanCampaign = campaign != null && campaign.isClanCampaign();
+        boolean isClanCampaign = campaign != null && campaign.getPlayerForce().isClanForce();
 
         // Check if driver and gunner use the same role (e.g., VEHICLE_CREW_GROUND)
         PersonnelRole driverRole = unit.getDriverRole();
@@ -230,8 +246,9 @@ public class UnitTableModel extends DataTableModel<Unit> {
                 // Allocate temp crew to driver slots first
                 tempDrivers = Math.min(totalTempCrew, driverShortfall);
             } else if (driverRole != null) {
-                // Driver has its own unique role
-                tempDrivers = unit.getTempCrewByPersonnelRole(driverRole);
+                // Driver has its own unique role. On large vessels temp crew only counts once a real driver is
+                // present, so use the effective count.
+                tempDrivers = unit.getEffectiveTempCrewByPersonnelRole(driverRole);
             }
 
             appendReport(reports,
@@ -256,8 +273,9 @@ public class UnitTableModel extends DataTableModel<Unit> {
                 // Remaining temp crew goes to gunner slots
                 tempGunners = Math.min(tempCrewAfterDrivers, gunnerShortfall);
             } else if (gunnerRole != null) {
-                // Gunner has its own unique role
-                tempGunners = unit.getTempCrewByPersonnelRole(gunnerRole);
+                // Gunner has its own unique role. On large vessels temp crew only counts once a real gunner is
+                // present, so use the effective count.
+                tempGunners = unit.getEffectiveTempCrewByPersonnelRole(gunnerRole);
             }
 
             appendReport(reports,
@@ -279,13 +297,14 @@ public class UnitTableModel extends DataTableModel<Unit> {
 
             // If it isn't a large craft, we can use getDriverRole() to get the right crew type for the unit. If
             // vehicle ground crew differentiation returns, this'll need updated.
-            int tempCrew = isLargeCraft ? unit.getTempCrewByPersonnelRole(PersonnelRole.VESSEL_CREW) :
+            int tempCrew = isLargeCraft ? unit.getEffectiveTempCrewByPersonnelRole(PersonnelRole.VESSEL_CREW) :
                                  unit.getTempCrewByPersonnelRole(unit.getDriverRole()) - tempDrivers - tempGunners;
             appendReport(reports, getTextAt(RESOURCE_BUNDLE, key), crewAssigned, tempCrew, crewNeeded);
         }
 
         if (navigatorsNeeded > 0) {
-            int tempNavigators = unit.getTempCrewByPersonnelRole(PersonnelRole.VESSEL_PILOT);
+            // Navigators are never filled by temp/blob crew, so there is no temp count.
+            int tempNavigators = 0;
             appendReport(reports, getTextAt(RESOURCE_BUNDLE, "UnitTableModel.crewNeeds.navigator"), navigatorsAssigned,
                   tempNavigators, navigatorsNeeded);
         }
@@ -347,7 +366,12 @@ public class UnitTableModel extends DataTableModel<Unit> {
             case COL_QUALITY -> unit.getQualityName();
             case COL_PILOT -> (unit.getCommander() != null) ? unit.getCommander().getHTMLTitle() : "-";
             case COL_FORCE -> {
-                Formation formation = unit.getCampaign().getFormation(unit.getFormationId());
+                Campaign unitCampaign = unit.getCampaign();
+                if (unitCampaign == null) {
+                    yield "-";
+                }
+                int id = unit.getFormationId();
+                Formation formation = unitCampaign.getPlayerForce().getFormation(id);
                 yield (formation != null) ? formation.getFullName() : "-";
             }
             case COL_CREW -> {
@@ -357,14 +381,14 @@ public class UnitTableModel extends DataTableModel<Unit> {
                     yield unit.getActiveCrew().size() + "/" + unit.getFullCrewSize();
                 } else {
                     yield (totalTempCrew + unit.getActiveCrew().size()) +
-                        "(" + unit.getActiveCrew().size() + ")" +
-                        "/" + unit.getFullCrewSize();
+                                "(" + unit.getActiveCrew().size() + ")" +
+                                "/" + unit.getFullCrewSize();
                 }
             }
             case COL_TECH_CRW -> (unit.getTech() != null) ? unit.getTech().getHTMLTitle() : "-";
             case COL_MAINTAIN -> unit.getMaintenanceCost().toAmountAndSymbolString();
             case COL_MAINTAIN_CYCLE -> {
-                if (!campaign.getCampaignOptions().isCheckMaintenance()) {
+                if (!campaign.getCampaignOptions().get(CampaignOption.CHECK_MAINTENANCE)) {
                     yield "-"; // Do not convert this into a character, it will break sorting
                 }
 
@@ -374,10 +398,10 @@ public class UnitTableModel extends DataTableModel<Unit> {
                 }
 
                 double daysSinceLastMaintenance = unit.getDaysSinceMaintenance();
-                int cycleLength = campaign.getCampaignOptions().getMaintenanceCycleDays();
+                int cycleLength = campaign.getCampaignOptions().get(CampaignOption.MAINTENANCE_CYCLE_DAYS);
                 yield (unit.getMaintenanceCycleDuration(cycleLength) - daysSinceLastMaintenance) + " days";
             }
-            case COL_BV -> entity.calculateBattleValue(true, unit.getEntity().getCrew() == null);
+            case COL_BV -> entity.calculateBattleValue(true, true, true);
             case COL_REPAIR -> unit.getPartsNeedingFixing().size();
             case COL_PARTS -> unit.getPartsNeeded().size();
             case COL_SITE -> Unit.getSiteName(unit.getSite());
@@ -387,6 +411,12 @@ public class UnitTableModel extends DataTableModel<Unit> {
                                              unit.getTransportShipAssignment().getTransportShip().getName() : "-";
             case COL_TAC_TRANSPORT -> (unit.getTacticalTransportAssignment() != null) ?
                                             unit.getTacticalTransportAssignment().getTransport().getName() : "-";
+            case COL_LOCATION_SYSTEM -> LocationDisplay.getLocationSystem(unit, campaign.getLocalDate(), campaign);
+            case COL_LOCATION_PLANET -> LocationDisplay.getLocationPlanet(unit, campaign.getLocalDate(), campaign);
+            case COL_LOCATION_NAME -> LocationDisplay.getLocationName(unit, campaign, campaign.getLocalDate());
+            case COL_DESTINATION_SYSTEM -> LocationDisplay.getDestinationSystem(unit, campaign.getLocalDate());
+            case COL_DESTINATION_PLANET -> LocationDisplay.getDestinationPlanet(unit, campaign.getLocalDate());
+            case COL_DESTINATION_NAME -> LocationDisplay.getDestinationName(unit, campaign, campaign.getLocalDate());
             default -> "?";
         };
     }
@@ -415,12 +445,12 @@ public class UnitTableModel extends DataTableModel<Unit> {
 
             // Get base tooltip and potentially append all color reasons for key columns
             String tooltip = getTooltip(actualRow, actualCol);
-            if (isColorTooltipColumn(actualCol)) {
+            if (isColorTooltipColumn(actualCol) && u.getCampaign() != null) {
                 List<String> colorReasonKeys = u.getColorReasonKeys();
                 if (!colorReasonKeys.isEmpty()) {
                     StringBuilder colorReasons = new StringBuilder();
                     for (String key : colorReasonKeys) {
-                        if (colorReasons.length() > 0) {
+                        if (!colorReasons.isEmpty()) {
                             colorReasons.append("<br>");
                         }
                         colorReasons.append(getTextAt(GUI_RESOURCE_BUNDLE, key));
@@ -437,7 +467,7 @@ public class UnitTableModel extends DataTableModel<Unit> {
             }
             setToolTipText(tooltip);
 
-            if (!isSelected) {
+            if (!isSelected && u.getCampaign() != null) {
                 setForeground(u.determineForegroundColor("Table"));
                 setBackground(u.determineBackgroundColor("Table"));
             }
@@ -486,23 +516,21 @@ public class UnitTableModel extends DataTableModel<Unit> {
                     final Person p = u.getCommander();
                     if (p != null) {
                         setText(p.getFullDesc(getCampaign()));
-                        setImage(p.getPortrait().getImage(54));
+                        setImage(p.getPortraitImageIconWithFallback(true, 54).getImage());
                     } else {
                         clearImage();
                     }
                     break;
                 }
                 case COL_FORCE: {
-                    Formation formation = getCampaign().getFormationFor(u);
+                    Campaign campaign1 = getCampaign();
+                    Formation formation = campaign1.getPlayerForce().getFormationFor(u);
                     if (formation != null) {
-                        StringBuilder desc = new StringBuilder("<html><b>").append(formation.getName()).append("</b>");
-                        Formation parent = formation.getParentFormation();
-                        // cut off after three lines and don't include the top level
-                        int lines = 1;
-                        while ((parent != null) && (parent.getParentFormation() != null) && (lines < 4)) {
-                            desc.append("<br>").append(parent.getName());
-                            lines++;
-                            parent = parent.getParentFormation();
+                        boolean includeTopLevel = getCampaign().getCampaignOptions().get(CampaignOption.USE_EXTENDED_TOE_FORCE_NAME);
+                        List<String> path = formation.getDisplayPath(includeTopLevel);
+                        StringBuilder desc = new StringBuilder("<html><b>").append(path.get(0)).append("</b>");
+                        for (int i = 1; i < path.size(); i++) {
+                            desc.append("<br>").append(path.get(i));
                         }
                         desc.append("</html>");
                         setHtmlText(desc.toString());
@@ -521,7 +549,7 @@ public class UnitTableModel extends DataTableModel<Unit> {
                     final Person p = u.getTech();
                     if (p != null) {
                         setText(p.getFullDesc(getCampaign()));
-                        setImage(p.getPortrait().getImage(54));
+                        setImage(p.getPortraitImageIconWithFallback(true, 54).getImage());
                     } else {
                         clearImage();
                     }

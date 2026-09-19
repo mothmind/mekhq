@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -57,20 +57,22 @@ import megamek.client.ui.preferences.PreferencesNode;
 import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.icons.Camouflage;
+import megamek.common.ui.FastJScrollPane;
 import megamek.common.units.Entity;
 import megamek.common.units.UnitType;
 import megamek.common.util.sorter.NaturalOrderComparator;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
 import mekhq.campaign.market.enums.UnitMarketType;
 import mekhq.campaign.market.unitMarket.UnitMarketOffer;
+import mekhq.campaign.unit.UnitAcquisitionType;
 import mekhq.gui.baseComponents.AbstractMHQSplitPane;
 import mekhq.gui.model.UnitMarketTableModel;
 import mekhq.gui.sorter.FormattedNumberSorter;
 import mekhq.gui.sorter.WeightClassSorter;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.utilities.ReportingUtilities;
 
 public class UnitMarketPane extends AbstractMHQSplitPane {
@@ -392,10 +394,10 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
         getMarketTable().setIntercellSpacing(new Dimension(0, 0));
         getMarketTable().setShowGrid(false);
         columnModel.setColumnVisible(columnModel.getColumnByModelIndex(UnitMarketTableModel.COL_DELIVERY),
-              !getCampaign().getCampaignOptions().isInstantUnitMarketDelivery());
+              !getCampaign().getCampaignOptions().get(CampaignOption.INSTANT_UNIT_MARKET_DELIVERY));
         getMarketTable().getSelectionModel().addListSelectionListener(evt -> updateDisplay());
 
-        final JScrollPane marketTableScrollPane = new JScrollPaneWithSpeed(getMarketTable(),
+        final JScrollPane marketTableScrollPane = new FastJScrollPane(getMarketTable(),
               ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
               ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         marketTableScrollPane.setName("marketTableScrollPane");
@@ -439,8 +441,8 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
         return (getMarketTable().getSelectedRow() < 0) ?
                      null :
                      getMarketModel().getOffer(getMarketTable().convertRowIndexToModel(getMarketTable().getSelectedRow()))
-                           .map(UnitMarketOffer::getEntity)
-                           .orElse(null);
+                     .map(UnitMarketOffer::getEntity)
+                     .orElse(null);
     }
 
     /**
@@ -480,7 +482,7 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
             }
 
             final Money price = offer.getPrice();
-            if (getCampaign().getFunds().isLessThan(price)) {
+            if (getCampaign().getPlayerForce().getFunds().isLessThan(price)) {
                 getCampaign().addReport(FINANCES, String.format("<font color='" +
                                                                       ReportingUtilities.getNegativeColor() +
                                                                       "'>" +
@@ -493,7 +495,7 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
 
             final int roll = Compute.d6();
             if (offer.getMarketType().isBlackMarket() && (roll < 3)) {
-                getCampaign().getFinances()
+                getCampaign().getPlayerForce().getFinances()
                       .debit(TransactionType.UNIT_PURCHASE,
                             getCampaign().getLocalDate(),
                             price.dividedBy(roll),
@@ -510,7 +512,7 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
                 continue;
             }
 
-            getCampaign().getFinances()
+            getCampaign().getPlayerForce().getFinances()
                   .debit(TransactionType.UNIT_PURCHASE,
                         getCampaign().getLocalDate(),
                         price,
@@ -518,7 +520,8 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
                               entity.getShortName()));
         }
 
-        finalizeEntityAcquisition(offers, getCampaign().getCampaignOptions().isInstantUnitMarketDelivery());
+        boolean isInstantDelivery = getCampaign().getCampaignOptions().get(CampaignOption.INSTANT_UNIT_MARKET_DELIVERY);
+        finalizeEntityAcquisition(offers, isInstantDelivery);
     }
 
     public void addSelectedOffers() {
@@ -538,10 +541,23 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
      */
     private void finalizeEntityAcquisition(final List<UnitMarketOffer> offers, final boolean instantDelivery) {
         for (final UnitMarketOffer offer : offers) {
-            getCampaign().addNewUnit(offer.getEntity(),
+            final Entity entity = offer.getEntity();
+            if (entity == null) {
+                // The unit failed to load. It cannot be acquired, so drop it instead of passing a null entity into
+                // addNewUnit.
+                LOGGER.error("Cannot acquire a null entity; removing the offer from the market.");
+                getCampaign().getUnitMarket().getOffers().remove(offer);
+                continue;
+            }
+
+            boolean isEmployerMarket = offer.getMarketType().isEmployer();
+            int transitDuration = instantDelivery || isEmployerMarket ? 0 : offer.getTransitDuration();
+
+            getCampaign().addNewUnit(entity,
                   false,
-                  instantDelivery ? 0 : offer.getTransitDuration(),
-                  UnitMarketType.getQuality(campaign, offer.getMarketType()));
+                  transitDuration,
+                  UnitMarketType.getQuality(campaign, offer.getMarketType()),
+                  UnitAcquisitionType.PURCHASED);
 
             if (!instantDelivery) {
                 getCampaign().addReport(ACQUISITIONS, "<font color='" +
@@ -550,7 +566,7 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
                                                             String.format(resources.getString(
                                                                         "UnitMarketPane.UnitDeliveryLength.report") +
                                                                                 "</font>",
-                                                                  offer.getTransitDuration()));
+                                                                  transitDuration));
             }
             getCampaign().getUnitMarket().getOffers().remove(offer);
         }
@@ -571,7 +587,9 @@ public class UnitMarketPane extends AbstractMHQSplitPane {
         final Entity entity = getSelectedEntity();
         getEntityViewPane().updateDisplayedEntity(entity);
         getEntityImagePanel().updateDisplayedEntity(entity,
-              (entity == null) ? new Camouflage() : entity.getCamouflageOrElse(getCampaign().getCamouflage(), false));
+              (entity == null) ?
+                    new Camouflage() :
+                    entity.getCamouflageOrElse(getCampaign().getPlayerForce().getCamouflage(), false));
     }
 
     private void filterOffers() {

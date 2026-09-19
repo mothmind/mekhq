@@ -1,0 +1,397 @@
+/*
+ * Copyright (C) 2026 The MegaMek Team. All Rights Reserved.
+ *
+ * This file is part of MekHQ.
+ *
+ * MekHQ is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License (GPL),
+ * version 3 or (at your option) any later version,
+ * as published by the Free Software Foundation.
+ *
+ * MekHQ is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * A copy of the GPL should have been included with this project;
+ * if not, see <https://www.gnu.org/licenses/>.
+ *
+ * NOTICE: The MegaMek organization is a non-profit group of volunteers
+ * creating free software for the BattleTech community.
+ *
+ * MechWarrior, BattleMech, `Mech and AeroTech are registered trademarks
+ * of The Topps Company, Inc. All Rights Reserved.
+ *
+ * Catalyst Game Labs and the Catalyst Game Labs logo are trademarks of
+ * InMediaRes Productions, LLC.
+ *
+ * MechWarrior Copyright Microsoft Corporation. MekHQ was created under
+ * Microsoft's "Game Content Usage Rules"
+ * <https://www.xbox.com/en-US/developers/rules> and it is not endorsed by or
+ * affiliated with Microsoft.
+ */
+
+package mekhq.campaign;
+
+import static megamek.common.compute.Compute.randomInt;
+import static mekhq.campaign.enums.DailyReportType.GENERAL;
+import static mekhq.campaign.personnel.PersonnelOptions.FLAW_TRANSIT_DISORIENTATION_SYNDROME;
+import static mekhq.campaign.personnel.medical.BodyLocation.GENERIC;
+import static mekhq.campaign.personnel.medical.BodyLocation.INTERNAL;
+import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.CanonicalDiseaseType.getAllActiveBioweapons;
+import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.CanonicalDiseaseType.getAllActiveDiseases;
+import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.CanonicalDiseaseType.getAllSystemSpecificDiseasesWithCures;
+import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
+import static mekhq.utilities.MHQInternationalization.getTextAt;
+
+import java.io.PrintWriter;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.Set;
+
+import jakarta.annotation.Nonnull;
+import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.XmlTransient;
+import jakarta.xml.bind.annotation.adapters.XmlAdapter;
+import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+import megamek.common.annotations.Nullable;
+import megamek.logging.MMLogger;
+import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.location.ILocation;
+import mekhq.campaign.location.IPlace;
+import mekhq.campaign.location.LocationNode;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.utilities.ContractUtilities;
+import mekhq.campaign.personnel.Injury;
+import mekhq.campaign.personnel.InjuryType;
+import mekhq.campaign.personnel.Person;
+import mekhq.campaign.personnel.medical.advancedMedical.InjuryTypes;
+import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AlternateInjuries;
+import mekhq.campaign.universe.Planet;
+import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.Systems;
+import mekhq.campaign.universe.factionStanding.FactionStandingUtilities;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
+import org.w3c.dom.Node;
+
+/**
+ * Abstract implementation of a specific location. An {@code AbstractLocation} is expected as the
+ * {@link ILocation locatable} of the root {@link LocationNode} in a {@code LocationNode} tree.
+ */
+public abstract class AbstractLocation implements IPlace {
+    protected static final MMLogger logger = MMLogger.create(AbstractLocation.class);
+    static final String RESOURCE_BUNDLE = "mekhq.resources.CurrentLocation";
+
+    @XmlElement(name = "currentSystemId")
+    @XmlJavaTypeAdapter(PlanetarySystemAdapter.class)
+    protected PlanetarySystem currentSystem;
+
+    /**
+     * The world within {@link #currentSystem} the force is actually at, or {@code null} when that is not known - in
+     * transit between systems, or a save written before locations tracked this. {@link #getPlanet()} falls back to the
+     * system's primary world in that case, which is what every location reported before planets were tracked.
+     */
+    @XmlTransient
+    protected Planet currentPlanet;
+
+    @XmlTransient
+    protected LocationNode locationNode;
+
+    public AbstractLocation(PlanetarySystem system) {
+        this.currentSystem = system;
+        locationNode = new LocationNode(this);
+    }
+
+    @Override
+    public boolean isOnPlanet() {
+        return true;
+    }
+
+    @Override
+    public boolean isAtJumpPoint() {
+        return false;
+    }
+
+    @Override
+    public boolean isInTransit() {
+        return false;
+    }
+
+    @Override
+    public double getPercentageTransit() {
+        return 1.0;
+    }
+
+    @Override
+    public boolean isJumpZenith() {
+        return false;
+    }
+
+    @Override
+    public double getTransitTime() {
+        return 0.0;
+    }
+
+    public void setTransitTime(double time) {}
+
+    public boolean isRecharging(Campaign campaign) {
+        return false;
+    }
+
+    public void chargeFully(Campaign campaign) {}
+
+    @Override
+    public JumpPath getJumpPath() {
+        return null;
+    }
+
+    @Override
+    public void setJumpPath(JumpPath path) {}
+
+    @Override
+    public PlanetarySystem getCurrentSystem() {
+        return currentSystem;
+    }
+
+    /**
+     * @return the world the force is at: the specific planet when one is known, otherwise the system's primary world
+     */
+    @Override
+    public Planet getPlanet() {
+        return (currentPlanet != null) ? currentPlanet : getCurrentSystem().getPrimaryPlanet();
+    }
+
+    /**
+     * @return the world the force is at, or {@code null} when it is not known. Unlike {@link #getPlanet()} this does
+     *       not fall back to the system's primary world, so callers can tell "at the primary world" apart from "world
+     *       not tracked" - a save predating planet tracking knows only the system.
+     */
+    public @Nullable Planet getCurrentPlanetDirect() {
+        return currentPlanet;
+    }
+
+    /**
+     * Records which world within the current system the force is at.
+     *
+     * @param currentPlanet the world, or {@code null} when it is not known (in transit, or at a jump point)
+     */
+    public void setCurrentPlanet(final @Nullable Planet currentPlanet) {
+        this.currentPlanet = currentPlanet;
+    }
+
+    @Override
+    @Nullable
+    public @Nonnull LocationNode getLocationNode() {
+        return locationNode;
+    }
+
+    public boolean computeIsUseCommandCircuit(Campaign campaign) {
+        return computeIsUseCommandCircuit(campaign, campaign.getCampaignOptions());
+    }
+
+    /**
+     * Checks all personnel in the given campaign for the "Transit Disorientation Syndrome" flaw and applies fatigue
+     * adjustments if specified. Personnel without the flaw are ignored.
+     *
+     * @param campaign     The campaign instance containing the personnel to check.
+     * @param isUseFatigue If true, applies fatigue adjustments to affected personnel.
+     * @param fatigueRate  The rate at which fatigue is applied to the affected personnel.
+     */
+    static void checkForTransitDisorientationSyndrome(Campaign campaign, boolean isUseFatigue, int fatigueRate) {
+        if (isUseFatigue) {
+            for (Person person : campaign.getPlayerForce()
+                                       .getHumanResources()
+                                       .getPersonnelFilteringOutDepartedAndAbsent()) {
+                if (!person.getOptions().booleanOption(FLAW_TRANSIT_DISORIENTATION_SYNDROME)) {
+                    continue;
+                }
+
+                person.changeFatigue(fatigueRate);
+            }
+        }
+    }
+
+    public double getRechargeTime() {
+        return 0.0;
+    }
+
+    protected void setRechargeTime(double t) {}
+
+    /**
+     * Applies up to {@code availableHours} of JumpShip recharging at the current system and reports progress.
+     *
+     * @return the number of hours actually used for recharging
+     */
+    protected double applyRechargeForHours(Campaign campaign, LocalDate today, boolean isUseCommandCircuit,
+          double availableHours, boolean isSilentProcessing) {
+        double neededRechargeTime = currentSystem.getRechargeTime(today, isUseCommandCircuit);
+        double usedRechargeTime = Math.min(availableHours, neededRechargeTime - getRechargeTime());
+        if (usedRechargeTime > 0) {
+            if (!isSilentProcessing) {
+                campaign.addReport(GENERAL, getFormattedTextAt(RESOURCE_BUNDLE, "getReport.recharge.hours",
+                      Math.round(100.0 * usedRechargeTime) / 100.0));
+            }
+            setRechargeTime(getRechargeTime() + usedRechargeTime);
+            if (getRechargeTime() >= neededRechargeTime && !isSilentProcessing) {
+                campaign.addReport(GENERAL, getTextAt(RESOURCE_BUNDLE, "getReport.recharge.complete"));
+            }
+        }
+        return usedRechargeTime;
+    }
+
+    // recharge even if there is no jump path because JumpShips don't go anywhere
+    public void newDay(Campaign campaign, boolean isSilentProcessing) {
+        LocalDate today = campaign.getLocalDate();
+        CampaignOptions campaignOptions = campaign.getCampaignOptions();
+        applyRechargeForHours(campaign, today, computeIsUseCommandCircuit(campaign, campaignOptions), 24.0,
+              isSilentProcessing);
+    }
+
+    protected boolean computeIsUseCommandCircuit(Campaign campaign, CampaignOptions campaignOptions) {
+        return FactionStandingUtilities.isUseCommandCircuit(
+              campaign.getPlayerForce().isOverridingCommandCircuitRequirements(),
+              campaign.isGM(),
+              campaignOptions.isUseFactionStandingCommandCircuitSafe(),
+              campaign.getPlayerForce().getFactionStandings(),
+              campaign.getFutureContracts());
+    }
+
+    public void checkForDiseaseOrBioweaponOutbreaks(Campaign campaign, LocalDate today) {
+        Set<InjuryType> availableCures = getAllSystemSpecificDiseasesWithCures(currentSystem.getId(), today, true);
+
+        Set<InjuryType> activeBioweapons = getAllActiveBioweapons(currentSystem.getId(), today, true);
+        for (InjuryType bioweapon : activeBioweapons) {
+            String centerMessage = getFormattedTextAt(RESOURCE_BUNDLE, "bioweaponAttack.inCharacter",
+                  campaign.getCommanderAddress());
+            String bottomMessage = getFormattedTextAt(RESOURCE_BUNDLE, "bioweaponAttack.outOfCharacter",
+                  currentSystem.getName(today), bioweapon.getSimpleName());
+            bottomMessage += availableCures.contains(bioweapon)
+                                   ? getTextAt(RESOURCE_BUNDLE, "disease.outOfCharacter.vaccineStatus.available")
+                                   : getTextAt(RESOURCE_BUNDLE, "disease.outOfCharacter.vaccineStatus.none");
+
+            new ImmersiveDialogSimple(campaign, campaign.getPlayerForce().getHumanResources()
+                                                      .getSeniorMedicalPerson(campaign.getCampaignOptions(),
+                                                            campaign.getPlayerForce().isClanForce(),
+                                                            campaign.getLocalDate()), null,
+                  centerMessage, null, bottomMessage, null, false, ImmersiveDialogWidth.LARGE);
+        }
+
+        Set<InjuryType> activeDiseases = getAllActiveDiseases(currentSystem.getId(), today, true);
+        for (InjuryType disease : activeDiseases) {
+            String centerMessage = getFormattedTextAt(RESOURCE_BUNDLE, "diseaseOutbreak.inCharacter",
+                  campaign.getCommanderAddress());
+            String bottomMessage = getFormattedTextAt(RESOURCE_BUNDLE, "diseaseOutbreak.outOfCharacter",
+                  currentSystem.getName(today), disease.getSimpleName());
+            bottomMessage += availableCures.contains(disease)
+                                   ? getTextAt(RESOURCE_BUNDLE, "disease.outOfCharacter.vaccineStatus.available")
+                                   : getTextAt(RESOURCE_BUNDLE, "disease.outOfCharacter.vaccineStatus.none");
+
+            new ImmersiveDialogSimple(campaign, campaign.getPlayerForce().getHumanResources()
+                                                      .getSeniorMedicalPerson(campaign.getCampaignOptions(),
+                                                            campaign.getPlayerForce().isClanForce(),
+                                                            campaign.getLocalDate()), null,
+                  centerMessage, null, bottomMessage, null, false, ImmersiveDialogWidth.LARGE);
+        }
+    }
+
+    /**
+     * Tests for whether the campaign arrived at a contract location before it's due to start.
+     *
+     * <p>The first matching contract in the system ends the loop after handling early arrival notifications.</p>
+     *
+     * @param campaign The {@link Campaign} instance.
+     */
+    public void testForEarlyArrival(Campaign campaign) {
+        for (AbstractContract contract : campaign.getFutureContracts()) {
+            if (ContractUtilities.hasArrivedAtContractLocation(this, contract)) {
+                // DAYS.between, not Period.getDays() - the latter yields only the day component, so a start two
+                // months out would report the leftover days rather than the whole wait.
+                long daysTillStart = ChronoUnit.DAYS.between(campaign.getLocalDate(), contract.getStartDate());
+
+                String inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE,
+                      "contract.arrivedEarly.ic." + randomInt(10),
+                      campaign.getCommanderAddress(),
+                      daysTillStart);
+
+                new ImmersiveDialogSimple(campaign, campaign.getPlayerForce().getHumanResources()
+                                                          .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                                                                campaign.getPlayerForce().isClanForce(),
+                                                                campaign.getLocalDate()), null,
+                      inCharacterMessage, null,
+                      getFormattedTextAt(RESOURCE_BUNDLE, "contract.arrivedEarly.ooc"),
+                      null, false);
+                break;
+            }
+        }
+    }
+
+    private static Injury createTransitDisorientationInjury(Campaign campaign, Person person,
+          boolean useAltAdvancedMedical) {
+        return useAltAdvancedMedical
+                     ? AlternateInjuries.TRANSIT_DISORIENTATION_SYNDROME.newInjury(campaign, person, GENERIC, 1)
+                     : InjuryTypes.TRANSIT_DISORIENTATION_SYNDROME.newInjury(campaign, person, INTERNAL, 1);
+    }
+
+    public abstract void writeToXML(PrintWriter writer, int indent);
+
+    /**
+     * Dispatches XML deserialization to the correct {@link AbstractLocation} subclass based on the element name of
+     * {@code wn}.
+     *
+     * @return the deserialized location, or {@code null} if the node name is unrecognized
+     */
+    public static @Nullable AbstractLocation generateInstanceFromXML(Node wn, Campaign campaign) {
+        return switch (wn.getNodeName().toLowerCase()) {
+            case "location" -> CurrentLocation.generateInstanceFromXML(wn, campaign);
+            case "fixedlocation" -> FixedLocation.generateInstanceFromXML(wn, campaign);
+            case "groundtransitlocation" -> GroundTransitLocation.generateInstanceFromXML(wn, campaign);
+            default -> {
+                logger.warn("Unrecognized location node '{}' — skipping", wn.getNodeName());
+                yield null;
+            }
+        };
+    }
+
+    /**
+     * Returns {@code true} if {@code nodeName} is the XML element name of a serialized travel node — an interplanetary
+     * {@code <location>} ({@link CurrentLocation}) or an on-planet {@code <groundTransitLocation>}
+     * ({@link GroundTransitLocation}). Both deserialize via {@link #generateInstanceFromXML} to an
+     * {@link AbstractMobileLocation}.
+     */
+    public static boolean isTravelNodeTag(String nodeName) {
+        return nodeName.equalsIgnoreCase("location") || nodeName.equalsIgnoreCase("groundTransitLocation");
+    }
+
+    static class PlanetarySystemAdapter extends XmlAdapter<String, PlanetarySystem> {
+        private final Campaign campaign;
+
+        @SuppressWarnings("unused")
+        public PlanetarySystemAdapter() {
+            this.campaign = null;
+        }
+
+        public PlanetarySystemAdapter(Campaign campaign) {
+            this.campaign = campaign;
+        }
+
+        @Override
+        public PlanetarySystem unmarshal(String id) {
+            PlanetarySystem p = Systems.getInstance().getSystemById(id);
+            if (p != null) {
+                return p;
+            }
+            logger.error("Couldn't find system: {}", id);
+            if (campaign == null) {
+                return null;
+            }
+            p = campaign.getSystemByName("Terra");
+            return p != null ? p : campaign.getSystems().get(0);
+        }
+
+        @Override
+        public String marshal(PlanetarySystem p) {
+            return p != null ? p.getId() : null;
+        }
+    }
+}

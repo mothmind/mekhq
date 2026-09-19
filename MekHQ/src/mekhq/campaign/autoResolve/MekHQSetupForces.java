@@ -36,7 +36,7 @@ import java.util.List;
 
 import megamek.common.autoResolve.converter.ForceConsolidation;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.mission.Scenario;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.unit.Unit;
 
 /**
@@ -50,6 +50,7 @@ public class MekHQSetupForces extends ScenarioSetupForces<Scenario> {
         super(campaign, units, scenario, forceConsolidationMethod, new OrderFactory(campaign, scenario));
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public MekHQSetupForces(Campaign campaign, List<Unit> units, Scenario scenario,
           ForceConsolidation forceConsolidationMethod, OrderFactory orderFactory) {
         super(campaign, units, scenario, forceConsolidationMethod, orderFactory);

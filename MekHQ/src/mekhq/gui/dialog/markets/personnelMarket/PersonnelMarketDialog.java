@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -71,6 +71,7 @@ import megamek.client.ui.preferences.PreferencesNode;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.market.personnelMarket.markets.NewPersonnelMarket;
@@ -81,7 +82,7 @@ import mekhq.campaign.utilities.glossary.DocumentationEntry;
 import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
 import mekhq.gui.dialog.AdvanceDaysDialog;
-import mekhq.gui.dialog.glossary.NewDocumentationEntryDialog;
+import mekhq.gui.dialog.glossary.GlossaryDocumentationEntryDialog;
 import mekhq.gui.enums.PersonnelFilter;
 import mekhq.gui.view.PersonViewPanel;
 
@@ -153,7 +154,7 @@ public class PersonnelMarketDialog extends JDialog {
         this.market = market;
         this.campaign = market.getCampaign();
         this.campaignOptions = campaign.getCampaignOptions();
-        this.parent = campaign.getApp().getCampaigngui().getFrame();
+        this.parent = campaign.getGUI().getFrame();
         this.currentApplicants = market.getCurrentApplicants();
 
         initializeComponents();
@@ -194,7 +195,7 @@ public class PersonnelMarketDialog extends JDialog {
 
         AtomicReference<Person> selectedPerson = new AtomicReference<>();
         if (!currentApplicants.isEmpty()) {
-            selectedPerson.set(tablePanel.getSelectedApplicants().get(0));
+            selectedPerson.set(tablePanel.getSelectedApplicants().getFirst());
         }
 
         // This handles the initializing and display of the applicant panel
@@ -228,7 +229,7 @@ public class PersonnelMarketDialog extends JDialog {
         DocumentationEntry documentationEntry = DocumentationEntry.RECRUITMENT;
 
         try {
-            new NewDocumentationEntryDialog(this, documentationEntry);
+            new GlossaryDocumentationEntryDialog(this, documentationEntry);
         } catch (Exception ex) {
             LOGGER.error("Failed to open PDF", ex);
         }
@@ -309,10 +310,10 @@ public class PersonnelMarketDialog extends JDialog {
     }
 
     private JSlider getPersonnelAvailabilitySlider() {
-        int recruitmentSliderMaximum = campaignOptions.getPersonnelMarketStyle() != PERSONNEL_MARKET_DISABLED ?
+        int recruitmentSliderMaximum = campaignOptions.get(CampaignOption.PERSONNEL_MARKET_STYLE) != PERSONNEL_MARKET_DISABLED ?
                                              MAXIMUM_DAYS_IN_MONTH * MAXIMUM_NUMBER_OF_SYSTEM_ROLLS :
                                              MAXIMUM_DAYS_IN_MONTH;
-        if (campaignOptions.isUseAlternativeAdvancedMedical()) {
+        if (campaignOptions.get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL)) {
             recruitmentSliderMaximum *= ALTERNATE_ADVANCED_MEDICAL_RECRUITMENT_MULTIPLIER;
         }
 
@@ -381,7 +382,7 @@ public class PersonnelMarketDialog extends JDialog {
               "button.personnelMarket.advanceDays"));
         btnAdvanceMultipleDays.addActionListener(e -> {
             closeAction(); // Close old instance
-            AdvanceDaysDialog advanceDaysDialog = new AdvanceDaysDialog(parent, campaign.getApp().getCampaigngui());
+            AdvanceDaysDialog advanceDaysDialog = new AdvanceDaysDialog(parent, campaign.getGUI());
             advanceDaysDialog.setVisible(true);
             advanceDaysDialog.addWindowListener(new WindowAdapter() {
                 @Override
@@ -455,7 +456,7 @@ public class PersonnelMarketDialog extends JDialog {
             if (!e.getValueIsAdjusting()) {
                 SwingUtilities.invokeLater(() -> {
                     List<Person> selected = tablePanel.getSelectedApplicants();
-                    Person selectedPerson = selected.isEmpty() ? null : selected.get(0);
+                    Person selectedPerson = selected.isEmpty() ? null : selected.getFirst();
                     personViewPanel.setPerson(selectedPerson);
                 });
             }
@@ -510,7 +511,7 @@ public class PersonnelMarketDialog extends JDialog {
      * @since 0.50.06
      */
     private JSplitPane initializePersonView(AtomicReference<Person> selectedPerson, JPanel mainPanel) {
-        personViewPanel = new PersonViewPanel(selectedPerson.get(), campaign, campaign.getApp().getCampaigngui());
+        personViewPanel = new PersonViewPanel(selectedPerson.get(), campaign, campaign.getGUI());
         JScrollPane viewScrollPane = new JScrollPane(personViewPanel);
         viewScrollPane.setMinimumSize(PERSON_VIEW_MINIMUM_SIZE);
         viewScrollPane.setBorder(null);
@@ -549,7 +550,7 @@ public class PersonnelMarketDialog extends JDialog {
                 // 12 months' salary, we double the multiplier from 12 to 24.
                 Money cost = market.getHiringCost(applicant);
 
-                campaign.getFinances()
+                campaign.getPlayerForce().getFinances()
                       .debit(RECRUITMENT,
                             campaign.getLocalDate(),
                             cost,
@@ -557,7 +558,7 @@ public class PersonnelMarketDialog extends JDialog {
                                   "finances.personnelMarket.hire",
                                   applicant.getFullTitle()));
             }
-            campaign.recruitPerson(applicant, isGMHire, true);
+            campaign.getPlayerForce().getHumanResources().recruitPerson(campaign, applicant, isGMHire, true);
         }
 
         // Remove all recruited persons from the applicant list
@@ -623,11 +624,14 @@ public class PersonnelMarketDialog extends JDialog {
      * @since 0.50.06
      */
     private void setDialogTitle() {
-        Faction campaignFaction = campaign.getFaction();
+        Faction campaignFaction = campaign.getPlayerForce().getFaction();
         if (campaignFaction.isClan()) {
             setTitle(getTextAt(RESOURCE_BUNDLE, "title.personnelMarket.clan"));
         } else if (campaignFaction.isComStarOrWoB()) {
-            Person commander = campaign.getCommander();
+            Person commander = campaign.getPlayerForce().getHumanResources()
+                                     .getCommander(campaign.getCampaignOptions(),
+                                           campaign.getPlayerForce().isClanForce(),
+                                           campaign.getLocalDate());
             String address = commander != null ? commander.getTitleAndSurname() : campaign.getCommanderAddress(false);
             setTitle(getFormattedTextAt(RESOURCE_BUNDLE,
                   "title.personnelMarket.comStarOrWoB",
@@ -670,7 +674,9 @@ public class PersonnelMarketDialog extends JDialog {
         String closingBrace = CLOSING_SPAN_TAG;
 
         if (noAvailabilityMessage.isBlank()) {
-            if (campaign.getReputation().getReputationRating() < market.getUnitReputationRecruitmentCutoff()) {
+            if (campaign.getPlayerForce()
+                      .getReputationRating(campaignOptions.get(CampaignOption.USE_CHAOS_REPUTATION)) <
+                      market.getUnitReputationRecruitmentCutoff()) {
                 color = MekHQ.getMHQOptions().getFontColorWarningHexColor();
 
                 noAvailabilityMessage = getFormattedTextAt(RESOURCE_BUNDLE,

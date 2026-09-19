@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,20 +32,24 @@
  */
 package mekhq.campaign.personnel;
 
+import mekhq.campaign.campaignOptions.CampaignOption;
+
+import static org.mockito.Mockito.lenient;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.time.LocalDate;
 import java.util.List;
 
 import megamek.common.compute.Compute;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Hangar;
-import mekhq.campaign.Warehouse;
+import mekhq.campaign.LocalWarehouse;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.personnel.enums.BloodmarkLevel;
 import mekhq.campaign.personnel.enums.PersonnelStatus;
@@ -64,17 +68,22 @@ class BloodmarkTest {
 
     @BeforeEach
     void beforeEach() {
-        campaign = mock(Campaign.class);
+        campaign = mockCampaign();
         campaignOptions = mock(CampaignOptions.class);
         Faction campaignFaction = mock(Faction.class);
-        Hangar campaignHangar = mock(Hangar.class);
-        Warehouse campaignWarehouse = mock(Warehouse.class);
+        mekhq.campaign.LocalHangar campaignHangar = mock(mekhq.campaign.LocalHangar.class);
+        LocalWarehouse campaignWarehouse = mock(LocalWarehouse.class);
 
         when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
-        when(campaign.getFaction()).thenReturn(campaignFaction);
+        lenient().when(campaignOptions.get(CampaignOption.NATURAL_HEALING_WAITING_PERIOD)).thenReturn(0);
+        lenient().when(campaignOptions.get(CampaignOption.USE_TWIST_OF_FATE_SURVIVAL)).thenReturn(false);
+        lenient().when(campaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(campaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(campaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
-        when(campaign.getHangar()).thenReturn(campaignHangar);
-        when(campaign.getWarehouse()).thenReturn(campaignWarehouse);
+        when(campaign.getPlayerForce().getHangar()).thenReturn(campaignHangar);
+        //TODO: This won't work once we support multiple warehouse. Method separated from getWarehouse() for future
+        when(campaign.getPlayerForce().getWarehouse()).thenReturn(campaignWarehouse);
 
         target = new Person(campaign);
     }
@@ -126,7 +135,7 @@ class BloodmarkTest {
             List<LocalDate> result = Bloodmark.getBloodhuntSchedule(level, CURRENT_DATE, false);
 
             assertEquals(1, result.size(), "Expected one assassination attempt.");
-            assertEquals(CURRENT_DATE.plusDays(3), result.get(0), "Incorrect date for assassination attempt.");
+            assertEquals(CURRENT_DATE.plusDays(3), result.getFirst(), "Incorrect date for assassination attempt.");
         }
     }
 
@@ -141,7 +150,9 @@ class BloodmarkTest {
             List<LocalDate> result = Bloodmark.getBloodhuntSchedule(level, CURRENT_DATE, false);
 
             assertEquals(2, result.size(), "Expected two assassination attempts.");
-            assertEquals(CURRENT_DATE.plusDays(2), result.get(0), "Incorrect date for first assassination attempt.");
+            assertEquals(CURRENT_DATE.plusDays(2),
+                  result.getFirst(),
+                  "Incorrect date for first assassination attempt.");
             assertEquals(CURRENT_DATE.plusDays(2 + 3),
                   result.get(1),
                   "Incorrect date for second assassination attempt.");

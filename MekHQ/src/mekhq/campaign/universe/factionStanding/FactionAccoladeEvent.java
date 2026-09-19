@@ -32,6 +32,7 @@
  */
 package mekhq.campaign.universe.factionStanding;
 
+import static mekhq.campaign.personnel.ranks.Rank.RO_MIN;
 import static mekhq.campaign.universe.factionStanding.FactionAccoladeLevel.*;
 import static mekhq.campaign.universe.factionStanding.FactionStandingUtilities.PIRACY_SUCCESS_INDEX_FACTION_CODE;
 import static mekhq.campaign.universe.factionStanding.FactionStandingUtilities.getFactionName;
@@ -62,8 +63,12 @@ import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
 import mekhq.campaign.force.CombatTeam;
 import mekhq.campaign.force.FormationLevel;
+import mekhq.campaign.parts.enums.PartQuality;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
+import mekhq.campaign.personnel.ranks.AutomaticRankAssigner;
+import mekhq.campaign.unit.UnitAcquisitionType;
+import mekhq.campaign.unit.UnitOrder;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.IUnitGenerator;
@@ -72,6 +77,7 @@ import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionAccoladeConfirmationDialog;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentDialog;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentNewsArticle;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Handles events where a campaign receives a faction accolade, such as adoption.
@@ -140,7 +146,11 @@ public class FactionAccoladeEvent {
                                      accoladeLevel.is(CASH_BONUS_3) ||
                                      accoladeLevel.is(CASH_BONUS_4);
 
-        Person commander = campaign.getCommander();
+        Person commander = campaign.getPlayerForce().getHumanResources()
+                                 .getCommander(campaign.getCampaignOptions(),
+                                       campaign.getPlayerForce().isClanForce(),
+                                       campaign.getLocalDate());
+        String factionName = getFactionName(accoladingFaction, campaign.getGameYear());
 
         boolean accoladeWasRefused;
 
@@ -153,13 +163,14 @@ public class FactionAccoladeEvent {
         } else {
             String lookupName = accoladeLevel.getLookupName();
             String oocText = null;
+
             if (accoladeLevel.is(ADOPTION_OR_MEKS)) {
                 lookupName += isSameFaction ? LOOKUP_AFFIX_MEKS : LOOKUP_AFFIX_ADOPTION;
 
                 String oocTextKey = isSameFaction
                                           ? "FactionJudgmentDialog.message.ACCOLADE.ADOPTION_OR_MEKS.meks.ooc"
                                           : "FactionJudgmentDialog.message.ACCOLADE.ADOPTION_OR_MEKS.adoption.ooc";
-                oocText = getTextAt(getFactionJudgmentDialogResourceBundle(), oocTextKey);
+                oocText = getFormattedTextAt(getFactionJudgmentDialogResourceBundle(), oocTextKey, factionName);
             }
 
             ImmersiveDialogWidth dialogWidth;
@@ -176,10 +187,13 @@ public class FactionAccoladeEvent {
             }
 
             Person speaker = getSpeaker(campaign, accoladingFaction, accoladeLevel);
-            if (speaker != null &&
-                      isCashReward &&
-                      accoladingFaction.getShortName().equals(PIRACY_SUCCESS_INDEX_FACTION_CODE)) {
-                speaker = null;
+
+            if (speaker != null) {
+                AutomaticRankAssigner.assignRankSystemFromFaction(speaker, RO_MIN);
+                if (isCashReward &&
+                          accoladingFaction.getShortName().equals(PIRACY_SUCCESS_INDEX_FACTION_CODE)) {
+                    speaker = null;
+                }
             }
 
             FactionJudgmentDialog initialDialog = new FactionJudgmentDialog(campaign, speaker, commander, lookupName,
@@ -198,7 +212,7 @@ public class FactionAccoladeEvent {
             if (!isSameFaction && accoladeWasRefused) {
                 String message = getFormattedTextAt(getFactionJudgmentDialogResourceBundle(),
                       "FactionJudgmentDialog.message.ACCOLADE.ADOPTION_OR_MEKS.meks.campaign",
-                      getFactionName(accoladingFaction, campaign.getGameYear()),
+                      factionName,
                       spanOpeningWithCustomColor(getWarningColor()), CLOSING_SPAN_TAG);
 
                 new ImmersiveDialogNotification(campaign, message, false);
@@ -206,19 +220,23 @@ public class FactionAccoladeEvent {
             }
 
             if (!isSameFaction) {
-                GoingRogue.processGoingRogue(campaign, accoladingFaction, campaign.getCommander(), null,
-                      campaign.getCampaignOptions().isTrackFactionStanding(), false);
+                GoingRogue.processGoingRogue(campaign, accoladingFaction, campaign.getPlayerForce().getHumanResources()
+                                                                                .getCommander(campaign.getCampaignOptions(),
+                                                                                      campaign.getPlayerForce().isClanForce(),
+                                                                                      campaign.getLocalDate()), null,
+                      campaign.getCampaignOptions().get(CampaignOption.TRACK_FACTION_STANDING), false);
             }
 
             List<Entity> generatedEntities = generateUnits();
             for (Entity entity : generatedEntities) {
-                campaign.addNewUnit(entity, false, 0);
+                PartQuality quality = UnitOrder.getRandomUnitQuality(2);
+                campaign.addNewUnit(entity, false, 0, quality, UnitAcquisitionType.GIFT);
             }
             return;
         }
 
         if (isCashReward) {
-            campaign.getFinances().credit(TransactionType.MISCELLANEOUS, campaign.getLocalDate(),
+            campaign.getPlayerForce().getFinances().credit(TransactionType.MISCELLANEOUS, campaign.getLocalDate(),
                   Money.of(accoladeLevel.getRecognition() * C_BILL_MULTIPLIER),
                   getTextAt(RESOURCE_BUNDLE, "FactionAccoladeDialog.credit"));
         }
@@ -254,7 +272,10 @@ public class FactionAccoladeEvent {
         if (accoladeLevel.is(TAKING_NOTICE_0) || accoladeLevel.is(TAKING_NOTICE_1)) {
             return null;
         } else if (accoladeLevel.is(APPEARING_IN_SEARCHES)) {
-            speaker = campaign.getSeniorAdminPerson(Campaign.AdministratorSpecialization.COMMAND);
+            speaker = campaign.getPlayerForce().getHumanResources()
+                            .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                                  campaign.getPlayerForce().isClanForce(),
+                                  campaign.getLocalDate());
         } else {
             boolean isLetterFromHeadOfState = accoladeLevel.is(LETTER_FROM_HEAD_OF_STATE);
             boolean isMagistracySpecialCase = accoladingFaction.getShortName().equals("MOC")
@@ -275,7 +296,10 @@ public class FactionAccoladeEvent {
                 personnelRole = PersonnelRole.MILITARY_HOLO_FILMER;
             }
 
-            speaker = campaign.newPerson(personnelRole, accoladingFaction.getShortName(), Gender.RANDOMIZE);
+            final String factionCode1 = accoladingFaction.getShortName();
+            speaker = campaign.getPlayerForce()
+                            .getHumanResources()
+                            .newPerson(campaign, personnelRole, factionCode1, megamek.common.enums.Gender.RANDOMIZE);
             if (isMagistracySpecialCase) {
                 speaker.setGender(Gender.FEMALE);
                 speaker.setGivenName(MAGISTRACY_HOLO_STAR_GIVEN_NAME);

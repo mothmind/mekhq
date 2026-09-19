@@ -44,8 +44,9 @@ import megamek.common.units.Infantry;
 import megamek.common.units.UnitType;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.mission.AtBDynamicScenario;
-import mekhq.campaign.mission.AtBScenario;
+import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
+import mekhq.campaign.mission.scenarios.AtBDynamicScenarioFactory;
+import mekhq.campaign.mission.scenarios.AtBScenario;
 import mekhq.campaign.unit.Unit;
 
 /**
@@ -68,12 +69,12 @@ public class StratConSetupForces extends ScenarioSetupForces<AtBScenario> {
 
     @Override
     protected SkillLevel getEnemySkillLevel() {
-        return getScenario().getContract(campaign).getEnemySkill();
+        return getScenario().getContract(campaign).getEnemyForceSkill();
     }
 
     @Override
     protected SkillLevel getAlliedSkillLevel() {
-        return getScenario().getContract(campaign).getAllySkill();
+        return getScenario().getContract(campaign).getEmployerForceSkill();
     }
 
     /**
@@ -196,12 +197,15 @@ public class StratConSetupForces extends ScenarioSetupForces<AtBScenario> {
             }
         }
         entity.setDeployRound(deploymentRound);
-        var force = campaign.getFormationFor(unit);
+        var force = campaign.getPlayerForce().getFormationFor(unit);
         if (force != null) {
             entity.setForceString(force.getFullMMName());
         } else if (!unit.getEntity().getForceString().isBlank()) {
             // this was added mostly to make it easier to run tests
             entity.setForceString(unit.getEntity().getForceString());
+        }
+        if (scenario instanceof AtBDynamicScenario dynamicScenario) {
+            AtBDynamicScenarioFactory.applyPlayerOffBoardDeployment(dynamicScenario, unit, entity, campaign);
         }
         return entity;
     }
@@ -211,6 +215,7 @@ public class StratConSetupForces extends ScenarioSetupForces<AtBScenario> {
      *
      * @return True if using dropships under specific conditions, false otherwise
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     private boolean isUsingDropship() {
         if (getScenario().getCombatRole().isPatrol()) {
             for (Entity en : getScenario().getAlliesPlayer()) {

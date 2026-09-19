@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 - Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -55,6 +55,7 @@ import javax.swing.table.TableColumn;
 
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -63,7 +64,6 @@ import mekhq.campaign.events.assets.AssetNewEvent;
 import mekhq.campaign.events.assets.AssetRemovedEvent;
 import mekhq.campaign.finances.Asset;
 import mekhq.gui.model.DataTableModel;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 
 /**
  * @author Taharqa
@@ -87,7 +87,7 @@ public class ManageAssetsDialog extends JDialog {
         super(parent, true);
         this.frame = parent;
         campaign = c;
-        assetModel = new AssetTableModel(campaign.getFinances().getAssets());
+        assetModel = new AssetTableModel(campaign.getPlayerForce().getFinances().getAssets());
         initComponents();
         setLocationRelativeTo(parent);
     }
@@ -130,7 +130,7 @@ public class ManageAssetsDialog extends JDialog {
         assetTable.setShowGrid(false);
         assetTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         assetTable.getSelectionModel().addListSelectionListener(this::assetTableValueChanged);
-        JScrollPane scrollAssetTable = new JScrollPaneWithSpeed(assetTable);
+        JScrollPane scrollAssetTable = new FastJScrollPane(assetTable);
         getContentPane().add(scrollAssetTable, BorderLayout.CENTER);
 
         btnOK.setText(resourceMap.getString("btnOK.text"));
@@ -171,7 +171,7 @@ public class ManageAssetsDialog extends JDialog {
         ead.setTitle(resourceMap.getString("addAssetDialogTitle.text"));
         ead.setVisible(true);
         if (!ead.wasCancelled()) {
-            campaign.getFinances().getAssets().add(a);
+            campaign.getPlayerForce().getFinances().getAssets().add(a);
             MekHQ.triggerEvent(new AssetNewEvent(a));
             refreshTable();
         }
@@ -193,13 +193,13 @@ public class ManageAssetsDialog extends JDialog {
 
     private void deleteAsset() {
         MekHQ.triggerEvent(new AssetRemovedEvent(assetModel.getAssetAt(assetTable.getSelectedRow())));
-        campaign.getFinances().getAssets().remove(assetTable.getSelectedRow());
+        campaign.getPlayerForce().getFinances().getAssets().remove(assetTable.getSelectedRow());
         refreshTable();
     }
 
     private void refreshTable() {
         int selectedRow = assetTable.getSelectedRow();
-        assetModel.setData(campaign.getFinances().getAssets());
+        assetModel.setData(campaign.getPlayerForce().getFinances().getAssets());
 
         if (selectedRow != -1) {
             if (assetTable.getRowCount() > 0) {

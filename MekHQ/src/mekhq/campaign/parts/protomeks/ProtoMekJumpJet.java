@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -71,6 +71,7 @@ public class ProtoMekJumpJet extends Part {
                                                                        AvailabilityValue.C)
                                                                  .setStaticTechLevel(SimpleTechLevel.STANDARD);
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public ProtoMekJumpJet() {
         this(0, null);
     }
@@ -158,12 +159,12 @@ public class ProtoMekJumpJet extends Part {
                 h = 2;
             }
             unit.destroySystem(CriticalSlot.TYPE_SYSTEM, ProtoMek.SYSTEM_TORSO_CRIT, ProtoMek.LOC_TORSO, h);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -278,7 +279,7 @@ public class ProtoMekJumpJet extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_MEK);
+        return skillType.equals(SkillType.S_TECH_JETS);
     }
 
     @Override

@@ -33,7 +33,6 @@
 package mekhq.campaign.mission.rentals;
 
 import static java.lang.Math.max;
-import static mekhq.MHQConstants.CONFIRMATION_CONTRACT_RENTAL;
 import static mekhq.campaign.enums.DailyReportType.FINANCES;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
@@ -52,18 +51,16 @@ import java.util.function.Predicate;
 import megamek.common.units.Entity;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.RepairStatusChangedEvent;
 import mekhq.campaign.finances.Finances;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.Contract;
-import mekhq.campaign.mission.Mission;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.utilities.ContractRepairLocation;
 import mekhq.campaign.unit.Unit;
-import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogConfirmation;
 import mekhq.gui.dialog.BayRentalDialog;
-import mekhq.gui.dialog.ContractStartRentalDialog;
 
 /**
  * Handles rental opportunities and transactions for various campaign facilities such as repair bays, hospital beds,
@@ -84,7 +81,8 @@ public class FacilityRentals {
     private static final int CAPACITY_INCREASE_KITCHENS = 150; // One Field Kitchen
     private static final int CAPACITY_INCREASE_SECURITY = 35; // One squad of 7 soldiers
 
-    public static int getCapacityIncreaseFromRentals(List<Contract> activeContracts, ContractRentalType rentalType) {
+    public static int getCapacityIncreaseFromRentals(List<AbstractContract> activeContracts,
+          ContractRentalType rentalType) {
         if (rentalType == ContractRentalType.MAINTENANCE_BAYS || rentalType == ContractRentalType.FACTORY_CONDITIONS) {
             return 0;
         }
@@ -100,48 +98,17 @@ public class FacilityRentals {
         return rentedFacilities * capacityMultiplier;
     }
 
-    private static int getRentedFacilities(List<Contract> activeContracts, ContractRentalType rentalType) {
+    private static int getRentedFacilities(List<AbstractContract> activeContracts, ContractRentalType rentalType) {
         int rentedFacilities = 0;
-        for (Contract contract : activeContracts) {
+        for (AbstractContract contract : activeContracts) {
             rentedFacilities += switch (rentalType) {
-                case HOSPITAL_BEDS -> contract.getHospitalBedsRented();
-                case KITCHENS -> contract.getKitchensRented();
-                case HOLDING_CELLS -> contract.getHoldingCellsRented();
+                case HOSPITAL_BEDS -> contract.getRentedHospitalBeds();
+                case KITCHENS -> contract.getRentedKitchens();
+                case HOLDING_CELLS -> contract.getRentedHoldingCells();
                 default -> 0;
             };
         }
         return rentedFacilities;
-    }
-
-    public static void offerContractRentalOpportunity(Campaign campaign, Contract contract) {
-        CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        int hospitalCost = campaignOptions.getRentedFacilitiesCostHospitalBeds();
-        int kitchenCost = campaignOptions.getRentedFacilitiesCostKitchens();
-        int holdingCellCost = campaignOptions.getRentedFacilitiesCostHoldingCells();
-
-        // If all rentals are disabled, we're just going to back out entirely
-        if ((hospitalCost + kitchenCost + holdingCellCost) == 0) {
-            return;
-        }
-
-        boolean wasRentConfirmed = false;
-        boolean wasConfirmedOverall = false;
-        ContractStartRentalDialog offerDialog;
-        while (!wasConfirmedOverall) {
-            new ContractStartRentalDialog(campaign, contract, hospitalCost, kitchenCost, holdingCellCost);
-
-            if (!MekHQ.getMHQOptions().getNagDialogIgnore(CONFIRMATION_CONTRACT_RENTAL)) {
-                ImmersiveDialogConfirmation confirmation = new ImmersiveDialogConfirmation(campaign,
-                      CONFIRMATION_CONTRACT_RENTAL);
-                wasConfirmedOverall = confirmation.wasConfirmed();
-            } else {
-                wasConfirmedOverall = true;
-            }
-        }
-
-        contract.setHospitalBedsRented(ContractStartRentalDialog.getHospitalSpinnerValue());
-        contract.setKitchensRented(ContractStartRentalDialog.getKitchensSpinnerValue());
-        contract.setHoldingCellsRented(ContractStartRentalDialog.getSecuritySpinnerValue());
     }
 
     /**
@@ -162,7 +129,7 @@ public class FacilityRentals {
     public static boolean offerBayRentalOpportunity(Campaign campaign, int unitCount, int largeCraftCount,
           ContractRentalType rentalType) {
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        int baseCost = campaignOptions.getRentedFacilitiesCostRepairBays();
+        int baseCost = campaignOptions.get(CampaignOption.RENTED_FACILITIES_COST_REPAIR_BAYS);
         if (baseCost <= 0) { // This rental option is disabled
             return true;
         }
@@ -182,7 +149,7 @@ public class FacilityRentals {
         }
 
         // Returns false if the player cannot afford the rental
-        if (!performRentalTransaction(campaign.getFinances(), campaign.getLocalDate(), totalCost,
+        if (!performRentalTransaction(campaign.getPlayerForce().getFinances(), campaign.getLocalDate(), totalCost,
               ContractRentalType.MAINTENANCE_BAYS)) {
             String report = getFormattedTextAt(RESOURCE_BUNDLE, "FacilityRentals.bay.unableToAfford",
                   spanOpeningWithCustomColor(getWarningColor()), CLOSING_SPAN_TAG, totalCost.toAmountString());
@@ -222,7 +189,7 @@ public class FacilityRentals {
      * @author Illiani
      * @since 0.50.10
      */
-    public static Money calculateContractRentalCost(int cost, List<Contract> activeContracts,
+    public static Money calculateContractRentalCost(int cost, List<AbstractContract> activeContracts,
           ContractRentalType rentalType) {
         int rentalCount = getRentedFacilities(activeContracts, rentalType);
 
@@ -298,7 +265,7 @@ public class FacilityRentals {
      * @since 0.50.10
      */
     public static void payForAllRentedBays(Campaign campaign) {
-        Finances finances = campaign.getFinances();
+        Finances finances = campaign.getPlayerForce().getFinances();
         LocalDate today = campaign.getLocalDate();
         Money totalCharge = getTotalRentSumFromRentedBays(campaign, finances);
 
@@ -323,14 +290,14 @@ public class FacilityRentals {
      */
     public static Money getTotalRentSumFromRentedBays(Campaign campaign, Finances finances) {
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        int costPerBay = campaignOptions.getRentedFacilitiesCostRepairBays();
+        int costPerBay = campaignOptions.get(CampaignOption.RENTED_FACILITIES_COST_REPAIR_BAYS);
         if (costPerBay <= 0) { // Costs have been disabled, so we're not going to perform any actions
             return Money.zero();
         }
 
-        List<Mission> activeMissions = campaign.getActiveMissions(false);
+        List<AbstractContract> activeMissions = campaign.getActiveContracts();
         Money totalAvailableFunds = finances.getBalance();
-        Collection<Unit> units = campaign.getHangar().getUnits();
+        Collection<Unit> units = campaign.getPlayerForce().getHangar().getUnits();
 
         Money totalCharge = Money.zero();
 
@@ -364,11 +331,7 @@ public class FacilityRentals {
      * @since 0.50.10
      */
     public static boolean shouldBeIgnoredByBayRentals(Unit unit) {
-        if (unit.isMothballed()) {
-            return true;
-        }
-
-        return false;
+        return unit.isMothballed();
     }
 
     /**
@@ -419,14 +382,14 @@ public class FacilityRentals {
      * @author Illiani
      * @since 0.50.10
      */
-    private static int getFallbackRepairSite(List<Mission> activeMissions) {
+    private static int getFallbackRepairSite(List<AbstractContract> activeMissions) {
         if (activeMissions.isEmpty()) {
             return Unit.SITE_FACILITY_BASIC;
         }
 
         int fallbackSite = Unit.SITE_IMPROVISED;
-        for (Mission contract : activeMissions) {
-            int newSite = contract.getRepairLocation();
+        for (AbstractContract contract : activeMissions) {
+            int newSite = ContractRepairLocation.getRepairLocation(contract.getObjectiveType());
             if (newSite > fallbackSite) {
                 fallbackSite = newSite;
             }
@@ -461,31 +424,34 @@ public class FacilityRentals {
     }
 
     /**
-     * Processes a request to change bay assignments for the specified units, offering bay rental opportunities
-     * if allowed by the current campaign state.
+     * Processes a request to change bay assignments for the specified units, offering bay rental opportunities if
+     * allowed by the current campaign state.
      * <p>
-     * Bay rentals are only permitted if the campaign is either off-contract or on a garrison-type contract,
-     * and the campaign's location is planetside. If these conditions are not met, a dialog is shown to the user
-     * indicating that no facilities are available.
+     * Bay rentals are only permitted if the campaign is either off-contract or on a garrison-type contract, and the
+     * campaign's location is planetside. If these conditions are not met, a dialog is shown to the user indicating that
+     * no facilities are available.
      * </p>
      *
      * @param campaign      the current campaign context
      * @param selectedUnits the units for which bay changes are requested
-     * @param bayType       the type of bay being requested (e.g., {@link Unit#SITE_FACILITY_MAINTENANCE}, {@link Unit#SITE_FACTORY_CONDITIONS})
-     * @return {@code true} if the bay change process can proceed; {@code false} if not allowed (e.g., due to contract or location restrictions)
+     * @param bayType       the type of bay being requested (e.g., {@link Unit#SITE_FACILITY_MAINTENANCE},
+     *                      {@link Unit#SITE_FACTORY_CONDITIONS})
+     *
+     * @return {@code true} if the bay change process can proceed; {@code false} if not allowed (e.g., due to contract
+     *       or location restrictions)
      */
     public static boolean processBayChangeRequest(Campaign campaign, Unit[] selectedUnits, int bayType) {
-        List<AtBContract> activeAtBContracts = campaign.getActiveAtBContracts();
+        List<AbstractContract> activeAtBContracts = campaign.getActiveContracts();
         boolean isBayRentalAllowed = activeAtBContracts.isEmpty();
 
-        for (AtBContract atBContract : activeAtBContracts) {
-            if (atBContract.getContractType().isGarrisonType()) {
+        for (AbstractContract atBContract : activeAtBContracts) {
+            if (atBContract.getObjectiveType().isGarrisonType()) {
                 isBayRentalAllowed = true;
                 break;
             }
         }
 
-        if (!isBayRentalAllowed || !campaign.getLocation().isOnPlanet()) {
+        if (!isBayRentalAllowed || !campaign.getPlayerForce().getForceDetachment().getCurrentLocation().isOnPlanet()) {
             BayRentalDialog.showNoFacilitiesAvailableDialog(campaign);
             return false;
         }

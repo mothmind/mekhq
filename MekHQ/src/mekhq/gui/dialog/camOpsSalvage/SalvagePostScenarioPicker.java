@@ -32,6 +32,7 @@
  */
 package mekhq.gui.dialog.camOpsSalvage;
 
+import static java.lang.Math.round;
 import static megamek.client.ui.WrapLayout.wordWrap;
 import static megamek.client.ui.util.UIUtil.scaleForGUI;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
@@ -62,24 +63,24 @@ import megamek.client.ui.dialogs.unitSelectorDialogs.EntityReadoutDialog;
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.common.annotations.Nullable;
+import megamek.common.units.AeroSpaceFighter;
 import megamek.common.units.Dropship;
 import megamek.common.units.Entity;
 import megamek.common.units.Jumpship;
+import megamek.common.units.SmallCraft;
 import megamek.common.units.Tank;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Hangar;
 import mekhq.campaign.enums.CampaignTransportType;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.force.Formation;
-import mekhq.campaign.mission.AtBScenario;
-import mekhq.campaign.mission.Contract;
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.mission.camOpsSalvage.CamOpsSalvageUtilities;
-import mekhq.campaign.mission.camOpsSalvage.RecoveryTimeCalculations;
-import mekhq.campaign.mission.camOpsSalvage.RecoveryTimeData;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.AtBScenario;
+import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.scenarios.camOpsSalvage.CamOpsSalvageUtilities;
+import mekhq.campaign.mission.scenarios.camOpsSalvage.RecoveryTimeCalculations;
+import mekhq.campaign.mission.scenarios.camOpsSalvage.RecoveryTimeData;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.ITransportAssignment;
 import mekhq.campaign.unit.TestUnit;
@@ -117,6 +118,8 @@ public class SalvagePostScenarioPicker {
 
     private final static int PADDING = scaleForGUI(10);
     private final static Dimension DEFAULT_SIZE = scaleForGUI(1200, 600);
+
+    private final static int UNKNOWN_UNIT_WEIGHT = -1;
 
     private final boolean isInSpace;
     private int maximumSalvageTime = 0;
@@ -232,7 +235,7 @@ public class SalvagePostScenarioPicker {
      * automatically allocated.</p>
      *
      * @param campaign      the current {@link Campaign} in which the scenario took place
-     * @param mission       the {@link Mission} associated with the scenario
+     * @param mission       the {@link AbstractContract} associated with the scenario
      * @param scenario      the {@link Scenario} that was just completed
      * @param actualSalvage the list of {@link TestUnit}s available as salvage that the player can claim
      * @param soldSalvage   the list of {@link TestUnit}s that are marked for immediate sale
@@ -240,7 +243,7 @@ public class SalvagePostScenarioPicker {
      * @author Illiani
      * @since 0.50.10
      */
-    public SalvagePostScenarioPicker(Campaign campaign, Mission mission, Scenario scenario,
+    public SalvagePostScenarioPicker(Campaign campaign, AbstractContract mission, Scenario scenario,
           List<TestUnit> actualSalvage, List<TestUnit> soldSalvage) {
         this.isInSpace = scenario.getBoardType() == AtBScenario.T_SPACE;
 
@@ -252,22 +255,19 @@ public class SalvagePostScenarioPicker {
         arrangeUnits(actualSalvage, soldSalvage);
         setRecoveryTimeDataMap(campaign, scenario);
 
-        boolean isContract = mission instanceof Contract;
-        boolean playerGetsNoSalvage = isContract && ((Contract) mission).getSalvagePct() <= 0;
+        boolean playerGetsNoSalvage = !mission.canSalvage();
         if (playerGetsNoSalvage) {
             return; // There isn't going to be anything to process
         }
 
-        if (isContract) {
-            salvagePercent = ((Contract) mission).getSalvagePct();
-            employerSalvageMoneyInitial = ((Contract) mission).getSalvagedByEmployer();
-            employerSalvageMoneyCurrent = employerSalvageMoneyInitial;
-            unitSalvageMoneyInitial = ((Contract) mission).getSalvagedByUnit();
-            unitSalvageMoneyCurrent = unitSalvageMoneyInitial;
-            isExchangeRights = ((Contract) mission).isSalvageExchange();
-        }
+        salvagePercent = (int) round(mission.getSalvageRightsMultiplier() * 100);
+        employerSalvageMoneyInitial = mission.getSalvagedByEmployerValue();
+        employerSalvageMoneyCurrent = employerSalvageMoneyInitial;
+        unitSalvageMoneyInitial = mission.getSalvagedByUnitValue();
+        unitSalvageMoneyCurrent = unitSalvageMoneyInitial;
+        isExchangeRights = mission.isSalvageExchange();
 
-        List<SalvageComboBoxGroup> selectedGroups = showSalvageDialog(campaign, isContract);
+        List<SalvageComboBoxGroup> selectedGroups = showSalvageDialog(campaign);
         if (selectedGroups != null) {
             processSalvageAssignments(selectedGroups);
         }
@@ -282,10 +282,10 @@ public class SalvagePostScenarioPicker {
      * to multiple salvage operations on the same day. This method ensures this doesn't happen by removing the force/s
      * (and tech/s) from any other scenarios they have been assigned to.
      *
-     * @param activeScenarios a list of scenarios marked as 'current' (i.e., unresolved)
-     * @param currentScenario the current scenario, techs and forces won't be sanitized from this scenario
-     * @param salvageTechs    a list of techs assigned to the salvage operation
-     * @param salvageFormations   a list of forces assigned to the salvage operation
+     * @param activeScenarios   a list of scenarios marked as 'current' (i.e., unresolved)
+     * @param currentScenario   the current scenario, techs and forces won't be sanitized from this scenario
+     * @param salvageTechs      a list of techs assigned to the salvage operation
+     * @param salvageFormations a list of forces assigned to the salvage operation
      *
      * @author Illiani
      * @since 0.50.10
@@ -326,7 +326,10 @@ public class SalvagePostScenarioPicker {
             }
 
             RecoveryTimeData data = RecoveryTimeCalculations.calculateRecoveryTimeForEntity(entity.getDisplayName(),
-                  entity.getRecoveryTime(), scenario, campaign.getLocation().getPlanet());
+                  entity.getRecoveryTime(), scenario, campaign.getPlayerForce()
+                                                            .getForceDetachment()
+                                                            .getCurrentLocation()
+                                                            .getPlanet());
             recoveryTimeData.put(unit.getId(), data);
         }
     }
@@ -348,11 +351,11 @@ public class SalvagePostScenarioPicker {
     private List<Integer> setSalvageUnits(Campaign campaign, Scenario scenario) {
         List<Integer> salvageFormations = new ArrayList<>();
         salvageUnits = new ArrayList<>();
-        Hangar hangar = campaign.getHangar();
+        mekhq.campaign.LocalHangar hangar = campaign.getPlayerForce().getHangar();
         for (Integer forceId : scenario.getSalvageFormations()) {
             salvageFormations.add(forceId);
 
-            Formation formation = campaign.getFormation(forceId);
+            Formation formation = campaign.getPlayerForce().getFormation(forceId);
             if (formation == null) {
                 LOGGER.error("Force {} not found in campaign", forceId);
                 continue;
@@ -412,7 +415,7 @@ public class SalvagePostScenarioPicker {
     private void setAvailableTechTime(Campaign campaign, Scenario scenario) {
         List<UUID> assignedTechIds = scenario.getSalvageTechs();
         for (UUID techId : assignedTechIds) {
-            Person tech = campaign.getPerson(techId);
+            Person tech = campaign.getPlayerForce().getHumanResources().getPerson(techId);
             if (tech == null) {
                 LOGGER.error("Salvage tech {} not found in campaign", techId);
                 continue;
@@ -482,15 +485,14 @@ public class SalvagePostScenarioPicker {
      * For contract missions, also displays salvage percentage information and enforces salvage limits. The dialog
      * validates all assignments and prevents confirmation if any assignments are invalid.</p>
      *
-     * @param campaign   the current campaign
-     * @param isContract whether this is a contract mission (affects displayed information and validation)
+     * @param campaign the current campaign
      *
      * @return list of combo box groups with user selections, or null if the dialog was canceled
      *
      * @author Illiani
      * @since 0.50.10
      */
-    private List<SalvageComboBoxGroup> showSalvageDialog(Campaign campaign, boolean isContract) {
+    private List<SalvageComboBoxGroup> showSalvageDialog(Campaign campaign) {
         JDialog dialog = new JDialog((Frame) null, getText("accessingTerminal.title"), true);
         dialog.setLayout(new BorderLayout());
         dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE); // We don't want the player to cancel out
@@ -501,60 +503,58 @@ public class SalvagePostScenarioPicker {
         JLabel unitSalvageLabel = null;
         JLabel availableTimeLabel = null;
 
-        if (isContract) {
-            JPanel infoContainer = new JPanel(new BorderLayout());
-            infoContainer.setBorder(BorderFactory.createEmptyBorder(PADDING, PADDING, PADDING, PADDING));
+        JPanel infoContainer = new JPanel(new BorderLayout());
+        infoContainer.setBorder(BorderFactory.createEmptyBorder(PADDING, PADDING, PADDING, PADDING));
 
-            // Left column (existing info labels)
-            JPanel infoPanel = new JPanel(new GridLayout(4, 1, 5, 5));
+        // Left column (existing info labels)
+        JPanel infoPanel = new JPanel(new GridLayout(4, 1, 5, 5));
 
-            if (isExchangeRights) {
-                salvagePercentLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                      "SalvagePostScenarioPicker.salvagePercent.exchange",
-                      salvagePercent));
-            } else {
-                salvagePercentLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                      "SalvagePostScenarioPicker.salvagePercent.normal",
-                      getCurrentPercentAsBigDecimal(),
-                      salvagePercent));
-            }
-            employerSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                  "SalvagePostScenarioPicker.employerSalvage", employerSalvageMoneyCurrent.toAmountString()));
-            if (isExchangeRights) {
-                Money actualFunds = employerSalvageMoneyCurrent.dividedBy(100).multipliedBy(salvagePercent);
-                unitSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                      "SalvagePostScenarioPicker.unitSalvage", actualFunds.toAmountString()));
-            } else {
-                unitSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                      "SalvagePostScenarioPicker.unitSalvage", unitSalvageMoneyCurrent.toAmountString()));
-            }
-            availableTimeLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
-                  "SalvagePostScenarioPicker.time", usedSalvageTime, maximumSalvageTime));
-
-            infoPanel.add(salvagePercentLabel);
-            infoPanel.add(employerSalvageLabel);
-            infoPanel.add(unitSalvageLabel);
-            infoPanel.add(availableTimeLabel);
-
-            // Right column (tutorial text)
-            JEditorPane tutorialPane = new JEditorPane();
-            tutorialPane.setContentType("text/html");
-            tutorialPane.setEditable(false);
-            tutorialPane.setOpaque(false);
-            tutorialPane.setText(getTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.tutorial"));
-            tutorialPane.setBorder(RoundedLineBorder.createRoundedLineBorder());
-            int preferredWidth = scaleForGUI(700);
-            tutorialPane.setSize(preferredWidth, Short.MAX_VALUE);
-            Dimension preferredSize = tutorialPane.getPreferredSize();
-            preferredSize.width = preferredWidth;
-            tutorialPane.setPreferredSize(preferredSize);
-
-            // Add both to container
-            infoContainer.add(infoPanel, BorderLayout.CENTER);
-            infoContainer.add(tutorialPane, BorderLayout.EAST);
-
-            dialog.add(infoContainer, BorderLayout.NORTH);
+        if (isExchangeRights) {
+            salvagePercentLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+                  "SalvagePostScenarioPicker.salvagePercent.exchange",
+                  salvagePercent));
+        } else {
+            salvagePercentLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+                  "SalvagePostScenarioPicker.salvagePercent.normal",
+                  getCurrentPercentAsBigDecimal(),
+                  salvagePercent));
         }
+        employerSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+              "SalvagePostScenarioPicker.employerSalvage", employerSalvageMoneyCurrent.toAmountString()));
+        if (isExchangeRights) {
+            Money actualFunds = employerSalvageMoneyCurrent.dividedBy(100).multipliedBy(salvagePercent);
+            unitSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+                  "SalvagePostScenarioPicker.unitSalvage", actualFunds.toAmountString()));
+        } else {
+            unitSalvageLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+                  "SalvagePostScenarioPicker.unitSalvage", unitSalvageMoneyCurrent.toAmountString()));
+        }
+        availableTimeLabel = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE,
+              "SalvagePostScenarioPicker.time", usedSalvageTime, maximumSalvageTime));
+
+        infoPanel.add(salvagePercentLabel);
+        infoPanel.add(employerSalvageLabel);
+        infoPanel.add(unitSalvageLabel);
+        infoPanel.add(availableTimeLabel);
+
+        // Right column (tutorial text)
+        JEditorPane tutorialPane = new JEditorPane();
+        tutorialPane.setContentType("text/html");
+        tutorialPane.setEditable(false);
+        tutorialPane.setOpaque(false);
+        tutorialPane.setText(getTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.tutorial"));
+        tutorialPane.setBorder(RoundedLineBorder.createRoundedLineBorder());
+        int preferredWidth = scaleForGUI(700);
+        tutorialPane.setSize(preferredWidth, Short.MAX_VALUE);
+        Dimension preferredSize = tutorialPane.getPreferredSize();
+        preferredSize.width = preferredWidth;
+        tutorialPane.setPreferredSize(preferredSize);
+
+        // Add both to container
+        infoContainer.add(infoPanel, BorderLayout.CENTER);
+        infoContainer.add(tutorialPane, BorderLayout.EAST);
+
+        dialog.add(infoContainer, BorderLayout.NORTH);
 
         // Final references for use in lambdas
         final JLabel finalSalvagePercentLabel = salvagePercentLabel;
@@ -583,7 +583,7 @@ public class SalvagePostScenarioPicker {
         // Build the mapping and populate salvage unit options ONCE, outside the loop
         unitNameMap.clear();
         for (Unit salvageUnit : salvageUnits) {
-            String base = CamOpsSalvageUtilities.getSalvageTooltip(List.of(salvageUnit), false);
+            String base = CamOpsSalvageUtilities.getSalvageTooltip(List.of(salvageUnit), isInSpace);
             String key = base;
             int duplicate = 2;
             while (unitNameMap.containsKey(key)) {
@@ -606,9 +606,13 @@ public class SalvagePostScenarioPicker {
             rowPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
             rowPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, scaleForGUI(60)));
 
+            int unitWeight = getUnitWeight(unit);
+            String unitWeightString = unitWeight == UNKNOWN_UNIT_WEIGHT ? "?" : String.valueOf(unitWeight);
+            int plural = unitWeight == 0 ? 0 : 1;
+
             JLabel unitLabel = new JLabel();
             unitLabel.setText(getFormattedTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.unitLabel.unit",
-                  unitName, sellValue.toAmountString()));
+                  unitName, sellValue.toAmountString(), unitWeightString, plural));
 
             RecoveryTimeData data = recoveryTimeData.get(unit.getId());
             if (data != null) {
@@ -660,16 +664,16 @@ public class SalvagePostScenarioPicker {
             salvageComboBoxGroups.add(group);
 
             // These need to be after the above lines, as we're going to use 'group' in the listeners.
-            comboBox1.addActionListener(e -> performComboChangeAction(isContract, salvageComboBoxGroups,
+            comboBox1.addActionListener(e -> performComboChangeAction(salvageComboBoxGroups,
                   group, finalSalvagePercentLabel, finalEmployerSalvageLabel, finalUnitSalvageLabel,
                   finalAvailableTimeLabel, confirmButton));
-            comboBox2.addActionListener(e -> performComboChangeAction(isContract, salvageComboBoxGroups,
+            comboBox2.addActionListener(e -> performComboChangeAction(salvageComboBoxGroups,
                   group, finalSalvagePercentLabel, finalEmployerSalvageLabel, finalUnitSalvageLabel,
                   finalAvailableTimeLabel, confirmButton));
-            claimedSalvageForKeeps.addActionListener(e -> performComboChangeAction(isContract,
+            claimedSalvageForKeeps.addActionListener(e -> performComboChangeAction(
                   salvageComboBoxGroups, group, finalSalvagePercentLabel, finalEmployerSalvageLabel,
                   finalUnitSalvageLabel, finalAvailableTimeLabel, confirmButton));
-            claimedSalvageForSale.addActionListener(e -> performComboChangeAction(isContract,
+            claimedSalvageForSale.addActionListener(e -> performComboChangeAction(
                   salvageComboBoxGroups, group, finalSalvagePercentLabel, finalEmployerSalvageLabel,
                   finalUnitSalvageLabel, finalAvailableTimeLabel, confirmButton));
             viewButton.addActionListener(new ViewUnitListener(group.targetUnit));
@@ -708,8 +712,7 @@ public class SalvagePostScenarioPicker {
         dialog.add(buttonPanel, BorderLayout.SOUTH);
 
         // Initial button state check
-        updateConfirmButtonState(salvageComboBoxGroups, confirmButton, finalUnitSalvageLabel, finalAvailableTimeLabel,
-              isContract);
+        updateConfirmButtonState(salvageComboBoxGroups, confirmButton, finalUnitSalvageLabel, finalAvailableTimeLabel);
 
         dialog.setPreferredSize(DEFAULT_SIZE);
         dialog.setSize(DEFAULT_SIZE);
@@ -718,6 +721,16 @@ public class SalvagePostScenarioPicker {
         dialog.setVisible(true);
 
         return confirmed[0] ? resultHolder.groups : null;
+    }
+
+    private static int getUnitWeight(TestUnit unit) {
+        Entity entity = unit.getEntity();
+        int unitWeight = UNKNOWN_UNIT_WEIGHT;
+        if (entity != null) {
+            unitWeight = (int) round(entity.getWeight());
+        }
+
+        return unitWeight;
     }
 
     private static void confirmationAction(Campaign campaign, JDialog dialog, boolean[] confirmed,
@@ -758,7 +771,6 @@ public class SalvagePostScenarioPicker {
      *   <li>Updating the confirm button state</li>
      * </ul>
      *
-     * @param isContract                whether this is a contract mission
      * @param salvageComboBoxGroups     list of all combo box groups
      * @param group                     the specific group that changed
      * @param finalEmployerSalvageLabel label displaying employer salvage value
@@ -769,7 +781,7 @@ public class SalvagePostScenarioPicker {
      * @author Illiani
      * @since 0.50.10
      */
-    private void performComboChangeAction(boolean isContract, List<SalvageComboBoxGroup> salvageComboBoxGroups,
+    private void performComboChangeAction(List<SalvageComboBoxGroup> salvageComboBoxGroups,
           SalvageComboBoxGroup group, JLabel finalSalvagePercentLabel, JLabel finalEmployerSalvageLabel,
           JLabel finalUnitSalvageLabel, JLabel finalAvailableTimeLabel, JButton confirmButton) {
         // Prevent recursive calls
@@ -794,7 +806,7 @@ public class SalvagePostScenarioPicker {
                   finalUnitSalvageLabel,
                   finalAvailableTimeLabel);
             updateConfirmButtonState(salvageComboBoxGroups, confirmButton, finalUnitSalvageLabel,
-                  finalAvailableTimeLabel, isContract);
+                  finalAvailableTimeLabel);
         } finally {
             group.isUpdating = false;
         }
@@ -816,13 +828,12 @@ public class SalvagePostScenarioPicker {
      * @param confirmButton         the confirm button to enable/disable
      * @param unitSalvageLabel      label showing unit salvage value (colored red if limit exceeded)
      * @param salvageTimeLabel      label showing salvage time spent (colored red if limit exceeded)
-     * @param isContract            whether this is a contract mission
      *
      * @author Illiani
      * @since 0.50.10
      */
     private void updateConfirmButtonState(List<SalvageComboBoxGroup> salvageComboBoxGroups, JButton confirmButton,
-          JLabel unitSalvageLabel, JLabel salvageTimeLabel, boolean isContract) {
+          JLabel unitSalvageLabel, JLabel salvageTimeLabel) {
         boolean shouldEnable = true;
 
         // Check for any invalid units
@@ -840,14 +851,12 @@ public class SalvagePostScenarioPicker {
         }
 
         // Check salvage percentage if this is a contract
-        if (isContract) {
-            unitSalvageLabel.setForeground(null);
-            BigDecimal currentPercent = getCurrentPercentAsBigDecimal();
-            if (currentPercent.compareTo(BigDecimal.valueOf(salvagePercent)) > 0 && !isExchangeRights) {
-                disableConfirmAndColorName(confirmButton, unitSalvageLabel);
-                // If we've gone over our %, we only block progression if the player is trying to salvage even more.
-                shouldEnable = unitSalvageMoneyCurrent.compareTo(unitSalvageMoneyInitial) <= 0;
-            }
+        unitSalvageLabel.setForeground(null);
+        BigDecimal currentPercent = getCurrentPercentAsBigDecimal();
+        if (currentPercent.compareTo(BigDecimal.valueOf(salvagePercent)) > 0 && !isExchangeRights) {
+            disableConfirmAndColorName(confirmButton, unitSalvageLabel);
+            // If we've gone over our %, we only block progression if the player is trying to salvage even more.
+            shouldEnable = unitSalvageMoneyCurrent.compareTo(unitSalvageMoneyInitial) <= 0;
         }
 
         // Time budget check (disable and, ideally, color the time label in updateSalvageAllocation)
@@ -1070,9 +1079,20 @@ public class SalvagePostScenarioPicker {
      *
      * <p>Checks the following requirements:</p>
      * <ul>
-     *   <li>For large vessels in space: at least one assigned unit must have a naval tug</li>
-     *   <li>Either: one assigned unit's cargo capacity must meet or exceed the salvage unit's weight</li>
-     *   <li>Or: the combined weight of both assigned units must meet or exceed the salvage unit's weight</li>
+     *   <li>Space salvage:
+     *     <ul>
+     *       <li>For large vessels (Dropship or Jumpship): at least one assigned unit must have a naval tug</li>
+     *       <li>For small vessels (Small craft or Aerospace Fighters): at least one assigned unit must have a
+     *       SC or ASF bay</li>
+     *       <li>Weight limits do not apply</li>
+     *     </ul>
+     *   </li>
+     *   <li>Ground salvage (only):
+     *     <ul>
+     *       <li>Either: one assigned unit's cargo capacity must meet or exceed the salvage unit's weight</li>
+     *       <li>Or: the combined weight of both assigned units must meet or exceed the salvage unit's weight</li>
+     *     </ul>
+     *   </li>
      * </ul>
      *
      * <p>Updates the validation label with the result and colors the unit label red if validation fails.</p>
@@ -1100,10 +1120,12 @@ public class SalvagePostScenarioPicker {
         Entity targetEntity = targetUnit.getEntity();
         double targetWeight = 0.0;
         boolean isLargeVessel = false;
+        boolean isSmallVessel = false;
         if (targetEntity != null) {
             targetWeight = targetEntity.getWeight();
             // Jumpship includes WarShips
             isLargeVessel = targetEntity instanceof Dropship || targetEntity instanceof Jumpship;
+            isSmallVessel = targetEntity instanceof SmallCraft || targetEntity instanceof AeroSpaceFighter;
         }
 
         // Check for naval tug requirement
@@ -1115,27 +1137,35 @@ public class SalvagePostScenarioPicker {
             }
         }
 
+        if (isInSpace && isSmallVessel && !isLargeVessel) {
+            if (!checkForVesselWithSuitableBayEquipment(group, unitLeftEntity, unitRightEntity)) {
+                return;
+            }
+        }
+
         boolean isTwoUnitsSelected = salvageUnitLeft != null && salvageUnitRight != null;
 
-        // If two units selected, must use towing
-        if (isTwoUnitsSelected) {
-            double weightLeft = getTowCapacity(unitLeftEntity, salvageUnitLeft);
-            double weightRight = getTowCapacity(unitRightEntity, salvageUnitRight);
+        // Only check weight for ground salvage. If two units selected, must use towing
+        if (!isInSpace) {
+            if (isTwoUnitsSelected) {
+                double weightLeft = getTowCapacity(unitLeftEntity, salvageUnitLeft);
+                double weightRight = getTowCapacity(unitRightEntity, salvageUnitRight);
 
-            boolean hasTowageCapacity = (weightLeft + weightRight) >= targetWeight;
-            if (!hasTowageCapacity) {
-                invalidate(group,
-                      getTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.validation.noCapacity.tow"),
-                      MekHQ.getMHQOptions().getFontColorNegative());
-                return;
-            }
-        } else if (salvageUnitLeft != null) {
-            if (!useTowageOrCargo(group, unitLeftEntity, salvageUnitLeft, targetWeight)) {
-                return;
-            }
-        } else {
-            if (!useTowageOrCargo(group, unitRightEntity, salvageUnitRight, targetWeight)) {
-                return;
+                boolean hasTowageCapacity = (weightLeft + weightRight) >= targetWeight;
+                if (!hasTowageCapacity) {
+                    invalidate(group,
+                          getTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.validation.noCapacity.tow"),
+                          MekHQ.getMHQOptions().getFontColorNegative());
+                    return;
+                }
+            } else if (salvageUnitLeft != null) {
+                if (!useTowageOrCargo(group, unitLeftEntity, salvageUnitLeft, targetWeight)) {
+                    return;
+                }
+            } else {
+                if (!useTowageOrCargo(group, unitRightEntity, salvageUnitRight, targetWeight)) {
+                    return;
+                }
             }
         }
 
@@ -1180,12 +1210,30 @@ public class SalvagePostScenarioPicker {
     }
 
     private static boolean checkForNavalTug(SalvageComboBoxGroup group, Entity unitLeftEntity, Entity unitRightEntity) {
-        boolean hasNavalTugLeft = unitLeftEntity == null || CamOpsSalvageUtilities.hasNavalTug(unitLeftEntity);
-        boolean hasNavalTugRight = unitRightEntity == null || CamOpsSalvageUtilities.hasNavalTug(unitRightEntity);
-        boolean hasNavalTug = hasNavalTugLeft && hasNavalTugRight;
+        boolean hasNavalTugLeft = null != unitLeftEntity && CamOpsSalvageUtilities.hasNavalTug(unitLeftEntity);
+        boolean hasNavalTugRight = null != unitRightEntity && CamOpsSalvageUtilities.hasNavalTug(unitRightEntity);
+        boolean hasNavalTug = hasNavalTugLeft || hasNavalTugRight;
 
         if (!hasNavalTug) {
             invalidate(group, getTextAt(RESOURCE_BUNDLE, "SalvagePostScenarioPicker.validation.noTug"),
+                  MekHQ.getMHQOptions().getFontColorNegative());
+            return false;
+        }
+
+        return true;
+    }
+
+    private static boolean checkForVesselWithSuitableBayEquipment(SalvageComboBoxGroup group, Entity unitLeftEntity,
+          Entity unitRightEntity) {
+        boolean isSuitableVesselLeft = null != unitLeftEntity &&
+                                             CamOpsSalvageUtilities.hasSuitableBayEquipment(unitLeftEntity);
+        boolean isSuitableVesselRight = null != unitRightEntity &&
+                                              CamOpsSalvageUtilities.hasSuitableBayEquipment(unitRightEntity);
+        boolean isSuitableVessel = isSuitableVesselLeft || isSuitableVesselRight;
+
+        if (!isSuitableVessel) {
+            invalidate(group, getTextAt(RESOURCE_BUNDLE,
+                        "SalvagePostScenarioPicker.validation.noVesselWithSuitableBayEquipment"),
                   MekHQ.getMHQOptions().getFontColorNegative());
             return false;
         }

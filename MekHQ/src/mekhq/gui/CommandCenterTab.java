@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,18 +33,11 @@
 package mekhq.gui;
 
 import static megamek.client.ui.util.UIUtil.scaleForGUI;
-import static mekhq.campaign.enums.DailyReportType.ACQUISITIONS;
-import static mekhq.campaign.enums.DailyReportType.BATTLE;
-import static mekhq.campaign.enums.DailyReportType.FINANCES;
-import static mekhq.campaign.enums.DailyReportType.GENERAL;
-import static mekhq.campaign.enums.DailyReportType.MEDICAL;
-import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
-import static mekhq.campaign.enums.DailyReportType.POLITICS;
-import static mekhq.campaign.enums.DailyReportType.SKILL_CHECKS;
-import static mekhq.campaign.enums.DailyReportType.TECHNICAL;
-import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
+import static mekhq.campaign.enums.DailyReportType.*;
+import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -63,19 +56,25 @@ import javax.swing.border.TitledBorder;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
 
+import megamek.client.ui.util.ClickableLabel;
 import megamek.client.ui.util.UIUtil;
+import megamek.common.annotations.Nullable;
+import megamek.common.enums.SkillLevel;
 import megamek.common.event.Subscribe;
 import megamek.common.ui.EnhancedTabbedPane;
+import megamek.common.ui.FastJScrollPane;
 import megamek.utilities.ImageUtilities;
-import mekhq.MHQOptionsChangedEvent;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.CampaignSummary;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.dailyReportLog.DailyReportLog;
 import mekhq.campaign.enums.DailyReportType;
 import mekhq.campaign.events.AcquisitionEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.OptionsChangedEvent;
+import mekhq.campaign.events.OrganizationChangedEvent;
 import mekhq.campaign.events.ProcurementEvent;
 import mekhq.campaign.events.ReportEvent;
 import mekhq.campaign.events.TransitCompleteEvent;
@@ -89,24 +88,25 @@ import mekhq.campaign.events.units.UnitEvent;
 import mekhq.campaign.events.units.UnitRefitEvent;
 import mekhq.campaign.finances.FinancialReport;
 import mekhq.campaign.finances.Money;
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.mission.TransportCostCalculations;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.report.CargoReport;
 import mekhq.campaign.report.HangarReport;
 import mekhq.campaign.report.PersonnelReport;
 import mekhq.campaign.report.TransportReport;
+import mekhq.campaign.reputation.chaosReputation.ChaosReputation;
 import mekhq.campaign.work.IAcquisitionWork;
 import mekhq.gui.adapter.ProcurementTableMouseAdapter;
 import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
 import mekhq.gui.dialog.AcquisitionsDialog;
 import mekhq.gui.dialog.DiplomacyReport;
-import mekhq.gui.dialog.JumpCostsSummary;
 import mekhq.gui.dialog.PartsReportDialog;
+import mekhq.gui.dialog.ShoppingListPriorityDialog;
 import mekhq.gui.dialog.factionStanding.FactionStandingReport;
 import mekhq.gui.dialog.reportDialogs.CargoReportDialog;
+import mekhq.gui.dialog.reportDialogs.ChaosReputationReportDialog;
 import mekhq.gui.dialog.reportDialogs.HangarReportDialog;
 import mekhq.gui.dialog.reportDialogs.PersonnelReportDialog;
 import mekhq.gui.dialog.reportDialogs.ReputationReportDialog;
@@ -116,7 +116,7 @@ import mekhq.gui.model.ProcurementTableModel;
 import mekhq.gui.panels.TutorialHyperlinkPanel;
 import mekhq.gui.sorter.FormattedNumberSorter;
 import mekhq.gui.sorter.TargetSorter;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
+import mekhq.service.mrms.MRMSService;
 import mekhq.utilities.ReportingUtilities;
 
 /**
@@ -126,17 +126,20 @@ public final class CommandCenterTab extends CampaignGuiTab {
 
     // basic info panel
     private JPanel panInfo;
-    private JLabel lblRatingHead;
-    private JLabel lblRating;
+    private ClickableLabel lblRating;
     private JLabel lblExperience;
-    private JLabel lblPersonnel;
+    private JLabel lblUnitWeight;
+    private ClickableLabel lblPersonnel;
     private JLabel lblHRCapacity;
     private JLabel lblMissionSuccess;
-    private JLabel lblComposition;
+    private ClickableLabel lblComposition;
     private JLabel lblRepairStatus;
-    private JLabel lblTransportCapacity;
-    private JLabel lblCargoSummary;
+    private ClickableLabel lblTransportCapacity;
+    private ClickableLabel lblCargoSummary;
     private JLabel lblFacilityCapacities;
+
+    // faction panel
+    private JPanel panFaction;
 
     // objectives panel
     private JPanel panObjectives;
@@ -153,6 +156,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
     private DailyReportLogPanel pnlFinancesLog;
     private DailyReportLogPanel pnlAcquisitionsLog;
     private DailyReportLogPanel pnlTechnicalLog;
+    private DailyReportLogPanel pnlAggregateLog;
 
     private boolean logNagActiveGeneral = false;
     private boolean logNagActiveBattle = false;
@@ -163,27 +167,25 @@ public final class CommandCenterTab extends CampaignGuiTab {
     private boolean logNagActiveAcquisitions = false;
     private boolean logNagActiveTechnical = false;
     private boolean logNagActiveSkillChecks = false;
+    private boolean logNagActiveAggregateChecks = false;
 
     // procurement table
     private JPanel panProcurement;
     private JTable procurementTable;
     private JLabel procurementTotalCostLabel;
     private ProcurementTableModel procurementModel;
+    private RoundedJButton btnChangePriority;
     private RoundedJButton btnPauseProcurement;
     private RoundedJButton btnResumeProcurement;
-    private RoundedJButton btnMRMSDialog;
     private RoundedJButton btnMRMSInstant;
-
-    // available reports
-    private JPanel panReports;
-    private RoundedJButton btnUnitRating;
 
     private JLabel lblIcon;
 
-    private static final String RESOURCE_BUNDLE = "mekhq.resources.CampaignGUI";
     @Deprecated(since = "0.50.10", forRemoval = true)
     private static final ResourceBundle resourceMap = ResourceBundle.getBundle("mekhq.resources.CampaignGUI",
           MekHQ.getMHQOptions().getLocale());
+
+    private static final String RESOURCE_BUNDLE = "mekhq.resources.CampaignGUI";
 
     /**
      * @param gui  a {@link CampaignGUI} object that this tab is a component of
@@ -191,7 +193,6 @@ public final class CommandCenterTab extends CampaignGuiTab {
      */
     public CommandCenterTab(CampaignGUI gui, String name) {
         super(gui, name);
-        MekHQ.registerHandler(this);
     }
 
     //region Getters/Setters
@@ -230,6 +231,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
     public DailyReportLogPanel getTechnicalLog() {
         return pnlTechnicalLog;
     }
+
+    public DailyReportLogPanel getAggregateLog() {
+        return pnlAggregateLog;
+    }
     //endregion Getters/Setters
 
     /**
@@ -240,17 +245,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
         JPanel panCommand = new JPanel(new GridBagLayout());
 
         initInfoPanel();
+        initFactionPanel();
         initLogPanel();
-        initReportsPanel();
         initProcurementPanel();
         initObjectivesPanel();
-        //icon panel
-        JPanel panIcon = new JPanel(new BorderLayout());
-        lblIcon = new JLabel();
-        lblIcon.getAccessibleContext().setAccessibleName("Player Camouflage");
-        panIcon.add(lblIcon, BorderLayout.CENTER);
-        ImageIcon icon = getAndScaleCampaignIcon();
-        lblIcon.setIcon(icon);
 
         /* Set overall layout */
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
@@ -265,31 +263,23 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.gridx = 1;
         gridBagConstraints.gridy = 1;
         gridBagConstraints.gridheight = 1;
-        gridBagConstraints.gridwidth = 4;
+        gridBagConstraints.gridwidth = 3;
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 1.0;
         panCommand.add(panProcurement, gridBagConstraints);
-        gridBagConstraints.gridx = 4;
-        gridBagConstraints.gridy = 0;
-        gridBagConstraints.gridwidth = 1;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 0.0;
-        panCommand.add(panReports, gridBagConstraints);
         gridBagConstraints.gridx = 3;
         gridBagConstraints.gridy = 0;
         gridBagConstraints.gridwidth = 1;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 0.0;
+        gridBagConstraints.weighty = 0.1;
         panCommand.add(panObjectives, gridBagConstraints);
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = 0;
-        gridBagConstraints.fill = GridBagConstraints.NONE;
-        gridBagConstraints.weightx = 0.0;
+        gridBagConstraints.fill = GridBagConstraints.BOTH;
+        gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 0.0;
         panCommand.add(panInfo, gridBagConstraints);
         gridBagConstraints.gridx = 1;
@@ -297,9 +287,9 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.fill = GridBagConstraints.NONE;
         gridBagConstraints.weightx = 0.0;
         gridBagConstraints.weighty = 0.0;
-        panCommand.add(panIcon, gridBagConstraints);
+        panCommand.add(panFaction, gridBagConstraints);
 
-        JPanel pnlTutorial = new TutorialHyperlinkPanel("commandCenterTab");
+        JPanel pnlTutorial = new TutorialHyperlinkPanel("commandCenterTab.keyText");
 
         setLayout(new BorderLayout());
         add(panCommand, BorderLayout.CENTER);
@@ -330,7 +320,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
         int y = 0;
 
         /* Unit Rating */
-        lblRatingHead = new JLabel(resourceMap.getString("lblRating.text"));
+        JLabel lblRatingHead = new JLabel(resourceMap.getString("lblRating.text"));
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y++;
@@ -338,9 +328,21 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(5, 5, 1, 5);
         panInfo.add(lblRatingHead, gridBagConstraints);
-        lblRating = new JLabel(getCampaign().getUnitRatingText());
+        lblRating = new ClickableLabel(evt -> {
+            if (getCampaignOptions().get(CampaignOption.USE_CHAOS_REPUTATION)) {
+                if (getCampaignOptions().get(CampaignOption.CAMPAIGN_LEVEL_CHAOS_REPUTATION)) {
+                    // Campaign-level tracking surfaces its breakdown via the rating tooltip, not a report dialog.
+                    return;
+                }
+                new ChaosReputationReportDialog(getCampaignGui().getFrame(), getCampaign()).setVisible(true);
+            } else {
+                new ReputationReportDialog(getCampaignGui().getFrame(), getCampaign()).setVisible(true);
+            }
+        });
+        lblRating.setHyperlinkMode(true);
         lblRatingHead.setLabelFor(lblRating);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblRating, gridBagConstraints);
 
@@ -352,19 +354,26 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblExperienceHead, gridBagConstraints);
-
         lblExperience = new JLabel();
-        // This seems to be overwritten completely and immediately by refresh
-        String experienceString = "<html><b>" +
-                                        SkillType.getColoredExperienceLevelName(getCampaign().getReputation()
-                                                                                      .getAverageSkillLevel()) +
-                                        "</b></html>";
-        lblExperience.setText(experienceString);
-
         lblExperienceHead.setLabelFor(lblExperience);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblExperience, gridBagConstraints);
+
+        JLabel lblUnitWeightHead = new JLabel(resourceMap.getString("lblUnitWeight.text"));
+        gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = y++;
+        gridBagConstraints.fill = GridBagConstraints.NONE;
+        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+        gridBagConstraints.insets = new Insets(1, 5, 1, 5);
+        panInfo.add(lblUnitWeightHead, gridBagConstraints);
+        lblUnitWeight = new JLabel(getCampaign().getCampaignSummary().getUnitWeightReport());
+        lblUnitWeightHead.setLabelFor(lblUnitWeight);
+        gridBagConstraints.gridx = 1;
+        gridBagConstraints.weightx = 1.0;
+        panInfo.add(lblUnitWeight, gridBagConstraints);
 
         JLabel lblMissionSuccessHead = new JLabel(resourceMap.getString("lblMissionSuccess.text"));
         gridBagConstraints = new GridBagConstraints();
@@ -374,9 +383,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblMissionSuccessHead, gridBagConstraints);
-        lblMissionSuccess = new JLabel(getCampaign().getCampaignSummary().getMissionSuccessReport());
+        lblMissionSuccess = new JLabel();
         lblMissionSuccessHead.setLabelFor(lblMissionSuccess);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblMissionSuccess, gridBagConstraints);
 
@@ -388,14 +398,18 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblPersonnelHead, gridBagConstraints);
-        lblPersonnel = new JLabel(getCampaign().getCampaignSummary().getPersonnelReport());
+        lblPersonnel = new ClickableLabel(
+              evt -> new PersonnelReportDialog(getCampaignGui().getFrame(),
+                    new PersonnelReport(getCampaign())).setVisible(true));
+        lblPersonnel.setHyperlinkMode(true);
         lblPersonnelHead.setLabelFor(lblPersonnel);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblPersonnel, gridBagConstraints);
 
-        if ((getCampaign().getCampaignOptions().isUseRandomRetirement()) &&
-                  (getCampaign().getCampaignOptions().isUseHRStrain())) {
+        if ((getCampaign().getCampaignOptions().get(CampaignOption.USE_RANDOM_RETIREMENT)) &&
+                  (getCampaign().getCampaignOptions().get(CampaignOption.USE_HR_STRAIN))) {
             JLabel lblHRCapacityHead = new JLabel(resourceMap.getString("lblHRCapacity.text"));
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 0;
@@ -404,10 +418,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
             gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
             gridBagConstraints.insets = new Insets(1, 5, 1, 5);
             panInfo.add(lblHRCapacityHead, gridBagConstraints);
-            lblHRCapacity = new JLabel(getCampaign().getCampaignSummary()
-                                             .getHRCapacityReport(getCampaign()));
+            lblHRCapacity = new JLabel();
             lblHRCapacityHead.setLabelFor(lblHRCapacity);
             gridBagConstraints.gridx = 1;
+            gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
             gridBagConstraints.weightx = 1.0;
             panInfo.add(lblHRCapacity, gridBagConstraints);
         }
@@ -420,9 +434,13 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblCompositionHead, gridBagConstraints);
-        lblComposition = new JLabel(getCampaign().getCampaignSummary().getForceCompositionReport());
+        lblComposition = new ClickableLabel(
+              evt -> new HangarReportDialog(getCampaignGui().getFrame(),
+                    new HangarReport(getCampaign())).setVisible(true));
+        lblComposition.setHyperlinkMode(true);
         lblCompositionHead.setLabelFor(lblComposition);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblComposition, gridBagConstraints);
 
@@ -434,9 +452,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblRepairStatusHead, gridBagConstraints);
-        lblRepairStatus = new JLabel(getCampaign().getCampaignSummary().getForceRepairReport());
+        lblRepairStatus = new JLabel();
         lblRepairStatusHead.setLabelFor(lblRepairStatus);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblRepairStatus, gridBagConstraints);
 
@@ -448,9 +467,13 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblTransportCapacityHead, gridBagConstraints);
-        lblTransportCapacity = new JLabel(getCampaign().getCampaignSummary().getTransportCapacity());
+        lblTransportCapacity = new ClickableLabel(
+              evt -> new TransportReportDialog(getCampaignGui().getFrame(),
+                    new TransportReport(getCampaign())).setVisible(true));
+        lblTransportCapacity.setHyperlinkMode(true);
         lblTransportCapacityHead.setLabelFor(lblTransportCapacity);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblTransportCapacity, gridBagConstraints);
 
@@ -462,15 +485,19 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         gridBagConstraints.insets = new Insets(1, 5, 1, 5);
         panInfo.add(lblCargoSummaryHead, gridBagConstraints);
-        lblCargoSummary = new JLabel(getCampaign().getCampaignSummary().getCargoCapacityReport().toString());
+        lblCargoSummary = new ClickableLabel(
+              evt -> new CargoReportDialog(getCampaignGui().getFrame(),
+                    new CargoReport(getCampaign())).setVisible(true));
+        lblCargoSummary.setHyperlinkMode(true);
         lblCargoSummaryHead.setLabelFor(lblCargoSummary);
         gridBagConstraints.gridx = 1;
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.weightx = 1.0;
         panInfo.add(lblCargoSummary, gridBagConstraints);
 
-        if ((getCampaignOptions().isUseFatigue()) ||
+        if ((getCampaignOptions().get(CampaignOption.USE_FATIGUE)) ||
                   (getCampaignOptions().isUseAdvancedMedical() ||
-                         (!getCampaignOptions().getPrisonerCaptureStyle().isNone()))) {
+                         (!getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE).isNone()))) {
             JLabel lblFacilityCapacitiesHead = new JLabel(resourceMap.getString("lblFacilityCapacities.text"));
             gridBagConstraints = new GridBagConstraints();
             gridBagConstraints.gridx = 0;
@@ -479,14 +506,69 @@ public final class CommandCenterTab extends CampaignGuiTab {
             gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
             gridBagConstraints.insets = new Insets(1, 5, 1, 5);
             panInfo.add(lblFacilityCapacitiesHead, gridBagConstraints);
-            lblFacilityCapacities = new JLabel(getCampaign().getCampaignSummary().getFacilityReport());
+            lblFacilityCapacities = new JLabel();
             lblFacilityCapacitiesHead.setLabelFor(lblFacilityCapacities);
             gridBagConstraints.gridx = 1;
+            gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
             gridBagConstraints.weightx = 1.0;
             panInfo.add(lblFacilityCapacities, gridBagConstraints);
         }
 
-        panInfo.setBorder(RoundedLineBorder.createRoundedLineBorder(getCampaign().getName()));
+        panInfo.setBorder(RoundedLineBorder.createRoundedLineBorder(getCampaign().getPlayerForce().getName()));
+    }
+
+    private void initFactionPanel() {
+        lblIcon = new JLabel();
+        lblIcon.getAccessibleContext().setAccessibleName("Player Camouflage");
+        ImageIcon icon = getAndScaleCampaignIcon();
+        lblIcon.setIcon(icon);
+        lblIcon.setMaximumSize(new Dimension(Integer.MAX_VALUE, lblIcon.getPreferredSize().height));
+
+        RoundedJButton btnGoRogue = new RoundedJButton(resourceMap.getString("btnGoRogue.text"));
+        btnGoRogue.setMaximumSize(new Dimension(Integer.MAX_VALUE, btnGoRogue.getPreferredSize().height));
+        btnGoRogue.addActionListener(e -> {
+            mekhq.campaign.Campaign campaign = getCampaign();
+            Campaign campaign1 = getCampaign();
+            new mekhq.campaign.universe.factionStanding.GoingRogue(getCampaign(),
+                  campaign.getPlayerForce().getHumanResources()
+                        .getCommander(campaign.getCampaignOptions(),
+                              campaign.getPlayerForce().isClanForce(),
+                              campaign.getLocalDate()),
+                  campaign1.getPlayerForce().getHumanResources()
+                        .getSecondInCommand(campaign1.getCampaignOptions(),
+                              campaign1.getPlayerForce().isClanForce(),
+                              campaign1.getLocalDate()));
+        });
+
+        RoundedJButton btnFacStanding = new RoundedJButton(resourceMap.getString("btnFactionStanding.text"));
+        btnFacStanding.setMaximumSize(new Dimension(Integer.MAX_VALUE, btnFacStanding.getPreferredSize().height));
+        btnFacStanding.addActionListener(evt -> {
+            FactionStandingReport factionStandingReport = new FactionStandingReport(getCampaignGui().getFrame(),
+                  getCampaign());
+
+            for (String report : factionStandingReport.getReports()) {
+                if (report != null && !report.isBlank()) {
+                    getCampaign().addReport(POLITICS, report);
+                }
+            }
+        });
+
+        RoundedJButton btnDiplomacy = new RoundedJButton(resourceMap.getString("btnDiplomacy.text"));
+        btnDiplomacy.setMaximumSize(new Dimension(Integer.MAX_VALUE, btnDiplomacy.getPreferredSize().height));
+        btnDiplomacy.addActionListener(evt -> new DiplomacyReport(getCampaignGui().getFrame(),
+              getCampaign().getPlayerForce().isClanForce(),
+              getCampaign().getLocalDate()));
+
+        panFaction = new JPanel();
+        panFaction.setLayout(new BoxLayout(panFaction, BoxLayout.Y_AXIS));
+
+        panFaction.add(lblIcon);
+        panFaction.add(Box.createVerticalStrut(5));
+        panFaction.add(btnGoRogue);
+        panFaction.add(Box.createVerticalStrut(5));
+        panFaction.add(btnFacStanding);
+        panFaction.add(Box.createVerticalStrut(5));
+        panFaction.add(btnDiplomacy);
     }
 
     /**
@@ -502,14 +584,14 @@ public final class CommandCenterTab extends CampaignGuiTab {
         listObjectives.setModel(new DefaultListModel<>());
         refreshObjectives();
 
-        panObjectives.add(new JScrollPaneWithSpeed(listObjectives), BorderLayout.CENTER);
+        panObjectives.add(new FastJScrollPane(listObjectives), BorderLayout.CENTER);
     }
 
     /**
      * Initialize the panel for displaying the daily report log
      */
     private void initLogPanel() {
-        Dimension size = scaleForGUI(400, 100);
+        Dimension size = scaleForGUI(450, 100);
 
         pnlGeneralLog = new DailyReportLogPanel(getCampaignGui());
         pnlGeneralLog.setBorder(RoundedLineBorder.createRoundedLineBorder(resourceMap.getString("panLog.title")));
@@ -556,39 +638,119 @@ public final class CommandCenterTab extends CampaignGuiTab {
         pnlTechnicalLog.setMinimumSize(size);
         pnlTechnicalLog.setPreferredSize(size);
 
-        tabLogs = new EnhancedTabbedPane();
+        pnlAggregateLog = new DailyReportLogPanel(getCampaignGui());
+        pnlAggregateLog.setBorder(RoundedLineBorder.createRoundedLineBorder(resourceMap.getString("panLog.title")));
+        pnlAggregateLog.setMinimumSize(size);
+        pnlAggregateLog.setPreferredSize(size);
+
+        tabLogs = new EnhancedTabbedPane(true, true);
         tabLogs.setName("dailyReportTabs");
-        tabLogs.addTab(GENERAL.getIconString(), pnlGeneralLog);
-        tabLogs.setToolTipTextAt(GENERAL.getTabIndex(), GENERAL.getTooltip());
-        tabLogs.addTab(BATTLE.getIconString(), pnlBattleLog);
-        tabLogs.setToolTipTextAt(BATTLE.getTabIndex(), BATTLE.getTooltip());
-        tabLogs.addTab(PERSONNEL.getIconString(), pnlPersonnelLog);
-        tabLogs.setToolTipTextAt(PERSONNEL.getTabIndex(), PERSONNEL.getTooltip());
-        tabLogs.addTab(MEDICAL.getIconString(), pnlMedicalLog);
-        tabLogs.setToolTipTextAt(MEDICAL.getTabIndex(), MEDICAL.getTooltip());
-        tabLogs.addTab(FINANCES.getIconString(), pnlFinancesLog);
-        tabLogs.setToolTipTextAt(FINANCES.getTabIndex(), FINANCES.getTooltip());
-        tabLogs.addTab(ACQUISITIONS.getIconString(), pnlAcquisitionsLog);
-        tabLogs.setToolTipTextAt(ACQUISITIONS.getTabIndex(), ACQUISITIONS.getTooltip());
-        tabLogs.addTab(TECHNICAL.getIconString(), pnlTechnicalLog);
-        tabLogs.setToolTipTextAt(TECHNICAL.getTabIndex(), TECHNICAL.getTooltip());
-        tabLogs.addTab(POLITICS.getIconString(), pnlPoliticsLog);
-        tabLogs.setToolTipTextAt(POLITICS.getTabIndex(), POLITICS.getTooltip());
-        tabLogs.addTab(SKILL_CHECKS.getIconString(), pnlSkillLog);
-        tabLogs.setToolTipTextAt(SKILL_CHECKS.getTabIndex(), SKILL_CHECKS.getTooltip());
+        addDailyReportTab(tabLogs, pnlGeneralLog, GENERAL);
+        addDailyReportTab(tabLogs, pnlBattleLog, BATTLE);
+        addDailyReportTab(tabLogs, pnlPersonnelLog, PERSONNEL);
+        addDailyReportTab(tabLogs, pnlMedicalLog, MEDICAL);
+        addDailyReportTab(tabLogs, pnlFinancesLog, FINANCES);
+        addDailyReportTab(tabLogs, pnlAcquisitionsLog, ACQUISITIONS);
+        addDailyReportTab(tabLogs, pnlTechnicalLog, TECHNICAL);
+        addDailyReportTab(tabLogs, pnlPoliticsLog, POLITICS);
+        addDailyReportTab(tabLogs, pnlSkillLog, SKILL_CHECKS);
+        addDailyReportTab(tabLogs, pnlAggregateLog, AGGREGATE);
 
         tabLogs.addChangeListener(evt -> {
-            int selectedIndex = tabLogs.getSelectedIndex();
-            clearDailyReportNag(selectedIndex);
+            DailyReportType selectedType = getTypeAtIndex(tabLogs.getSelectedIndex());
+            if (selectedType != null) {
+                clearDailyReportNag(selectedType);
+            }
         });
     }
 
-    public void clearDailyReportNag(int selectedIndex) {
-        DailyReportType type = DailyReportType.getTypeFromIndex(selectedIndex);
-        if (type != null) {
-            tabLogs.setBackgroundAt(selectedIndex, null);
-            setLogNagActive(type, false);
+    /**
+     * Sets a named {@link JLabel} as the tab component for the given {@link DailyReportType}, allowing it to be
+     * retrieved and shown/hidden later via {@link JTabbedPane#getTabComponentAt(int)}.
+     *
+     * @param tabbedPane the tabbed pane to set the component on
+     * @param panel      the {@link JPanel} associated with the tab
+     * @param type       the {@link DailyReportType} whose tab should receive the component
+     *
+     * @author Illiani
+     * @since 0.51.0
+     */
+    public static void addDailyReportTab(EnhancedTabbedPane tabbedPane, JPanel panel, DailyReportType type) {
+        tabbedPane.addTab(type.getIconString(), panel);
+        tabbedPane.setToolTipTextAt(type.getTabIndex(), type.getTooltip());
+
+        JLabel label = new JLabel(type.getIconString());
+        label.setName(type.name());
+        tabbedPane.setTabComponentAt(type.getTabIndex(), label);
+    }
+
+    public void clearDailyReportNag(DailyReportType type) {
+        int logIndex = getLogTabIndex(type);
+        if (logIndex >= 0) {
+            tabLogs.setBackgroundAt(logIndex, null);
         }
+        setLogNagActive(type, false);
+    }
+
+    /**
+     * Resolves the current position of a log tab by identity rather than by a fixed index, so it stays correct after
+     * the user reorders or detaches tabs.
+     *
+     * <p>The lookup keys on the tab's <em>content</em> panel (the {@link DailyReportLogPanel}), which is a stable
+     * reference that {@link EnhancedTabbedPane} preserves across reordering, detachment, and reattachment. (The tab's
+     * label component is <em>not</em> a reliable key: reattaching a detached tab does not restore its custom tab
+     * component.)</p>
+     *
+     * @param type the log type to locate
+     *
+     * @return the current tab index for the type, or {@code -1} if the tab is not present in {@link #tabLogs} (for
+     *       example because it is currently detached into its own window)
+     */
+    public int getLogTabIndex(DailyReportType type) {
+        return tabLogs.indexOfComponent(getLogPanel(type));
+    }
+
+    /**
+     * The inverse of {@link #getLogTabIndex(DailyReportType)}: resolves which {@link DailyReportType} currently sits at
+     * a live tab index, again by matching the content panel so it survives reordering and reattachment.
+     *
+     * @param tabIndex a live index into {@link #tabLogs}
+     *
+     * @return the type at that index, or {@code null} if the index is out of range or its content is not a recognized
+     *       log panel
+     */
+    private @Nullable DailyReportType getTypeAtIndex(int tabIndex) {
+        if ((tabIndex < 0) || (tabIndex >= tabLogs.getTabCount())) {
+            return null;
+        }
+
+        Component content = tabLogs.getComponentAt(tabIndex);
+        for (DailyReportType type : DailyReportType.values()) {
+            if (getLogPanel(type) == content) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @param type the log type
+     *
+     * @return the {@link DailyReportLogPanel} that backs the given log type's tab
+     */
+    private DailyReportLogPanel getLogPanel(DailyReportType type) {
+        return switch (type) {
+            case GENERAL -> pnlGeneralLog;
+            case BATTLE -> pnlBattleLog;
+            case POLITICS -> pnlPoliticsLog;
+            case PERSONNEL -> pnlPersonnelLog;
+            case MEDICAL -> pnlMedicalLog;
+            case FINANCES -> pnlFinancesLog;
+            case ACQUISITIONS -> pnlAcquisitionsLog;
+            case TECHNICAL -> pnlTechnicalLog;
+            case SKILL_CHECKS -> pnlSkillLog;
+            case AGGREGATE -> pnlAggregateLog;
+        };
     }
 
     public EnhancedTabbedPane getTabLogs() {
@@ -606,6 +768,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
             case ACQUISITIONS -> logNagActiveAcquisitions;
             case TECHNICAL -> logNagActiveTechnical;
             case SKILL_CHECKS -> logNagActiveSkillChecks;
+            case AGGREGATE -> logNagActiveAggregateChecks;
         };
     }
 
@@ -620,11 +783,13 @@ public final class CommandCenterTab extends CampaignGuiTab {
             case ACQUISITIONS -> logNagActiveAcquisitions = isActive;
             case TECHNICAL -> logNagActiveTechnical = isActive;
             case SKILL_CHECKS -> logNagActiveSkillChecks = isActive;
+            case AGGREGATE -> logNagActiveAggregateChecks = isActive;
         }
     }
 
-    public void nagLogTab(int logIndex) {
-        if (logIndex >= 0 && logIndex < tabLogs.getTabCount()) {
+    public void nagLogTab(DailyReportType type) {
+        int logIndex = getLogTabIndex(type);
+        if (logIndex >= 0) {
             tabLogs.setBackgroundAt(logIndex, UIUtil.uiDarkBlue());
         }
     }
@@ -637,6 +802,10 @@ public final class CommandCenterTab extends CampaignGuiTab {
         JPanel panProcurementButtons = new JPanel(new GridLayout(8, 1, 0, 5));
         panProcurementButtons.getAccessibleContext().setAccessibleName("Procurement Actions");
 
+        RoundedJButton btnPartsMarket = new RoundedJButton(resourceMap.getString("btnPartsMarket.manual"));
+        btnPartsMarket.addActionListener(e -> getCampaignGui().showPartsMarket());
+        panProcurementButtons.add(btnPartsMarket);
+
         RoundedJButton btnNeededParts = new RoundedJButton(resourceMap.getString("btnNeededParts.text"));
         btnNeededParts.setToolTipText(resourceMap.getString("btnNeededParts.toolTipText"));
         btnNeededParts.addActionListener(evt -> new AcquisitionsDialog(getFrame(), true, getCampaignGui()).setVisible(
@@ -647,6 +816,14 @@ public final class CommandCenterTab extends CampaignGuiTab {
         btnPartsReport.setToolTipText(resourceMap.getString("btnPartsReport.toolTipText"));
         btnPartsReport.addActionListener(evt -> new PartsReportDialog(getCampaignGui(), true).setVisible(true));
         panProcurementButtons.add(btnPartsReport);
+
+        btnChangePriority = new RoundedJButton(resourceMap.getString("btnChangePriority.text"));
+        btnChangePriority.addActionListener(evt -> {
+            new ShoppingListPriorityDialog(this.getFrame(), getCampaign());
+            this.refreshProcurementList();
+        });
+        btnChangePriority.setEnabled(true);
+        panProcurementButtons.add(btnChangePriority);
 
         btnPauseProcurement = new RoundedJButton(resourceMap.getString("btnPauseProcurement.text"));
         btnPauseProcurement.addActionListener(evt -> {
@@ -665,6 +842,17 @@ public final class CommandCenterTab extends CampaignGuiTab {
         });
         btnResumeProcurement.setEnabled(!getCampaign().isProcessProcurement());
         panProcurementButtons.add(btnResumeProcurement);
+
+        btnMRMSInstant = new RoundedJButton(getTextAt(RESOURCE_BUNDLE, "CommandCenterTab.button.mrms"));
+        btnMRMSInstant.addActionListener(evt -> {
+            MRMSService.mrmsAllUnits(getCampaign());
+            JOptionPane.showMessageDialog(getCampaignGui().getFrame(),
+                  getTextAt(RESOURCE_BUNDLE, "CommandCenterTab.button.mrms.report"),
+                  getTextAt(RESOURCE_BUNDLE, "CommandCenterTab.button.mrms.title"),
+                  JOptionPane.INFORMATION_MESSAGE);
+        });
+        panProcurementButtons.add(btnMRMSInstant);
+
         /* shopping table */
         procurementTotalCostLabel = new JLabel();
         refreshProcurementTotalCost();
@@ -722,9 +910,9 @@ public final class CommandCenterTab extends CampaignGuiTab {
             }
         });
 
-        JScrollPane scrollProcurement = new JScrollPaneWithSpeed(procurementTable);
+        JScrollPane scrollProcurement = new FastJScrollPane(procurementTable);
         panProcurement = new JPanel(new GridBagLayout());
-        panProcurement.setBorder(RoundedLineBorder.createRoundedLineBorder(resourceMap.getString("panProcurement.title")));
+        panProcurement.setBorder(RoundedLineBorder.createRoundedLineBorder());
         GridBagConstraints gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = 0;
@@ -746,69 +934,6 @@ public final class CommandCenterTab extends CampaignGuiTab {
         gridBagConstraints.weightx = 0.0;
         gridBagConstraints.weighty = 0.0;
         panProcurement.add(procurementTotalCostLabel, gridBagConstraints);
-    }
-
-    /**
-     * Initialize the panel for displaying available reports
-     */
-    private void initReportsPanel() {
-        panReports = new JPanel(new GridLayout(8, 1, 0, 5));
-
-        RoundedJButton btnTransportReport = new RoundedJButton(resourceMap.getString("btnTransportReport.text"));
-        btnTransportReport.addActionListener(ev -> new TransportReportDialog(getCampaignGui().getFrame(),
-              new TransportReport(getCampaign())).setVisible(true));
-        panReports.add(btnTransportReport);
-
-        RoundedJButton btnHangarOverview = new RoundedJButton(resourceMap.getString("btnHangarOverview.text"));
-        btnHangarOverview.addActionListener(evt -> new HangarReportDialog(getCampaignGui().getFrame(),
-              new HangarReport(getCampaign())).setVisible(true));
-        panReports.add(btnHangarOverview);
-
-        RoundedJButton btnPersonnelOverview = new RoundedJButton(resourceMap.getString("btnPersonnelOverview.text"));
-        btnPersonnelOverview.addActionListener(evt -> new PersonnelReportDialog(getCampaignGui().getFrame(),
-              new PersonnelReport(getCampaign())).setVisible(true));
-        panReports.add(btnPersonnelOverview);
-
-        RoundedJButton btnCargoCapacity = new RoundedJButton(resourceMap.getString("btnCargoCapacity.text"));
-        btnCargoCapacity.addActionListener(evt -> new CargoReportDialog(getCampaignGui().getFrame(),
-              new CargoReport(getCampaign())).setVisible(true));
-        panReports.add(btnCargoCapacity);
-
-        btnUnitRating = new RoundedJButton(resourceMap.getString("btnUnitRating.text"));
-        btnUnitRating.addActionListener(evt -> new ReputationReportDialog(getCampaignGui().getFrame(),
-              getCampaign()).setVisible(true));
-        panReports.add(btnUnitRating);
-
-        RoundedJButton btnFactionStanding = new RoundedJButton(resourceMap.getString("btnFactionStanding.text"));
-        btnFactionStanding.addActionListener(evt -> {
-            FactionStandingReport factionStandingReport = new FactionStandingReport(getCampaignGui().getFrame(),
-                  getCampaign());
-
-            for (String report : factionStandingReport.getReports()) {
-                if (report != null && !report.isBlank()) {
-                    getCampaign().addReport(POLITICS, report);
-                }
-            }
-        });
-        panReports.add(btnFactionStanding);
-
-        RoundedJButton btnDiplomacy = new RoundedJButton(resourceMap.getString("btnDiplomacy.text"));
-        btnDiplomacy.addActionListener(evt -> {
-            new DiplomacyReport(getCampaignGui().getFrame(), getCampaign().isClanCampaign(),
-                  getCampaign().getLocalDate());
-        });
-        panReports.add(btnDiplomacy);
-
-        RoundedJButton btnJumpFees = new RoundedJButton(resourceMap.getString("btnJumpFees.text"));
-        btnJumpFees.addActionListener(evt -> {
-            TransportCostCalculations transportCostCalculations =
-                  getCampaign().getTransportCostCalculation(EXP_REGULAR);
-            transportCostCalculations.calculateJumpCostForEachDay();
-            new JumpCostsSummary(getCampaignGui().getFrame(), transportCostCalculations);
-        });
-        panReports.add(btnJumpFees);
-
-        panReports.setBorder(RoundedLineBorder.createRoundedLineBorder(resourceMap.getString("panReports.title")));
     }
 
     @Override
@@ -834,6 +959,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
         refreshFinancesLog();
         refreshAcquisitionsLog();
         refreshTechnicalLog();
+        refreshAggregateLog();
     }
 
     /**
@@ -841,30 +967,49 @@ public final class CommandCenterTab extends CampaignGuiTab {
      */
     private void refreshBasicInfo() {
         final Campaign campaign = getCampaign();
+
+        // While a bulk generation is adding units/parts off the EDT, skip this refresh: the summary
+        // computation walks the campaign's hangar and location tree, which the worker is concurrently
+        // mutating - reading it here threw ConcurrentModificationException from the modal progress
+        // dialog's event pump. The generation fires an OrganizationChangedEvent when it completes,
+        // which reschedules this refresh against the finished, consistent campaign.
+        if (campaign.isBulkGenerationInProgress()) {
+            return;
+        }
+
         final CampaignOptions campaignOptions = campaign.getCampaignOptions();
         final CampaignSummary campaignSummary = campaign.getCampaignSummary();
 
         if (panInfo.getBorder() instanceof TitledBorder titledBorder) {
-            titledBorder.setTitle(getCampaign().getName());
+            titledBorder.setTitle(getCampaign().getPlayerForce().getName());
             panInfo.repaint();
         }
 
+        boolean isUseChaosReputation = getCampaignOptions().get(CampaignOption.USE_CHAOS_REPUTATION);
+        SkillLevel averageSkillLevel = campaign.getPlayerForce()
+                                             .getAverageSkillLevel(getCampaignOptions(), campaign.getLocalDate());
         String experienceString = "<html><b>" +
-                                        SkillType.getColoredExperienceLevelName(campaign.getReputation()
-                                                                                      .getAverageSkillLevel()) +
+                                        SkillType.getColoredExperienceLevelName(averageSkillLevel) +
                                         "</b></html>";
         lblExperience.setText(experienceString);
 
         campaignSummary.updateInformation();
         lblRating.setText(campaign.getUnitRatingText());
+        if (isUseChaosReputation && campaignOptions.get(CampaignOption.CAMPAIGN_LEVEL_CHAOS_REPUTATION)) {
+            lblRating.setToolTipText(ChaosReputation.getCampaignLevelTooltip(campaign));
+        } else {
+            lblRating.setToolTipText(null);
+        }
+
+        lblUnitWeight.setText(campaignSummary.getUnitWeightReport());
         lblPersonnel.setText(campaignSummary.getPersonnelReport());
         lblMissionSuccess.setText(campaignSummary.getMissionSuccessReport());
         lblComposition.setText(campaignSummary.getForceCompositionReport());
-        lblCargoSummary.setText(campaignSummary.getCargoCapacityReport().toString());
+        lblCargoSummary.setText(campaignSummary.getCargoCapacityReport());
         lblRepairStatus.setText(campaignSummary.getForceRepairReport());
         lblTransportCapacity.setText(campaignSummary.getTransportCapacity());
 
-        if (campaignOptions.isUseHRStrain()) {
+        if (campaignOptions.get(CampaignOption.USE_HR_STRAIN)) {
             try {
                 lblHRCapacity.setText(campaignSummary.getHRCapacityReport(campaign));
             } catch (Exception ignored) {
@@ -891,7 +1036,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
                 model.addElement(String.format(report));
             }
 
-            for (Mission mission : getCampaign().getActiveMissions(false)) {
+            for (AbstractContract mission : getCampaign().getActiveContracts()) {
                 List<Scenario> scenarios = mission.getScenarios();
 
                 scenarios.sort(Comparator.comparing(Scenario::getDate,
@@ -913,7 +1058,8 @@ public final class CommandCenterTab extends CampaignGuiTab {
                                                                            .getFontColorWarningHexColor() +
                                                                      "'>" +
                                                                      ChronoUnit.DAYS.between(getCampaign().getLocalDate(),
-                                                                           scenario.getDate())) + " days</font</html>");
+                                                                           scenario.getDate())) +
+                                                       " days</font></html>");
                             }
                         }
                     }
@@ -956,7 +1102,7 @@ public final class CommandCenterTab extends CampaignGuiTab {
      * refresh the procurement list
      */
     private void refreshProcurementList() {
-        procurementModel.setData(getCampaign().getShoppingList().getShoppingList());
+        procurementModel.setData(getCampaign().getPlayerForce().getShoppingList().getShoppingList());
         refreshProcurementTotalCost();
     }
 
@@ -968,8 +1114,8 @@ public final class CommandCenterTab extends CampaignGuiTab {
         String formatString, totalCostString;
         Money totalCost, funds;
         formatString = resourceMap.getString("lblProcurementTotalCost.text");
-        totalCost = getCampaign().getShoppingList().getTotalBuyCost();
-        funds = getCampaign().getFunds();
+        totalCost = getCampaign().getPlayerForce().getShoppingList().getTotalBuyCost();
+        funds = getCampaign().getPlayerForce().getFunds();
         if (funds.compareTo(totalCost) < 0) {
             String warningColor = ReportingUtilities.getWarningColor();
             String formatedString = "<b>" + totalCost.toAmountAndSymbolString() + "</b>";
@@ -984,80 +1130,80 @@ public final class CommandCenterTab extends CampaignGuiTab {
      * Initialize a new daily log report
      */
     private void initLog() {
-        String generalReport = getCampaign().getCurrentReportHTML();
-        pnlGeneralLog.refreshLog(generalReport, GENERAL);
-        getCampaign().fetchAndClearNewReports();
+        DailyReportLog reportLog = getCampaign().getDailyReportLog();
 
-        String skillReport = getCampaign().getSkillReportHTML();
-        pnlSkillLog.refreshLog(skillReport, SKILL_CHECKS);
-        getCampaign().fetchAndClearNewSkillReports();
+        pnlGeneralLog.refreshLog(reportLog.getHtml(GENERAL));
+        reportLog.fetchAndClearNew(GENERAL);
 
-        String battleReport = getCampaign().getBattleReportHTML();
-        pnlBattleLog.refreshLog(battleReport, BATTLE);
-        getCampaign().fetchAndClearNewBattleReports();
+        pnlSkillLog.refreshLog(reportLog.getHtml(SKILL_CHECKS));
+        reportLog.fetchAndClearNew(SKILL_CHECKS);
 
-        String politicsReport = getCampaign().getPoliticsReportHTML();
-        pnlPoliticsLog.refreshLog(politicsReport, POLITICS);
-        getCampaign().fetchAndClearNewPoliticsReports();
+        pnlBattleLog.refreshLog(reportLog.getHtml(BATTLE));
+        reportLog.fetchAndClearNew(BATTLE);
 
-        String personnelReport = getCampaign().getPersonnelReportHTML();
-        pnlPersonnelLog.refreshLog(personnelReport, PERSONNEL);
-        getCampaign().fetchAndClearNewPersonnelReports();
+        pnlPoliticsLog.refreshLog(reportLog.getHtml(POLITICS));
+        reportLog.fetchAndClearNew(POLITICS);
 
-        String medicalReport = getCampaign().getMedicalReportHTML();
-        pnlMedicalLog.refreshLog(medicalReport, MEDICAL);
-        getCampaign().fetchAndClearNewMedicalReports();
+        pnlPersonnelLog.refreshLog(reportLog.getHtml(PERSONNEL));
+        reportLog.fetchAndClearNew(PERSONNEL);
 
-        String financesReport = getCampaign().getFinancesReportHTML();
-        pnlFinancesLog.refreshLog(financesReport, FINANCES);
-        getCampaign().fetchAndClearNewFinancesReports();
+        pnlMedicalLog.refreshLog(reportLog.getHtml(MEDICAL));
+        reportLog.fetchAndClearNew(MEDICAL);
 
-        String acquisitionsReport = getCampaign().getAcquisitionsReportHTML();
-        pnlAcquisitionsLog.refreshLog(acquisitionsReport, ACQUISITIONS);
-        getCampaign().fetchAndClearNewAcquisitionsReports();
+        pnlFinancesLog.refreshLog(reportLog.getHtml(FINANCES));
+        reportLog.fetchAndClearNew(FINANCES);
 
-        String technicalReport = getCampaign().getTechnicalReportHTML();
-        pnlTechnicalLog.refreshLog(technicalReport, TECHNICAL);
-        getCampaign().fetchAndClearNewTechnicalReports();
+        pnlAcquisitionsLog.refreshLog(reportLog.getHtml(ACQUISITIONS));
+        reportLog.fetchAndClearNew(ACQUISITIONS);
+
+        pnlTechnicalLog.refreshLog(reportLog.getHtml(TECHNICAL));
+        reportLog.fetchAndClearNew(TECHNICAL);
+
+        pnlAggregateLog.refreshLog(reportLog.getHtml(AGGREGATE));
+        reportLog.fetchAndClearNew(AGGREGATE);
     }
 
     /**
      * append new reports to the daily log report
      */
     synchronized private void refreshGeneralLog() {
-        pnlGeneralLog.appendLog(getCampaign().fetchAndClearNewReports(), GENERAL);
+        pnlGeneralLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(GENERAL), GENERAL);
     }
 
     synchronized private void refreshSkillLog() {
-        pnlSkillLog.appendLog(getCampaign().fetchAndClearNewSkillReports(), SKILL_CHECKS);
+        pnlSkillLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(SKILL_CHECKS), SKILL_CHECKS);
     }
 
     synchronized private void refreshBattleLog() {
-        pnlBattleLog.appendLog(getCampaign().fetchAndClearNewBattleReports(), BATTLE);
+        pnlBattleLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(BATTLE), BATTLE);
     }
 
     synchronized private void refreshPoliticsLog() {
-        pnlPoliticsLog.appendLog(getCampaign().fetchAndClearNewPoliticsReports(), POLITICS);
+        pnlPoliticsLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(POLITICS), POLITICS);
     }
 
     synchronized private void refreshPersonnelLog() {
-        pnlPersonnelLog.appendLog(getCampaign().fetchAndClearNewPersonnelReports(), PERSONNEL);
+        pnlPersonnelLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(PERSONNEL), PERSONNEL);
     }
 
     synchronized private void refreshMedicalLog() {
-        pnlMedicalLog.appendLog(getCampaign().fetchAndClearNewMedicalReports(), MEDICAL);
+        pnlMedicalLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(MEDICAL), MEDICAL);
     }
 
     synchronized private void refreshFinancesLog() {
-        pnlFinancesLog.appendLog(getCampaign().fetchAndClearNewFinancesReports(), FINANCES);
+        pnlFinancesLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(FINANCES), FINANCES);
     }
 
     synchronized private void refreshAcquisitionsLog() {
-        pnlAcquisitionsLog.appendLog(getCampaign().fetchAndClearNewAcquisitionsReports(), ACQUISITIONS);
+        pnlAcquisitionsLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(ACQUISITIONS), ACQUISITIONS);
     }
 
     synchronized private void refreshTechnicalLog() {
-        pnlTechnicalLog.appendLog(getCampaign().fetchAndClearNewTechnicalReports(), TECHNICAL);
+        pnlTechnicalLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(TECHNICAL), TECHNICAL);
+    }
+
+    synchronized private void refreshAggregateLog() {
+        pnlAggregateLog.appendLog(getCampaign().getDailyReportLog().fetchAndClearNew(AGGREGATE), AGGREGATE);
     }
 
     private final ActionScheduler procurementListScheduler = new ActionScheduler(this::refreshProcurementList);
@@ -1082,15 +1228,23 @@ public final class CommandCenterTab extends CampaignGuiTab {
 
     @Subscribe
     public void handle(ReportEvent ev) {
-        refreshGeneralLog();
-        refreshSkillLog();
-        refreshBattleLog();
-        refreshPoliticsLog();
-        refreshPersonnelLog();
-        refreshMedicalLog();
-        refreshFinancesLog();
-        refreshAcquisitionsLog();
-        refreshTechnicalLog();
+        // Dispatch onto the EDT regardless of caller thread. The Daily Report log panels are
+        // HTML-bearing JTextPanes; their appendLog path mutates the HTMLDocument and the JTextPane
+        // caret. Off-EDT writes here deadlocked with a queued DefaultCaret repaint runnable when
+        // the worker fired ReportEvent during force generation (EDT held AWTTreeLock and wanted
+        // the document read-lock; worker held the document write-lock).
+        SwingUtilities.invokeLater(() -> {
+            refreshGeneralLog();
+            refreshSkillLog();
+            refreshBattleLog();
+            refreshPoliticsLog();
+            refreshPersonnelLog();
+            refreshMedicalLog();
+            refreshFinancesLog();
+            refreshAcquisitionsLog();
+            refreshTechnicalLog();
+            refreshAggregateLog();
+        });
     }
 
     @Subscribe
@@ -1128,17 +1282,18 @@ public final class CommandCenterTab extends CampaignGuiTab {
     }
 
     @Subscribe
+    public void handle(OrganizationChangedEvent evt) {
+        // Fired once after a bulk force generation completes (among other org changes); reschedules the
+        // basic-info/cargo refresh that refreshBasicInfo skipped while the generation was in progress.
+        basicInfoScheduler.schedule();
+    }
+
+    @Subscribe
     public void handle(final OptionsChangedEvent evt) {
         basicInfoScheduler.schedule();
         procurementListScheduler.schedule();
         ImageIcon icon = getAndScaleCampaignIcon();
         lblIcon.setIcon(icon);
-    }
-
-    @Subscribe
-    public void handle(MHQOptionsChangedEvent evt) {
-        btnMRMSDialog.setVisible(MekHQ.getMHQOptions().getCommandCenterMRMS());
-        btnMRMSInstant.setVisible(MekHQ.getMHQOptions().getCommandCenterMRMS());
     }
 
     @Subscribe

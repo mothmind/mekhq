@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -40,10 +40,12 @@ import javax.swing.JMenuItem;
 import megamek.codeUtilities.StringUtility;
 import megamek.common.enums.SkillLevel;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.location.IPlace;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.JScrollableMenu;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * This is a standard menu that takes either a unit or multiple units, and allows the user to assign or remove a tech
@@ -71,7 +73,7 @@ public class AssignUnitToTechMenu extends JScrollableMenu {
             return;
         }
 
-        boolean techsUseAdmin = campaign.getCampaignOptions().isTechsUseAdministration();
+        boolean techsUseAdmin = campaign.getCampaignOptions().get(CampaignOption.TECHS_USE_ADMINISTRATION);
 
         // Initialize Menu
         setText(resources.getString("AssignUnitToTechMenu.title"));
@@ -100,8 +102,19 @@ public class AssignUnitToTechMenu extends JScrollableMenu {
                                                                        (unit.getTech() == null) :
                                                                        units[0].getTech().equals(unit.getTech()));
 
-            for (final Person tech : campaign.getTechs()) {
+            final IPlace unitPlace = units[0].getPlace();
+
+            for (final Person tech : campaign.getPlayerForce()
+                                           .getHumanResources()
+                                           .getTechs(campaign.getPlayerForce().getHangar().getUnits(),
+                                                 campaign.getCampaignOptions(),
+                                                 campaign.getPlayerForce().isClanForce(),
+                                                 campaign.getLocalDate())) {
                 if (allShareTech && tech.equals(units[0].getTech())) {
+                    continue;
+                }
+
+                if (unitPlace != null && tech.getPlace() != unitPlace) {
                     continue;
                 }
 

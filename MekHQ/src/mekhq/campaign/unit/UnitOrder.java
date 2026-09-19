@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -55,6 +55,7 @@ import mekhq.utilities.ReportingUtilities;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * We use an extension of unit to create a unit order acquisition work
@@ -185,13 +186,18 @@ public class UnitOrder extends Unit implements IAcquisitionWork {
     }
 
     @Override
+    public mekhq.campaign.LocalWarehouse getWarehouse() {
+        return getCampaign().getPlayerForce().getWarehouse();
+    }
+
+    @Override
     public int getDaysToWait() {
         return daysToWait;
     }
 
     @Override
     public void resetDaysToWait() {
-        this.daysToWait = getCampaign().getCampaignOptions().getWaitingPeriod();
+        this.daysToWait = getCampaign().getCampaignOptions().get(CampaignOption.WAITING_PERIOD);
     }
 
     @Override
@@ -223,10 +229,10 @@ public class UnitOrder extends Unit implements IAcquisitionWork {
     public TargetRoll getAllAcquisitionMods() {
         TargetRoll target = new TargetRoll();
 
-        if (entity.isClan() && getCampaign().getCampaignOptions().getClanAcquisitionPenalty() > 0) {
-            target.addModifier(getCampaign().getCampaignOptions().getClanAcquisitionPenalty(), "clan-tech");
-        } else if (getCampaign().getCampaignOptions().getIsAcquisitionPenalty() > 0) {
-            target.addModifier(getCampaign().getCampaignOptions().getIsAcquisitionPenalty(), "Inner Sphere tech");
+        if (entity.isClan() && getCampaign().getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY) > 0) {
+            target.addModifier(getCampaign().getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY), "clan-tech");
+        } else if (getCampaign().getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY) > 0) {
+            target.addModifier(getCampaign().getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY), "Inner Sphere tech");
         }
         // TODO: Fix weight classes
         // TODO: aero large craft
@@ -403,6 +409,6 @@ public class UnitOrder extends Unit implements IAcquisitionWork {
      */
     @Override
     public int getTechLevel() {
-        return getSimpleTechLevel().getCompoundTechLevel(getCampaign().getFaction().isClan());
+        return getSimpleTechLevel().getCompoundTechLevel(getCampaign().getPlayerForce().getFaction().isClan());
     }
 }

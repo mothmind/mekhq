@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -36,23 +36,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.util.List;
 import java.util.UUID;
 
 import megamek.common.units.Entity;
+import megamek.common.units.Mek;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Warehouse;
+import mekhq.campaign.FixedLocation;
+import mekhq.campaign.LocalWarehouse;
+import mekhq.campaign.base.PlayerBase;
+import mekhq.campaign.location.LocationNode;
 import mekhq.campaign.parts.meks.MekLocation;
 import mekhq.campaign.parts.meks.MekSensor;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.Unit;
+import mekhq.campaign.universe.PlanetarySystem;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -85,6 +93,43 @@ public class PartTest {
         assertNull(part.getRefitUnit());
         assertFalse(part.isReservedForReplacement());
         assertFalse(part.isSpare());
+    }
+
+    @Test
+    public void cancelAssignmentWithoutResetKeepsSpentMinutes() {
+        // Mirrors the "Cancel Task" action: unassign the tech but do not refund the minutes already spent.
+        Person mockTech = mock(Person.class);
+
+        Part part = new MekSensor();
+        part.setTech(mockTech);
+        part.setShorthandedMod(2);
+        part.addTimeSpent(90);
+
+        assertTrue(part.isBeingWorkedOn());
+
+        part.cancelAssignment(false);
+
+        assertNull(part.getTech());
+        assertFalse(part.isBeingWorkedOn());
+        assertEquals(0, part.getShorthandedMod());
+        // Spent minutes are preserved (no refund).
+        assertEquals(90, part.getTimeSpent());
+    }
+
+    @Test
+    public void cancelAssignmentWithResetClearsSpentMinutes() {
+        Person mockTech = mock(Person.class);
+
+        Part part = new MekSensor();
+        part.setTech(mockTech);
+        part.addTimeSpent(90);
+
+        part.cancelAssignment(true);
+
+        assertNull(part.getTech());
+        assertFalse(part.isBeingWorkedOn());
+        // With resetTime, spent minutes are refunded.
+        assertEquals(0, part.getTimeSpent());
     }
 
     @Test
@@ -144,9 +189,9 @@ public class PartTest {
 
     @Test
     public void decrementQuantity() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -171,9 +216,9 @@ public class PartTest {
 
     @Test
     public void decrementQuantityDoesNotGoNegative() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -192,9 +237,9 @@ public class PartTest {
 
     @Test
     public void decrementQuantityZeroRemovesChildParts() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -220,9 +265,9 @@ public class PartTest {
 
     @Test
     public void setQuantity() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -242,9 +287,9 @@ public class PartTest {
 
     @Test
     public void setNegativeQuantity() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -264,9 +309,9 @@ public class PartTest {
 
     @Test
     public void setQuantityZeroRemovesChildParts() {
-        Campaign mockCampaign = mock(Campaign.class);
-        Warehouse mockWarehouse = mock(Warehouse.class);
-        when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        Campaign mockCampaign = mockCampaign();
+        LocalWarehouse mockWarehouse = mock(LocalWarehouse.class);
+        when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -309,8 +354,50 @@ public class PartTest {
     }
 
     @Test
+    public void canBeManuallyDispatchedWhenPresentAndUnreserved() {
+        Part part = new MekSensor();
+        part.setDaysToArrival(0);
+
+        assertTrue(part.canBeManuallyDispatched());
+    }
+
+    @Test
+    public void cannotBeManuallyDispatchedWhenNotPresent() {
+        Part part = new MekSensor();
+        part.setDaysToArrival(5);
+
+        assertFalse(part.canBeManuallyDispatched());
+    }
+
+    @Test
+    public void cannotBeManuallyDispatchedWhenReservedForRefit() {
+        Unit mockUnit = mock(Unit.class);
+        when(mockUnit.getId()).thenReturn(UUID.randomUUID());
+
+        Part part = new MekSensor();
+        part.setDaysToArrival(0);
+        part.setRefitUnit(mockUnit);
+
+        assertTrue(part.isReservedForRefit());
+        assertFalse(part.canBeManuallyDispatched());
+    }
+
+    @Test
+    public void cannotBeManuallyDispatchedWhenReservedForReplacement() {
+        Person mockTech = mock(Person.class);
+        when(mockTech.getId()).thenReturn(UUID.randomUUID());
+
+        Part part = new MekSensor();
+        part.setDaysToArrival(0);
+        part.setReservedBy(mockTech);
+
+        assertTrue(part.isReservedForReplacement());
+        assertFalse(part.canBeManuallyDispatched());
+    }
+
+    @Test
     public void childParts() {
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Part part = new MekLocation();
         part.setCampaign(mockCampaign);
 
@@ -372,10 +459,116 @@ public class PartTest {
 
     @Test
     public void testTransportBayPartNameNoEntity() {
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         int size = 1000;
         TransportBayPart tbp = new TransportBayPart(size, 1, size, mockCampaign);
         // Should return default name, _not_ throw NPE here
         assertNotNull(tbp.getName());
+    }
+
+    @Nested
+    class LocationNodeDelegation {
+        @Test
+        void getLocationNode_withoutUnit_returnsOwnNode() {
+            Part part = new MekSensor();
+            LocationNode node = part.getLocationNode();
+            assertNotNull(node);
+            assertSame(part, node.getLocatable());
+        }
+
+        @Test
+        void getLocationNode_withUnit_keepsOwnNode() {
+            // Node identity must stay stable when a part is installed; place resolution for
+            // installed parts goes through getPlace() via the unit's node instead.
+            Entity mockEntity = mock(Mek.class);
+            when(mockEntity.getWeight()).thenReturn(20.0);
+            Unit mockUnit = mock(Unit.class);
+            when(mockUnit.getId()).thenReturn(UUID.randomUUID());
+            when(mockUnit.getEntity()).thenReturn(mockEntity);
+            when(mockUnit.getLocationNode()).thenReturn(new LocationNode(mockUnit));
+
+            Part part = new MekSensor();
+            part.setUnit(mockUnit);
+
+            assertSame(part, part.getLocationNode().getLocatable());
+        }
+    }
+
+    @Nested
+    class WarehouseLocalization {
+        @Test
+        void getWarehouse_sparePartInCampaignWarehouse_returnsCampaignWarehouse() {
+            Campaign mockCampaign = mockCampaign();
+            LocalWarehouse campaignWarehouse = new LocalWarehouse();
+            when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(campaignWarehouse);
+
+            Part part = new MekSensor();
+            part.setCampaign(mockCampaign);
+
+            // spare part with no place ancestor: falls back to campaign warehouse
+            assertSame(campaignWarehouse, part.getWarehouse());
+        }
+
+        @Test
+        void getWarehouse_sparePartInBaseWarehouse_returnsBaseWarehouse() {
+            Campaign mockCampaign = mockCampaign();
+            LocalWarehouse campaignWarehouse = new LocalWarehouse();
+            when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(campaignWarehouse);
+
+            PlayerBase base = new PlayerBase(new FixedLocation(mock(PlanetarySystem.class)));
+
+            Part part = new MekSensor();
+            part.setCampaign(mockCampaign);
+            base.getBaseWarehouse().addPart(part);
+
+            assertSame(base.getBaseWarehouse(), part.getWarehouse());
+        }
+
+        @Test
+        void getWarehouse_partOnUnitAtBase_returnsBaseWarehouse() {
+            Campaign mockCampaign = mockCampaign();
+            LocalWarehouse campaignWarehouse = new LocalWarehouse();
+            when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(campaignWarehouse);
+
+            PlayerBase base = new PlayerBase(new FixedLocation(mock(PlanetarySystem.class)));
+
+            // Wire a unit into the base hangar so its locationNode parent chain reaches the base.
+            Entity mockEntity = mock(Mek.class);
+            when(mockEntity.getWeight()).thenReturn(20.0);
+            Unit mockUnit = mock(Unit.class);
+            when(mockUnit.getId()).thenReturn(UUID.randomUUID());
+            when(mockUnit.getEntity()).thenReturn(mockEntity);
+            LocationNode unitNode = new LocationNode(mockUnit);
+            when(mockUnit.getLocationNode()).thenReturn(unitNode);
+            LocationNode.LocationManager.setLocation(mockUnit, base.getBaseHangar());
+
+            Part part = new MekSensor();
+            part.setCampaign(mockCampaign);
+            part.setUnit(mockUnit);
+
+            assertSame(base.getBaseWarehouse(), part.getWarehouse());
+        }
+
+        @Test
+        void getWarehouse_partOnMainForceUnit_returnsCampaignWarehouse() {
+            Campaign mockCampaign = mockCampaign();
+            LocalWarehouse campaignWarehouse = new LocalWarehouse();
+            when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(campaignWarehouse);
+
+            // Unit with a locationNode that has no IPlace ancestor.
+            Entity mockEntity = mock(Mek.class);
+            when(mockEntity.getWeight()).thenReturn(20.0);
+            Unit mockUnit = mock(Unit.class);
+            when(mockUnit.getId()).thenReturn(UUID.randomUUID());
+            when(mockUnit.getEntity()).thenReturn(mockEntity);
+            LocationNode unitNode = new LocationNode(mockUnit);
+            when(mockUnit.getLocationNode()).thenReturn(unitNode);
+
+            Part part = new MekSensor();
+            part.setCampaign(mockCampaign);
+            part.setUnit(mockUnit);
+
+            assertSame(campaignWarehouse, part.getWarehouse());
+        }
     }
 }

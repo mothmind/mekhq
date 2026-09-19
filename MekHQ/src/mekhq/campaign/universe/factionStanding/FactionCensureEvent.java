@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,8 +34,10 @@ package mekhq.campaign.universe.factionStanding;
 
 import static megamek.common.compute.Compute.randomInt;
 import static megamek.common.enums.SkillLevel.VETERAN;
+import static megamek.common.units.Crew.DEATH;
 import static mekhq.campaign.enums.DailyReportType.POLITICS;
 import static mekhq.campaign.personnel.PersonUtility.overrideSkills;
+import static mekhq.campaign.personnel.ranks.Rank.RO_MIN;
 import static mekhq.campaign.personnel.skills.SkillType.S_ADMIN;
 import static mekhq.campaign.personnel.skills.SkillType.S_LEADER;
 import static mekhq.campaign.universe.factionStanding.FactionCensureAction.FINE;
@@ -66,6 +68,7 @@ import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.personnel.enums.PersonnelStatus;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
+import mekhq.campaign.personnel.ranks.AutomaticRankAssigner;
 import mekhq.campaign.universe.Faction;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
@@ -73,6 +76,7 @@ import mekhq.gui.dialog.factionStanding.factionJudgment.FactionCensureConfirmati
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentDialog;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentNewsArticle;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentSceneDialog;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Represents a faction censure event within a campaign, handling the narrative and mechanical consequences associated
@@ -122,24 +126,32 @@ public class FactionCensureEvent {
             return;
         }
 
-        commander = campaign.getCommander(); // Can be null if the campaign is effectively empty
+        commander = campaign.getPlayerForce().getHumanResources()
+                          .getCommander(campaign.getCampaignOptions(),
+                                campaign.getPlayerForce().isClanForce(),
+                                campaign.getLocalDate()); // Can be null if the campaign is effectively empty
         if (commander == null) {
             // If there isn't a commander in the campaign, we're going to invent someone. This avoids us needing to
             // add null protection throughout this class (and the dialogs it spawns). This clause should only trigger
             // in the event the campaign is effectively empty. So it shouldn't come up during normal play.
-            commander = campaign.newPerson(PersonnelRole.MEKWARRIOR,
-                  campaign.getFaction().getShortName(),
-                  Gender.RANDOMIZE);
+            final String factionCode = campaign.getPlayerForce().getFaction().getShortName();
+            commander = campaign.getPlayerForce()
+                              .getHumanResources()
+                              .newPerson(campaign, PersonnelRole.MEKWARRIOR, factionCode, Gender.RANDOMIZE);
             LOGGER.warn("Commander was null in FactionCensureEvent. Using a fallback commander: {}.",
                   commander.getFullName());
         }
 
-        secondInCommand = campaign.getSecondInCommand(); // Can be null if the campaign is effectively empty
+        secondInCommand = campaign.getPlayerForce().getHumanResources()
+                                .getSecondInCommand(campaign.getCampaignOptions(),
+                                      campaign.getPlayerForce().isClanForce(),
+                                      campaign.getLocalDate()); // Can be null if the campaign is effectively empty
         if (secondInCommand == null) {
             // See comments for the 'commander == null' clause
-            secondInCommand = campaign.newPerson(PersonnelRole.MEKWARRIOR,
-                  campaign.getFaction().getShortName(),
-                  Gender.RANDOMIZE);
+            final String factionCode = campaign.getPlayerForce().getFaction().getShortName();
+            secondInCommand = campaign.getPlayerForce()
+                                    .getHumanResources()
+                                    .newPerson(campaign, PersonnelRole.MEKWARRIOR, factionCode, Gender.RANDOMIZE);
             LOGGER.warn("Second in command was null in FactionCensureEvent. Using a fallback secondInCommand: {}.",
                   secondInCommand.getFullName());
         }
@@ -163,7 +175,11 @@ public class FactionCensureEvent {
                     PersonnelRole role = censuringFaction.isClan()
                                                ? PersonnelRole.MEKWARRIOR
                                                : PersonnelRole.MILITARY_LIAISON;
-                    Person speaker = campaign.newPerson(role, censuringFaction.getShortName(), Gender.RANDOMIZE);
+                    final String factionCode = censuringFaction.getShortName();
+                    Person speaker = campaign.getPlayerForce()
+                                           .getHumanResources()
+                                           .newPerson(campaign, role, factionCode, Gender.RANDOMIZE);
+                    AutomaticRankAssigner.assignRankSystemFromFaction(speaker, RO_MIN);
 
                     ImmersiveDialogWidth dialogWidth;
                     if (censureAction.equals(FINE) || censureAction.equals(FORMAL_WARNING)) {
@@ -306,7 +322,7 @@ public class FactionCensureEvent {
             case DISBAND -> new FactionJudgmentSceneDialog(campaign, commander, null,
                   FactionJudgmentSceneType.DISBAND, censuringFaction);
             case FINE, BRIBE_OFFICIALS -> {
-                Finances finances = campaign.getFinances();
+                Finances finances = campaign.getPlayerForce().getFinances();
 
                 Money fine = finances.getBalance().multipliedBy(0.1);
                 String fineMessage;
@@ -339,7 +355,7 @@ public class FactionCensureEvent {
         int secondInCommandInjuries = isSuccessful ? randomInt(3) + 1 : randomInt(6) + 1;
         if (useAdvancedMedical) {
             InjuryUtil.resolveCombatDamage(campaign, commander, commanderInjuries);
-            if (commander.getInjuries().size() > 5) {
+            if (commander.getTotalInjurySeverity() >= DEATH) {
                 commander.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.KIA);
             }
 
@@ -362,7 +378,7 @@ public class FactionCensureEvent {
 
         if (isSuccessful) {
             if (secondInCommand.getRecruitment() == null) {
-                campaign.recruitPerson(secondInCommand, true, true);
+                campaign.getPlayerForce().getHumanResources().recruitPerson(campaign, secondInCommand, true, true);
             }
 
             secondInCommand.setCommander(true);
@@ -379,11 +395,11 @@ public class FactionCensureEvent {
      */
     private void processFactionStandingChange(boolean isMajor) {
         double delta = isMajor ? REGARD_DELTA_CONTRACT_SUCCESS_EMPLOYER : REGARD_DELTA_CONTRACT_PARTIAL_EMPLOYER;
-        Faction faction = campaign.getFaction();
+        Faction faction = campaign.getPlayerForce().getFaction();
         String factionCode = faction.getShortName();
-        FactionStandings factionStandings = campaign.getFactionStandings();
-        String report = factionStandings.changeRegardForFaction(campaign.getFaction().getShortName(), factionCode,
-              delta, campaign.getGameYear(), campaign.getCampaignOptions().getRegardMultiplier());
+        FactionStandings factionStandings = campaign.getPlayerForce().getFactionStandings();
+        String report = factionStandings.changeRegardForFaction(campaign.getPlayerForce().getFaction().getShortName(), factionCode,
+              delta, campaign.getGameYear(), campaign.getCampaignOptions().get(CampaignOption.REGARD_MULTIPLIER));
 
         campaign.addReport(POLITICS, report);
     }
@@ -403,7 +419,7 @@ public class FactionCensureEvent {
             if (!isImprisoned) {
                 Person replacement = getReplacementCharacter(seniorPerson);
                 replacement.changeRank(campaign, rank, level, false);
-                campaign.recruitPerson(replacement, true, true);
+                campaign.getPlayerForce().getHumanResources().recruitPerson(campaign, replacement, true, true);
             }
         }
     }
@@ -419,7 +435,7 @@ public class FactionCensureEvent {
             seniorPersonnel.add(secondInCommand);
         }
 
-        for (Person officer : campaign.getPersonnel()) {
+        for (Person officer : campaign.getPlayerForce().getHumanResources().getPersonnel()) {
             if (isExempt(officer, today)) {
                 continue;
             }
@@ -446,29 +462,19 @@ public class FactionCensureEvent {
      */
     private @Nullable Person getReplacementCharacter(Person seniorPerson) {
         boolean useExtraRandomness = campaign.getRandomSkillPreferences().randomizeSkill();
-        boolean isUseArtillery = campaign.getCampaignOptions().isUseArtillery();
+        boolean isUseArtillery = campaign.getCampaignOptions().get(CampaignOption.USE_ARTILLERY);
 
         PersonnelRole primaryRole = seniorPerson.getPrimaryRole();
         PersonnelRole politicalRole = getPoliticalRole();
-        Person replacement = campaign.newPerson(primaryRole, politicalRole);
+        Person replacement = campaign.getPlayerForce()
+                                   .getHumanResources()
+                                   .newPerson(campaign, primaryRole, politicalRole);
 
-        overrideSkills(false,
-              false,
-              false,
-              isUseArtillery,
-              useExtraRandomness,
-              replacement,
-              primaryRole,
-              VETERAN);
+        boolean checkVeterancyEligibility = true;
+        overrideSkills(campaign, replacement, primaryRole, VETERAN, checkVeterancyEligibility);
 
-        overrideSkills(false,
-              false,
-              false,
-              isUseArtillery,
-              useExtraRandomness,
-              replacement,
-              politicalRole,
-              VETERAN);
+        checkVeterancyEligibility = false;
+        overrideSkills(campaign, replacement, politicalRole, VETERAN, checkVeterancyEligibility);
 
         if (!replacement.hasSkill(S_LEADER)) {
             replacement.addSkill(S_LEADER, randomInt(3) + 1, 0);

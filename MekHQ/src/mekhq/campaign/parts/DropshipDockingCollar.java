@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -47,6 +47,7 @@ import megamek.common.units.Dropship;
 import megamek.common.units.Entity;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingDropshipDockingCollar;
 import mekhq.campaign.parts.missing.MissingPart;
@@ -63,8 +64,8 @@ public class DropshipDockingCollar extends Part {
 
     public static final TechAdvancement TA_BOOM = new TechAdvancement(TechBase.ALL)
                                                         .setAdvancement(2458, 2470, 2500)
-                                                        .setPrototypeFactions(Faction.TH)
-                                                        .setProductionFactions(Faction.TH)
+                                                        .setPrototypeFactions(Faction.TH, Faction.CS)
+                                                        .setProductionFactions(Faction.TH, Faction.CS)
                                                         .setTechRating(TechRating.C)
                                                         .setAvailability(AvailabilityValue.C,
                                                               AvailabilityValue.C,
@@ -74,7 +75,7 @@ public class DropshipDockingCollar extends Part {
     public static final TechAdvancement TA_NO_BOOM = new TechAdvancement(TechBase.ALL)
                                                            .setAdvancement(2304, 2350, 2364, 2520)
                                                            .setPrototypeFactions(Faction.TA)
-                                                           .setProductionFactions(Faction.TH)
+                                                           .setProductionFactions(Faction.TH, Faction.CS)
                                                            .setTechRating(TechRating.B)
                                                            .setAvailability(AvailabilityValue.C,
                                                                  AvailabilityValue.X,
@@ -84,6 +85,7 @@ public class DropshipDockingCollar extends Part {
 
     private int collarType;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public DropshipDockingCollar() {
         this(0, null, Dropship.COLLAR_STANDARD);
     }
@@ -122,7 +124,7 @@ public class DropshipDockingCollar extends Part {
 
             if (checkForDestruction
                       && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }
@@ -163,12 +165,12 @@ public class DropshipDockingCollar extends Part {
     public void remove(boolean salvage) {
         if (null != unit && unit.getEntity() instanceof Dropship) {
             ((Dropship) unit.getEntity()).setDamageDockCollar(true);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -240,7 +242,7 @@ public class DropshipDockingCollar extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_VESSEL);
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -54,6 +54,7 @@ import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * @author MKerensky
@@ -86,6 +87,7 @@ public class KFFieldInitiator extends Part {
         return docks;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public KFFieldInitiator() {
         this(0, Jumpship.DRIVE_CORE_STANDARD, 0, null);
     }
@@ -118,7 +120,7 @@ public class KFFieldInitiator extends Part {
             }
             if (checkForDestruction
                       && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }
@@ -176,17 +178,17 @@ public class KFFieldInitiator extends Part {
                 js.setKFFieldInitiatorHit(true);
                 // You can transport a field initiator
                 // See SO p130 for reference
-                Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+                Part spare = getWarehouse().checkForExistingSparePart(this);
                 if (!salvage) {
-                    campaign.getWarehouse().removePart(this);
+                    getWarehouse().removePart(this);
                 } else if (null != spare) {
                     spare.changeQuantity(1);
-                    campaign.getWarehouse().removePart(this);
+                    getWarehouse().removePart(this);
                 } else {
                     // Start a new collection
                     campaign.getQuartermaster().addPart(this, 0, false);
                 }
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
                 unit.removePart(this);
                 Part missing = getMissingPart();
                 unit.addPart(missing);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,7 +34,6 @@ package mekhq.gui.dialog;
 
 import static megamek.common.compute.Compute.randomInt;
 import static mekhq.campaign.enums.DailyReportType.SKILL_CHECKS;
-import static mekhq.campaign.personnel.skills.SkillCheckUtility.determineTargetNumber;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 
 import java.awt.GridBagConstraints;
@@ -51,10 +50,10 @@ import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 
 import megamek.client.ui.comboBoxes.MMComboBox;
-import megamek.common.rolls.TargetRoll;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.personnel.skills.SkillCheckUtility;
+import mekhq.campaign.personnel.skills.ActionCheckResult;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore.ButtonLabelTooltipPair;
@@ -102,8 +101,8 @@ public class SkillCheckDialog {
         this.campaign = campaign;
         this.character = character;
 
-        boolean isUseAgingEffects = campaign.getCampaignOptions().isUseAgeEffects();
-        boolean isClanCampaign = campaign.isClanCampaign();
+        boolean isUseAgingEffects = campaign.getCampaignOptions().get(CampaignOption.USE_AGE_EFFECTS);
+        boolean isClanCampaign = campaign.getPlayerForce().isClanForce();
         LocalDate today = campaign.getLocalDate();
 
         // Initial Dialog
@@ -119,7 +118,7 @@ public class SkillCheckDialog {
               isUseAgingEffects, isClanCampaign, today);
 
         // Results Dialog
-        campaign.addReport(SKILL_CHECKS, results.replaceAll("<p>", "<br><br>").replaceAll("</p>", ""));
+        campaign.addReport(SKILL_CHECKS, results.replace("<p>", "<br><br>").replace("</p>", ""));
         showResultsDialog(results);
     }
 
@@ -139,7 +138,7 @@ public class SkillCheckDialog {
               character,
               null,
               getInCharacterMessage(),
-              getButtons(character.getCurrentEdge() > 0, campaign.getCampaignOptions().isUseEdge()),
+              getButtons(character.getCurrentEdge() > 0, campaign.getCampaignOptions().get(CampaignOption.USE_EDGE)),
               getFormattedTextAt(RESOURCE_BUNDLE, "message.ooc"),
               null,
               false,
@@ -162,21 +161,15 @@ public class SkillCheckDialog {
      */
     private String performSkillCheck(int selectedSkill, int selectedModifier, int choiceIndex,
           boolean isUseAgingEffects, boolean isClanCampaign, LocalDate today) {
-        String skillName = skillNames.get(selectedSkill);
         boolean useEdge = choiceIndex == DIALOG_USE_EDGE_INDEX;
-        SkillCheckUtility utility = new SkillCheckUtility(null,
-              character,
-              skillName,
-              null,
-              selectedModifier,
-              useEdge,
-              true,
-              isUseAgingEffects,
-              isClanCampaign,
-              today);
-        isSuccess = utility.isSuccess();
+        String skillName = skillNames.get(selectedSkill);
+        ActionCheckResult actionCheckResult =
+              character.checkSkill(skillName, isUseAgingEffects, isClanCampaign, today)
+                    .withMiscModifier(selectedModifier)
+                    .resolve(useEdge, null);
 
-        return utility.getResultsText();
+        isSuccess = actionCheckResult.isSuccess();
+        return actionCheckResult.getReport();
     }
 
 
@@ -327,14 +320,8 @@ public class SkillCheckDialog {
         List<String> skills = new ArrayList<>();
 
         for (String skillName : SkillType.getSkillList()) {
-            SkillType skillType = SkillType.getType(skillName);
-            TargetRoll targetRoll = determineTargetNumber(character,
-                  skillType,
-                  0,
-                  isUseAgingEffects,
-                  isClanCampaign,
-                  today);
-            int targetNumber = targetRoll.getValue();
+            int targetNumber = character.checkSkill(skillName, isUseAgingEffects, isClanCampaign, today)
+                                     .getTargetNumber().getValue();
             boolean isCountsUp = SkillType.getType(skillName).isCountUp();
 
             // Build the label with the target number

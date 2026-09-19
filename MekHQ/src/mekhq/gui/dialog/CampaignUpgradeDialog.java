@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -114,23 +114,27 @@ public class CampaignUpgradeDialog {
      * the chosen preset, optionally runs a completion callback, or allows further customization via a campaign options
      * dialog.</p>
      *
+     * @param app      The application context
      * @param campaign The campaign being upgraded; must not be {@code null}.
      *
      * @author Illiani
      * @since 0.50.07
      */
-    public static void campaignUpgradeDialog(Campaign campaign) {
+    public static void campaignUpgradeDialog(MekHQ app, Campaign campaign) {
         JPanel supplementalPanel = createSupplementalPanel();
 
         // This will occur if there are no presets available. This should never occur under normal circumstances as
         // MekHQ always ships with a battery of presets.
         if (supplementalPanel == null) {
-            exitApp(campaign.getApp());
+            exitApp(app);
             return;
         }
 
         ImmersiveDialogCore upgradeDialog = new ImmersiveDialogCore(campaign,
-              campaign.getSeniorAdminPerson(Campaign.AdministratorSpecialization.COMMAND),
+                campaign.getPlayerForce().getHumanResources()
+                      .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                                campaign.getPlayerForce().isClanForce(),
+                                campaign.getLocalDate()),
               null,
               getFormattedTextAt(RESOURCE_BUNDLE, "CampaignUpgradeDialog.inCharacter", campaign.getCommanderAddress()),
               BUTTONS,
@@ -145,13 +149,13 @@ public class CampaignUpgradeDialog {
         int comboChoiceIndex = upgradeDialog.getComboBoxChoiceIndex();
 
         switch (dialogChoiceIndex) {
-            case PRESET_SELECTION_CANCELLED -> exitApp(campaign.getApp());
+            case PRESET_SELECTION_CANCELLED -> exitApp(app);
             case PRESET_SELECTION_SELECT -> {
                 if (comboChoiceIndex < 0 || comboChoiceIndex >= presets.size()) {
                     LOGGER.errorDialog("Error",
                           "Invalid campaign preset index {}. Please report to the MekHQ team",
                           comboChoiceIndex);
-                    exitApp(campaign.getApp());
+                    exitApp(app);
                     // This is wholly unnecessary as the app will have already been closed.
                     // We include it because otherwise the IDE complains.
                     return;
@@ -162,9 +166,17 @@ public class CampaignUpgradeDialog {
                 // This needs to be before we start changing options
                 CampaignOptionsFreebieTracker oldOptions = new CampaignOptionsFreebieTracker(campaign.getCampaignOptions());
 
-                campaign.setCampaignOptions(chosenPreset.getCampaignOptions());
-                campaign.setGameOptions(chosenPreset.getGameOptions());
-                campaign.setRandomSkillPreferences(chosenPreset.getRandomSkillPreferences());
+                // Preset getters are @Nullable; skip any section the preset does not provide so we
+                // do not overwrite the campaign's existing options with null (issue #8945).
+                if (chosenPreset.getCampaignOptions() != null) {
+                    campaign.setCampaignOptions(chosenPreset.getCampaignOptions());
+                }
+                if (chosenPreset.getGameOptions() != null) {
+                    campaign.setGameOptions(chosenPreset.getGameOptions());
+                }
+                if (chosenPreset.getRandomSkillPreferences() != null) {
+                    campaign.setRandomSkillPreferences(chosenPreset.getRandomSkillPreferences());
+                }
 
                 Map<String, SkillType> presetSkills = chosenPreset.getSkills();
                 for (final String skillName : SkillType.getSkillList()) {
@@ -214,7 +226,7 @@ public class CampaignUpgradeDialog {
                 CampaignOptionsDialog optionsDialog = new CampaignOptionsDialog(null, campaign);
                 optionsDialog.setVisible(true);
                 if (optionsDialog.wasCanceled()) {
-                    exitApp(campaign.getApp());
+                    exitApp(app);
                 }
             }
         }

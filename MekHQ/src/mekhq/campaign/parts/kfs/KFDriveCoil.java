@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -54,6 +54,7 @@ import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * @author MKerensky
@@ -86,6 +87,7 @@ public class KFDriveCoil extends Part {
         return docks;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public KFDriveCoil() {
         this(0, Jumpship.DRIVE_CORE_STANDARD, 0, null);
     }
@@ -118,7 +120,7 @@ public class KFDriveCoil extends Part {
             }
             if (checkForDestruction
                       && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }
@@ -180,7 +182,7 @@ public class KFDriveCoil extends Part {
             // you can't salvage and keep this in the warehouse, just remove/scrap and
             // replace it
             // See SO p130 for reference
-            campaign.getWarehouse().removePart(this);
+            getWarehouse().removePart(this);
             unit.removePart(this);
             Part missing = getMissingPart();
             unit.addPart(missing);

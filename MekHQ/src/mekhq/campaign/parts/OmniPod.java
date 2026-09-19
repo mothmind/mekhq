@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2017-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,6 +34,7 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nonnull;
 import megamek.common.TechAdvancement;
 import megamek.common.TechConstants;
 import megamek.common.annotations.Nullable;
@@ -87,6 +88,11 @@ public class OmniPod extends Part {
     /**
      * @return The tech base of the part the OmniPod is meant to contain.
      */
+    @Override
+    public boolean isRightTechType(String skillType) {
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
+    }
+
     @Override
     public TechBase getTechBase() {
         if (null != partType) {
@@ -165,7 +171,7 @@ public class OmniPod extends Part {
 
     // Using tech rating for Omni construction option from IOps.
     @Override
-    public TechRating getTechRating() {
+    public @Nonnull TechRating getTechRating() {
         return TechRating.E;
     }
 
@@ -262,7 +268,7 @@ public class OmniPod extends Part {
     @Override
     public void fix() {
         Part newPart = partType.clone();
-        Part oldPart = campaign.getWarehouse().checkForExistingSparePart(newPart.clone());
+        Part oldPart = getWarehouse().checkForExistingSparePart(newPart.clone());
         if (null != oldPart) {
             newPart.setOmniPodded(true);
             campaign.getQuartermaster().addPart(newPart, 0, false);

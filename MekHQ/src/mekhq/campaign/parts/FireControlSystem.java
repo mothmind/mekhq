@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -44,6 +44,7 @@ import megamek.common.units.Entity;
 import megamek.common.units.Jumpship;
 import megamek.common.units.SmallCraft;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingFireControlSystem;
 import mekhq.campaign.parts.missing.MissingPart;
@@ -58,6 +59,7 @@ import org.w3c.dom.NodeList;
 public class FireControlSystem extends Part {
     private Money cost;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public FireControlSystem() {
         this(0, Money.zero(), null);
     }
@@ -82,8 +84,8 @@ public class FireControlSystem extends Part {
             hits = ((Aero) unit.getEntity()).getFCSHits();
             if (checkForDestruction
                       && hits > priorHits
-                      && (hits < 3 && !campaign.getCampaignOptions().isUseAeroSystemHits())
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && (hits < 3 && !campaign.getCampaignOptions().get(CampaignOption.USE_AERO_SYSTEM_HITS))
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             } else if (hits >= 3) {
                 remove(false);
@@ -94,7 +96,7 @@ public class FireControlSystem extends Part {
     @Override
     public int getBaseTime() {
         int time;
-        if (campaign.getCampaignOptions().isUseAeroSystemHits()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_AERO_SYSTEM_HITS)) {
             // Test of proposed errata for repair times
             if (null != unit && (unit.getEntity() instanceof Dropship || unit.getEntity() instanceof Jumpship)) {
                 time = 120;
@@ -121,7 +123,7 @@ public class FireControlSystem extends Part {
 
     @Override
     public int getDifficulty() {
-        if (campaign.getCampaignOptions().isUseAeroSystemHits()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_AERO_SYSTEM_HITS)) {
             // Test of proposed errata for repair time and difficulty
             if (isSalvaging()) {
                 return 0;
@@ -159,12 +161,12 @@ public class FireControlSystem extends Part {
     public void remove(boolean salvage) {
         if (null != unit && unit.getEntity() instanceof Aero) {
             ((Aero) unit.getEntity()).setFCSHits(3);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -225,7 +227,7 @@ public class FireControlSystem extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return (skillType.equals(SkillType.S_TECH_AERO) || skillType.equals(SkillType.S_TECH_VESSEL));
+        return skillType.equals(SkillType.S_TECH_ELECTRONIC);
     }
 
     @Override

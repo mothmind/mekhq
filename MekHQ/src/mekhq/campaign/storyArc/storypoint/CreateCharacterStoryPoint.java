@@ -45,6 +45,7 @@ import megamek.common.options.IOptionGroup;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.persons.PersonNewEvent;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.personnel.Person;
@@ -142,7 +143,7 @@ public class CreateCharacterStoryPoint extends StoryPoint {
         Campaign campaign = getCampaign();
 
         if (null == faction) {
-            faction = campaign.getFaction();
+            faction = campaign.getPlayerForce().getFaction();
         }
         Person person = new Person(campaign, faction.getShortName());
         if (null != primaryRole) {
@@ -175,6 +176,7 @@ public class CreateCharacterStoryPoint extends StoryPoint {
                     break;
                 case PROTOMEK:
                     person.addSkill(SkillType.S_GUN_PROTO, 0, 1);
+                    person.addSkill(SkillType.S_PILOT_PROTO, 0, 1);
                     break;
                 case NAVAL:
                     person.addSkill(SkillType.S_TECH_VESSEL, 0, 1);
@@ -194,8 +196,11 @@ public class CreateCharacterStoryPoint extends StoryPoint {
         person.setBiography(biography);
         person.setRank(rank);
         if (edge > 0) {
-            person.changeEdge(edge);
-            setEdgeTriggers(person);
+            int gained = person.gainEdge(edge,
+                  campaign.getCampaignOptions().get(CampaignOption.MAXIMUM_EDGE));
+            if (gained > 0) {
+                setEdgeTriggers(person);
+            }
         }
 
         if (null != personId) {
@@ -238,9 +243,12 @@ public class CreateCharacterStoryPoint extends StoryPoint {
             if (null != u && u.isUnmanned()) {
                 u.addPilotOrSoldier(person, false);
                 // only assign to force if properly assigned to a unit
-                Formation formation = getCampaign().getFormation(assignedForceId);
+                Campaign campaign1 = getCampaign();
+                Formation formation = campaign1.getPlayerForce().getFormation(assignedForceId);
                 if (null != formation && null != person.getUnit()) {
-                    getCampaign().addUnitToFormation(u, formation.getId());
+                    mekhq.campaign.Campaign campaign = getCampaign();
+                    int id = formation.getId();
+                    campaign.getPlayerForce().addUnitToFormation(u, id, campaign);
                 }
             }
         }

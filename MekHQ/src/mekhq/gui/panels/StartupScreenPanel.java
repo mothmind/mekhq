@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2022-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -67,11 +67,12 @@ import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.Utilities;
+import mekhq.campaign.storyArc.StoryArc;
 import mekhq.campaign.storyArc.StoryArcStub;
 import mekhq.gui.FileDialogs;
 import mekhq.gui.baseComponents.AbstractMHQPanel;
 import mekhq.gui.dialog.DataLoadingDialog;
-import mekhq.gui.dialog.MHQOptionsDialog;
+import mekhq.gui.dialog.MHQOptionsTreeDialog;
 import mekhq.gui.dialog.NewPlayerQuickstartDialog;
 import mekhq.gui.dialog.StoryArcSelectionDialog;
 
@@ -85,7 +86,7 @@ public class StartupScreenPanel extends AbstractMHQPanel {
     private BufferedImage backgroundIcon;
 
     // Save file filtering needs to avoid loading some special files
-    public static FilenameFilter saveFilter = (dir, name) -> {
+    public static final FilenameFilter saveFilter = (dir, name) -> {
         // Allow any .xml, .cpnx, and .cpnx.gz file that is not in the list of excluded
         // files
         List<String> toReject = List.of(PreferenceManager.DEFAULT_CFG_FILE_NAME.toLowerCase());
@@ -138,7 +139,7 @@ public class StartupScreenPanel extends AbstractMHQPanel {
               MHQConstants.VERSION), JLabel.CENTER);
         lblVersion.setPreferredSize(new Dimension(250, 15));
         if (!skinSpec.fontColors.isEmpty()) {
-            lblVersion.setForeground(skinSpec.fontColors.get(0));
+            lblVersion.setForeground(skinSpec.fontColors.getFirst());
         }
 
         MegaMekButton btnNewCampaign = new MegaMekButton(resources.getString("btnNewCampaign.text"),
@@ -218,7 +219,7 @@ public class StartupScreenPanel extends AbstractMHQPanel {
         MegaMekButton btnMHQOptions = new MegaMekButton(resources.getString("MHQOptions.text"),
               UIComponents.MainMenuButton.getComp(),
               true);
-        btnMHQOptions.addActionListener(evt -> new MHQOptionsDialog(getFrame()).setVisible(true));
+        btnMHQOptions.addActionListener(evt -> new MHQOptionsTreeDialog(getFrame()).setVisible(true));
 
         MegaMekButton btnQuit = new MegaMekButton(resources.getString("Quit.text"),
               UIComponents.MainMenuButton.getComp(),
@@ -322,7 +323,21 @@ public class StartupScreenPanel extends AbstractMHQPanel {
     }
 
     private void startCampaign(final @Nullable File file, @Nullable StoryArcStub storyArcStub) {
-        new DataLoadingDialog(getFrame(), app, file, storyArcStub, false).setVisible(true);
+        getFrame().setVisible(false); // hide StartupScreen
+        new DataLoadingDialog(getFrame(), app, file, false, campaign -> {
+            if (campaign != null) {
+                app.activateCampaign(campaign);
+                if (storyArcStub != null) {
+                    StoryArc storyArc = storyArcStub.loadStoryArc(campaign);
+                    if (storyArc != null) {
+                        campaign.useStoryArc(storyArc, true);
+                    }
+                }
+                getFrame().dispose();
+            } else {
+                getFrame().setVisible(true); // return back to StartupScreen
+            }
+        }).setVisible(true);
     }
 
     private @Nullable File selectCampaignFile() {

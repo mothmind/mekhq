@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2024-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,7 +33,7 @@
 package mekhq.campaign.personnel.education;
 
 import static java.lang.Math.max;
-import static megamek.codeUtilities.MathUtility.clamp;
+import static java.lang.Math.round;
 import static megamek.common.compute.Compute.d6;
 import static megamek.common.compute.Compute.randomInt;
 import static mekhq.campaign.enums.DailyReportType.FINANCES;
@@ -63,15 +63,28 @@ import java.util.Collections;
 import java.util.List;
 import java.util.ResourceBundle;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
+import mekhq.campaign.AbstractLocation;
+import mekhq.campaign.AbstractMobileLocation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.CurrentLocation;
+import mekhq.campaign.JumpPath;
+import mekhq.campaign.LocalPersonnel;
+import mekhq.campaign.base.PlayerBase;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.persons.PersonChangedEvent;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
+import mekhq.campaign.location.AcademyCampusLocation;
+import mekhq.campaign.location.ILocation;
+import mekhq.campaign.location.IPlace;
+import mekhq.campaign.location.LocationDispatch;
+import mekhq.campaign.location.LocationUtils;
 import mekhq.campaign.log.PerformanceLogger;
 import mekhq.campaign.log.ServiceLogger;
 import mekhq.campaign.personnel.Person;
@@ -82,8 +95,9 @@ import mekhq.campaign.personnel.enums.education.EducationStage;
 import mekhq.campaign.personnel.familyTree.Genealogy;
 import mekhq.campaign.personnel.skills.Skill;
 import mekhq.campaign.personnel.skills.SkillType;
-import mekhq.campaign.randomEvents.personalities.enums.Reasoning;
+import mekhq.campaign.randomEvents.personalities.Reasoning;
 import mekhq.campaign.universe.Faction;
+import mekhq.campaign.universe.PlanetarySystem;
 import mekhq.utilities.ReportingUtilities;
 
 /**
@@ -174,11 +188,11 @@ public class EducationController {
 
         // Calculate the roll based on Reasoning if necessary
         int roll = d6(2);
-        if (campaignOptions.isUseRandomPersonalities()) {
+        if (campaignOptions.get(CampaignOption.USE_RANDOM_TALENT)) {
             roll += (person.getReasoning().getReasoningScore() / 4);
         }
         // Calculate the target number based on base target number and faculty skill
-        int targetNumber = campaignOptions.getEntranceExamBaseTargetNumber() - academy.getFacultySkill();
+        int targetNumber = campaignOptions.get(CampaignOption.ENTRANCE_EXAM_BASE_TARGET_NUMBER) - academy.getFacultySkill();
 
         // If the roll meets the target number, the application is successful
         if (roll >= targetNumber) {
@@ -246,7 +260,7 @@ public class EducationController {
         double tuition = academy.getTuitionAdjusted(person) * academy.getFactionDiscountAdjusted(campaign, person);
 
         if (tuition > 0) {
-            if (campaign.getFinances().getBalance().isLessThan(Money.of(tuition))) {
+            if (campaign.getPlayerForce().getFinances().getBalance().isLessThan(Money.of(tuition))) {
                 String insufficientFundsMessage = String.format(resources.getString("insufficientFunds.text"),
                       person.getFullTitle());
                 String reportMessage = ReportingUtilities.messageSurroundedBySpanWithColor(MekHQ.getMHQOptions()
@@ -255,7 +269,7 @@ public class EducationController {
                 campaign.addReport(FINANCES, reportMessage);
                 return;
             } else {
-                campaign.getFinances()
+                campaign.getPlayerForce().getFinances()
                       .debit(TransactionType.EDUCATION,
                             campaign.getLocalDate(),
                             Money.of(tuition),
@@ -278,7 +292,7 @@ public class EducationController {
                   person.getFullTitle(),
                   spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()),
                   CLOSING_SPAN_TAG));
-            campaign.removePerson(person);
+            campaign.getPlayerForce().getHumanResources().removePerson(campaign, person);
         } else if (academy.isHomeSchool()) {
             campaign.addReport(PERSONNEL,
                   String.format(resources.getString("homeSchool.text"), person.getHyperlinkedFullTitle()));
@@ -304,6 +318,22 @@ public class EducationController {
      */
     public static void enrollPerson(Campaign campaign, Person person, Academy academy, String campus, String faction,
           Integer courseIndex) {
+        // Resolve the campus before mutating any person state, so an unresolvable academy system aborts the
+        // enrollment cleanly instead of queueing travel to a null destination.
+        AcademyCampusLocation campusLocation = null;
+        if (!academy.isHomeSchool()) {
+            String campusSystemId = academy.isLocal()
+                                          ? localCampusSystemId(person, campaign)
+                                          : academy.getLocationSystems().getFirst();
+            campusLocation = campaign.getCampaignLocationManager().getOrCreateCampusLocation(campaign, academy.getSet(),
+                  academy.getName(), campusSystemId);
+            if (campusLocation == null) {
+                LOGGER.error("enrollPerson: could not resolve campus system {} for academy {} — aborting enrollment",
+                      campusSystemId, academy.getName());
+                return;
+            }
+        }
+
         // change status will wipe the academic information, so must always precede the
         // setters
         person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.STUDENT);
@@ -311,6 +341,18 @@ public class EducationController {
         if (academy.isHomeSchool()) {
             // if the student is being homeschooled, we skip the journey to the 'academy'
             person.setEduEducationStage(EducationStage.EDUCATION);
+            IPlace homeSchoolLocation = findHomeLocation(person, campaign);
+            AcademyCampusLocation homeSchoolCampus = campaign.getCampaignLocationManager().getOrCreateCampusUnderLocation(
+                  academy.getSet(), academy.getName(), homeSchoolLocation);
+            person.setParent(homeSchoolCampus.getPersonnel());
+        } else if (academy.isLocal()) {
+            person.setEduEducationStage(EducationStage.JOURNEY_TO_CAMPUS);
+            person.setEduAcademySystem(localCampusSystemId(person, campaign));
+            // Overland transit to the local campus (a different root location on the same planet) is
+            // dispatched as a GroundTransitLocation next new day. The journey time is retained only for
+            // the travel-progress display; arrival is driven by the travel node, not this counter.
+            person.setEduJourneyTime(2);
+            campaign.getCampaignLocationManager().queueTravel(List.of(person), campusLocation);
         } else {
             person.setEduEducationStage(EducationStage.JOURNEY_TO_CAMPUS);
         }
@@ -321,14 +363,22 @@ public class EducationController {
         person.setEduAcademyFaction(faction);
         person.setEduCourseIndex(courseIndex);
 
-        if (!academy.isHomeSchool()) {
-            if (academy.isLocal()) {
-                person.setEduJourneyTime(2);
-                person.setEduAcademySystem(campaign.getCurrentSystem().getId());
-            } else {
-                person.setEduJourneyTime(campaign.getSimplifiedTravelTime(campaign.getSystemById(campus)));
-                person.setEduAcademySystem(campus);
-            }
+        if (!academy.isHomeSchool() && !academy.isLocal()) {
+            PlanetarySystem originSystem = person.getCurrentSystem();
+            person.setEduAcademySystem(campus);
+            campaign.getCampaignLocationManager().queueTravel(List.of(person), campusLocation);
+            double startTransit = originSystem != null && originSystem.equals(campaign.getCurrentSystem())
+                                        ? LocationUtils.computeStartTransit(originSystem, campaign)
+                                        : 0.0;
+            // Travel is queued, not yet dispatched, so plan the route directly to set the journey time.
+            JumpPath jumpPath = LocationUtils.planJumpPath(originSystem, campusLocation.getCurrentSystem(), campaign);
+            person.setEduJourneyTime(jumpPath != null
+                                           ?
+                                           LocationUtils.computeJourneyDays(jumpPath,
+                                                 campaign.getLocalDate(),
+                                                 startTransit)
+                                           :
+                                           max(2, campaign.getSimplifiedTravelTime(campaign.getSystemById(campus))));
         }
 
         Genealogy genealogy = person.getGenealogy();
@@ -362,9 +412,9 @@ public class EducationController {
         // if the academy is Local, we need to generate a name,
         // otherwise we use the listed name or the campaign name
         if (academy.isHomeSchool()) {
-            person.setEduAcademyName(campaign.getName());
+            person.setEduAcademyName(campaign.getPlayerForce().getName());
         } else if (academy.isLocal()) {
-            person.setEduAcademyName(generateName(academy, campus));
+            person.setEduAcademyName(generateName(academy, person.getEduAcademySystem()));
         } else {
             person.setEduAcademyName(person.getEduAcademyNameInSet() +
                                            " (" +
@@ -381,6 +431,12 @@ public class EducationController {
               academy.getQualifications().get(person.getEduCourseIndex()));
     }
 
+    /** The planetary-system id a local academy's campus sits at: the student's current system, or the campaign's. */
+    private static String localCampusSystemId(Person person, Campaign campaign) {
+        PlanetarySystem personSystem = person.getCurrentSystem();
+        return personSystem != null ? personSystem.getId() : campaign.getCurrentSystem().getId();
+    }
+
     /**
      * Re-enrolls a person into a campaign and updates their education information.
      *
@@ -389,26 +445,24 @@ public class EducationController {
      * @param academy  The academy or school that the person is being enrolled into.
      */
     public static void reEnrollPerson(Campaign campaign, Person person, Academy academy) {
+        person.setEduEducationTime(academy.getDurationDays());
+        person.setEduDaysOfTravel(0);
+
         if (academy.isHomeSchool()) {
-            // if the student is being homeschooled, we skip the journey to the 'academy'
+            person.setEduEducationStage(EducationStage.EDUCATION);
+            IPlace homeBase = findHomeLocation(person, campaign);
+            AcademyCampusLocation campusLocation = campaign.getCampaignLocationManager().getOrCreateCampusUnderLocation(
+                  academy.getSet(), academy.getName(), homeBase);
+            person.setParent(campusLocation.getPersonnel());
+        } else if (academy.isLocal()) {
+            // already at the local campus — restart EDUCATION directly
             person.setEduEducationStage(EducationStage.EDUCATION);
         } else {
+            // Person is already at the campus — keep them there and restart the course.
+            // The 2-day JOURNEY_TO_CAMPUS stage fires landAtCampus via the day-counter fallback
             person.setEduEducationStage(EducationStage.JOURNEY_TO_CAMPUS);
+            person.setEduJourneyTime(2);
         }
-
-        person.setEduEducationTime(academy.getDurationDays());
-
-        if (!academy.isHomeSchool()) {
-            if ((academy.isLocal()) || (!person.getEduEducationStage().isJourneyFromCampus())) {
-                person.setEduJourneyTime(2);
-                person.setEduAcademySystem(campaign.getCurrentSystem().getId());
-            } else {
-                person.setEduJourneyTime(max(2, person.getEduDaysOfTravel()));
-            }
-        }
-
-        // reset days of travel
-        person.setEduDaysOfTravel(0);
 
         // we have this all the way at the bottom as a bit of insurance. when
         // troubleshooting, if the log isn't getting entered, we know something
@@ -586,7 +640,7 @@ public class EducationController {
 
         // is person in transit to the institution?
         if (educationStage.isJourneyToCampus()) {
-            journeyToAcademy(campaign, person, resources);
+            journeyToAcademy(campaign, person);
             return false;
         }
 
@@ -618,17 +672,27 @@ public class EducationController {
      *
      * @param campaign  The campaign the person is part of.
      * @param person    The person for whom the journey is being processed.
-     * @param resources The resource bundle containing localized strings.
      */
-    private static void journeyToAcademy(Campaign campaign, Person person, ResourceBundle resources) {
-        person.incrementEduDaysOfTravel();
+    private static void journeyToAcademy(Campaign campaign, Person person) {
+        PlanetarySystem targetSystem = campaign.getSystemById(person.getEduAcademySystem());
+        processJourney(campaign, person, targetSystem,
+              () -> landAtCampus(campaign, person, null),
+              cl -> landAtCampus(campaign, person, cl));
+    }
 
-        // has Person just arrived?
-        if (person.getEduDaysOfTravel() >= person.getEduJourneyTime()) {
-            campaign.addReport(PERSONNEL,
-                  String.format(resources.getString("arrived.text"), person.getHyperlinkedFullTitle()));
-            person.setEduEducationStage(EducationStage.EDUCATION);
+    private static void landAtCampus(Campaign campaign, Person person,
+          @Nullable AbstractMobileLocation travelLocation) {
+        campaign.addReport(PERSONNEL,
+              getFormattedTextAt(BUNDLE_NAME, "arrived.text", person.getHyperlinkedFullTitle()));
+
+        AcademyCampusLocation campusLocation = campaign.getCampaignLocationManager().getOrCreateCampusLocation(campaign, 
+              person.getEduAcademySet(), person.getEduAcademyNameInSet(), person.getEduAcademySystem());
+        if (campusLocation == null) {
+            throw new IllegalStateException("Campus location must exist for system " + person.getEduAcademySystem());
         }
+        person.setParent(campusLocation.getPersonnel());
+        LocationDispatch.removeTravelNode(travelLocation, campaign.getCampaignLocationManager());
+        person.setEduEducationStage(EducationStage.EDUCATION);
     }
 
     /**
@@ -722,23 +786,76 @@ public class EducationController {
      * @param resources the resource bundle containing localized strings
      */
     private static void beginJourneyHome(Campaign campaign, Person person, Academy academy, ResourceBundle resources) {
-        // if the student is being homeschooled, they skip the journey home.
         if (academy.isHomeSchool()) {
+            IPlace home = findHomeLocation(person, campaign);
+            person.setParent(home.getPersonnel());
             person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.ACTIVE);
-
             return;
         }
 
-        int travelTime = max(2,
-              campaign.getSimplifiedTravelTime(campaign.getSystemById(person.getEduAcademySystem())));
+        if (academy.isLocal()) {
+            // Local academy: the campus is a different root location, usually on the same planet as the
+            // campaign. Queue the return trip so it dispatches as a GroundTransitLocation next new day (or
+            // a jump, if the campaign has since moved off-system). The journey time is retained only for
+            // the travel-progress display; arrival is driven by the travel node.
+            person.setEduJourneyTime(2);
+            person.setEduDaysOfTravel(0);
+            campaign.getCampaignLocationManager()
+                  .queueTravel(List.of(person), campaign.getPlayerForce().getForceDetachment());
+            campaign.addReport(PERSONNEL, String.format(resources.getString("returningFromSchool.text"),
+                  person.getHyperlinkedFullTitle(), 2));
+            person.setEduEducationStage(EducationStage.JOURNEY_FROM_CAMPUS);
+            return;
+        }
+
+        // Resolve the academy system from the stored id; travel is queued (not dispatched) below, so the person
+        // stays in the campus node until the next new day.
+        String academySystemId = person.getEduAcademySystem();
+        PlanetarySystem academySystem = null;
+        if (academySystemId != null) {
+            academySystem = campaign.getSystemById(academySystemId);
+            if (academySystem == null) {
+                LOGGER.error(
+                      "beginJourneyHome: could not find academy system '{}' for {} — falling back to campaign location",
+                      academySystemId,
+                      person.getFullTitle());
+            }
+        }
+        if (academySystem == null) {
+            academySystem = campaign.getCurrentSystem();
+            if (academySystem == null) {
+                LOGGER.error(
+                      "beginJourneyHome: campaign current system is also null for {} — travel time calculation may fail",
+                      person.getFullTitle());
+            }
+        }
+
+        campaign.getCampaignLocationManager()
+              .queueTravel(List.of(person), campaign.getPlayerForce().getForceDetachment());
+
+        JumpPath returnPath = LocationUtils.planJumpPath(academySystem, campaign.getCurrentSystem(), campaign);
+        int travelDays = returnPath != null
+                               ? LocationUtils.computeJourneyDays(returnPath, campaign.getLocalDate(),
+              LocationUtils.computeStartTransit(academySystem, campaign))
+                               : max(2, campaign.getSimplifiedTravelTime(academySystem));
+        person.setEduJourneyTime(travelDays);
+        person.setEduDaysOfTravel(0);
 
         campaign.addReport(PERSONNEL, String.format(resources.getString("returningFromSchool.text"),
-              person.getHyperlinkedFullTitle(),
-              travelTime));
+              person.getHyperlinkedFullTitle(), person.getEduJourneyTime()));
 
-        person.setEduJourneyTime(travelTime);
-        person.setEduDaysOfTravel(0);
         person.setEduEducationStage(EducationStage.JOURNEY_FROM_CAMPUS);
+    }
+
+    private static IPlace findHomeLocation(Person person, Campaign campaign) {
+        ILocation current = person.getParentLocation();
+        while (current != null) {
+            if (current instanceof IPlace place && !(place instanceof AcademyCampusLocation)) {
+                return place;
+            }
+            current = current.getParentLocation();
+        }
+        return campaign.getPlayerForce().getForceDetachment();
     }
 
     /**
@@ -748,25 +865,108 @@ public class EducationController {
      * @param person   the person whose journey home is being processed
      */
     private static void processJourneyHome(Campaign campaign, Person person) {
-        // has the journey time changed?
-        int travelTime = max(2,
-              campaign.getSimplifiedTravelTime(campaign.getSystemById(person.getEduAcademySystem())));
+        PlanetarySystem targetSystem = campaign.getCurrentSystem();
+        processJourney(campaign, person, targetSystem,
+              () -> arriveHome(campaign, person, null),
+              cl -> arriveHome(campaign, person, cl));
+    }
 
-        // if so, update the journey time
-        if (travelTime != person.getEduJourneyTime()) {
-            person.setEduJourneyTime(travelTime);
-        }
-
+    /**
+     * Shared template for both outbound and return academy travel.
+     *
+     * <p>Each day: increments travel days, recalculates journey time via the simplified estimator
+     * (keeping both directions consistent), and drives jump-path correction when the JumpShip has drifted off-course
+     * (e.g. the campaign moved while the student was away).</p>
+     */
+    private static void processJourney(Campaign campaign, Person person,
+          @Nullable PlanetarySystem targetSystem,
+          Runnable onDayCounterArrival,
+          Consumer<AbstractMobileLocation> onTravelArrival) {
         person.incrementEduDaysOfTravel();
 
-        // has the person arrived home?
-        if (person.getEduDaysOfTravel() >= person.getEduJourneyTime()) {
-            person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.ACTIVE);
+        AbstractLocation location = person.getCurrentLocation();
 
-            for (UUID tagAlong : person.getEduTagAlongs()) {
-                campaign.getPerson(tagAlong).changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.ACTIVE);
+        if (!(location instanceof AbstractMobileLocation travelNode)) {
+            // No travel node: dispatch either landed the student directly (already at the campus root) or
+            // this is a legacy save. Fall back to the day counter.
+            // Local academies are same-system transits; their travel time must not be recalculated from
+            // the campaign's current position (which may be on a different planet).
+            Academy fallbackAcademy = getAcademy(person.getEduAcademySet(), person.getEduAcademyNameInSet());
+            if (fallbackAcademy == null || !fallbackAcademy.isLocal()) {
+                int travelTime = max(2,
+                      campaign.getSimplifiedTravelTime(campaign.getSystemById(person.getEduAcademySystem())));
+                if (travelTime != person.getEduJourneyTime()) {
+                    person.setEduJourneyTime(travelTime);
+                }
+            }
+            if (person.getEduDaysOfTravel() >= person.getEduJourneyTime()) {
+                onDayCounterArrival.run();
+            }
+            return;
+        }
+
+        // Interplanetary travel: wait for the JumpShip to reach a planet, correcting the jump path when
+        // the campaign has drifted off-course (e.g. it moved while the student was away).
+        if (travelNode instanceof CurrentLocation currentLocation) {
+            if (!currentLocation.isOnPlanet()) {
+                return;
+            }
+            if (targetSystem == null) {
+                LOGGER.warn("Null target system for person {} during education travel; skipping path correction",
+                      person.getFullName());
+                return;
+            }
+            if (!currentLocation.getCurrentSystem().equals(targetSystem)) {
+                JumpPath newPath = LocationUtils.planJumpPath(currentLocation.getCurrentSystem(), targetSystem, campaign);
+                if (newPath != null) {
+                    currentLocation.setJumpPath(newPath);
+                    person.setEduJourneyTime(LocationUtils.computeJourneyDays(
+                          newPath, campaign.getLocalDate(), currentLocation.getTransitTime()));
+                }
+                return;
+            }
+            onTravelArrival.accept(currentLocation);
+            return;
+        }
+
+        // On-planet overland travel (GroundTransitLocation): no jump path — just wait for arrival.
+        if (!travelNode.hasArrived()) {
+            return;
+        }
+        onTravelArrival.accept(travelNode);
+    }
+
+    private static void arriveHome(Campaign campaign, Person person,
+          @Nullable AbstractMobileLocation returnLocation) {
+        Academy returningFromAcademy = getAcademy(person.getEduAcademySet(), person.getEduAcademyNameInSet());
+        boolean isLocal = returningFromAcademy != null && returningFromAcademy.isLocal();
+        LocalPersonnel arrivingAtPersonnel;
+        arrivingAtPersonnel = isLocal ? findPersonnelWhenReturningFromLocal(campaign,
+              person.getEduAcademySystem()) : campaign.getPlayerForce().getPersonnel();
+        person.setParent(arrivingAtPersonnel);
+        person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.ACTIVE);
+
+        for (UUID tagAlong : person.getEduTagAlongs()) {
+            Person companion = campaign.getPlayerForce().getHumanResources().getPerson(tagAlong);
+            if (companion != null) {
+                companion.setParent(arrivingAtPersonnel);
+                companion.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.ACTIVE);
             }
         }
+
+        LocationDispatch.removeTravelNode(returnLocation, campaign.getCampaignLocationManager());
+    }
+
+    private static LocalPersonnel findPersonnelWhenReturningFromLocal(Campaign campaign, @Nullable String systemId) {
+        if (systemId != null) {
+            for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+                PlanetarySystem system = base.getCurrentSystem();
+                if (system != null && systemId.equals(system.getId())) {
+                    return base.getPersonnel();
+                }
+            }
+        }
+        return campaign.getPlayerForce().getPersonnel();
     }
 
     /**
@@ -803,7 +1003,8 @@ public class EducationController {
         if (!academy.isHomeSchool()) {
             // has the system been depopulated? Nominally similar to destruction, but here
             // we use actual system data, so it's more dynamic.
-            if (campaign.getSystemById(person.getEduAcademySystem()).getPopulation(campaign.getLocalDate()) == 0) {
+            PlanetarySystem academySystem = campaign.getSystemById(person.getEduAcademySystem());
+            if (academySystem != null && academySystem.getPopulation(campaign.getLocalDate()) == 0) {
                 if (checkForAcademyDestruction(campaign, academy, person, resources)) {
                     return;
                 }
@@ -865,15 +1066,20 @@ public class EducationController {
      */
     private static void checkForTrainingAccidents(Campaign campaign, Academy academy, Person person,
           ResourceBundle resources) {
-        if (academy.isMilitary()) {
-            int militaryDiceSize = campaign.getCampaignOptions().getMilitaryAcademyAccidents();
+        int bloodmarkSeverity = person.getBloodmark();
+        double bloodmarkDivisor = bloodmarkSeverity + 1;
+
+        int accidentDieSize = campaign.getCampaignOptions().get(CampaignOption.MILITARY_ACADEMY_ACCIDENTS);
+        accidentDieSize = (int) round(accidentDieSize / bloodmarkDivisor);
+
+        if (academy.isMilitary() || bloodmarkSeverity != 0) {
             int roll;
 
-            if (militaryDiceSize > 1) {
-                roll = randomInt(militaryDiceSize);
+            if (accidentDieSize > 1) {
+                roll = randomInt(accidentDieSize);
 
                 if (academy.isHomeSchool()) {
-                    int secondRoll = randomInt(militaryDiceSize);
+                    int secondRoll = randomInt(accidentDieSize);
 
                     if (secondRoll < roll) {
                         roll = secondRoll;
@@ -884,7 +1090,7 @@ public class EducationController {
             }
 
             if (roll == 0) {
-                if ((!person.isChild(campaign.getLocalDate())) || (campaign.getCampaignOptions().isAllAges())) {
+                if ((!person.isChild(campaign.getLocalDate())) || (campaign.getCampaignOptions().get(CampaignOption.ALL_AGES))) {
                     if (d6(2) >= 5) {
                         processTrainingInjury(campaign, academy, person, resources);
                     } else {
@@ -895,6 +1101,10 @@ public class EducationController {
                         String reportMessage = String.format(resources.getString("eventTrainingAccident.text"),
                               person.getHyperlinkedFullTitle(),
                               resultString);
+
+                        if (bloodmarkSeverity != 0) {
+                            reportMessage += ' ' + resources.getString("eventTrainingAccidentSuspicious.text");
+                        }
 
                         campaign.addReport(PERSONNEL, reportMessage);
 
@@ -928,6 +1138,10 @@ public class EducationController {
               person.getHyperlinkedFullTitle(),
               resultString);
 
+        if (person.getBloodmark() != 0) {
+            reportMessage += ' ' + resources.getString("eventTrainingAccidentSuspicious.text");
+        }
+
         campaign.addReport(PERSONNEL, reportMessage);
 
         if (!academy.isPrepSchool()) {
@@ -950,8 +1164,8 @@ public class EducationController {
         int roll;
         int diceSize;
 
-        int adultDiceSize = campaign.getCampaignOptions().getAdultDropoutChance();
-        int childDiceSize = campaign.getCampaignOptions().getChildrenDropoutChance();
+        int adultDiceSize = campaign.getCampaignOptions().get(CampaignOption.ADULT_DROPOUT_CHANCE);
+        int childDiceSize = campaign.getCampaignOptions().get(CampaignOption.CHILDREN_DROPOUT_CHANCE);
 
         // Under 18s don't generally have the same capacity for self-determination as 18+
         // characters, so we treat them as children - even though at 16 they can take Roles.
@@ -1118,14 +1332,15 @@ public class EducationController {
           ResourceBundle resources) {
         // we assume that if the system's population has been depleted, the academy has
         // been destroyed too.
+        PlanetarySystem academySystem = campaign.getSystemById(person.getEduAcademySystem());
         if ((campaign.getLocalDate().getYear() >= academy.getDestructionYear()) ||
-                  (campaign.getSystemById(person.getEduAcademySystem()).getPopulation(campaign.getLocalDate()) == 0)) {
+                  (academySystem != null && academySystem.getPopulation(campaign.getLocalDate()) == 0)) {
 
             // We use the 'use18' clause here because we don't want to upset players by having
             // children killed when their academy is attacked unless the player has explicitly
             // opted in. While players can assign 16-year-olds to combat roles and have them killed
             // there, that doesn't have the same connotations.
-            if ((!person.isChild(campaign.getLocalDate(), true)) || (campaign.getCampaignOptions().isAllAges())) {
+            if ((!person.isChild(campaign.getLocalDate(), true)) || (campaign.getCampaignOptions().get(CampaignOption.ALL_AGES))) {
                 if (d6(2) >= 5) {
                     String reportMessage = String.format(resources.getString("eventDestruction.text"),
                           person.getHyperlinkedFullTitle(),
@@ -1193,7 +1408,7 @@ public class EducationController {
             }
         }
 
-        if (campaign.getCampaignOptions().isUseRandomPersonalities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT)) {
             graduationRoll += person.getReasoning().getReasoningScore();
         }
 
@@ -1420,7 +1635,7 @@ public class EducationController {
      */
     private static void reportMastersOrDoctorateGain(Campaign campaign, Person person, Academy academy, int education,
           ResourceBundle resources) {
-        EducationLevel educationLevel = EducationLevel.fromString(String.valueOf(education));
+        EducationLevel educationLevel = EducationLevel.fromLevel(education);
 
         String qualification = academy.getQualifications().get(person.getEduCourseIndex());
         String personName = person.getHyperlinkedFullTitle();
@@ -1489,7 +1704,7 @@ public class EducationController {
             }
         }
 
-        if (campaign.getCampaignOptions().isUseRandomPersonalities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT)) {
             graduationRoll += person.getReasoning().ordinal() - 12;
         }
 
@@ -1571,19 +1786,19 @@ public class EducationController {
 
         addFacultyXp(campaign, person, academy, bonusCount);
 
-        if ((campaign.getCampaignOptions().isEnableBonuses()) && (bonusCount > 0)) {
+        if ((campaign.getCampaignOptions().get(CampaignOption.ENABLE_BONUSES)) && (bonusCount > 0)) {
             addBonus(campaign, person, academy, bonusCount, resources);
         }
 
         int educationLevel = academy.getEducationLevel(person);
 
-        if (EducationLevel.parseToInt(person.getEduHighestEducation()) < educationLevel) {
-            person.setEduHighestEducation(EducationLevel.fromString(String.valueOf(educationLevel)));
+        if (person.getEduHighestEducation().getLevel() < educationLevel) {
+            person.setEduHighestEducation(EducationLevel.fromLevel(educationLevel));
         }
 
         if (academy.isReeducationCamp()) {
-            Faction campaignFaction = campaign.getFaction();
-            boolean isUseReeducationChangesFaction = campaign.getCampaignOptions().isUseReeducationCamps();
+            Faction campaignFaction = campaign.getPlayerForce().getFaction();
+            boolean isUseReeducationChangesFaction = campaign.getCampaignOptions().get(CampaignOption.USE_REEDUCATION_CAMPS);
 
             if (isUseReeducationChangesFaction) {
                 boolean factionChangeBlocked = isFactionChangeBlocked(person, campaignFaction);
@@ -1679,11 +1894,7 @@ public class EducationController {
             return true;
         }
 
-        if (options.booleanOption(COMPULSION_PIRATE_HATE) && campaignFaction.isPirate()) {
-            return true;
-        }
-
-        return false;
+        return options.booleanOption(COMPULSION_PIRATE_HATE) && campaignFaction.isPirate();
     }
 
     /**
@@ -1698,7 +1909,7 @@ public class EducationController {
                                     .map(String::trim)
                                     .toArray(String[]::new);
 
-        int educationLevel = clamp(academy.getEducationLevel(person) + academy.getBaseAcademicSkillLevel(), 0, 5);
+        int educationLevel = Math.clamp(academy.getEducationLevel(person) + academy.getBaseAcademicSkillLevel(), 0, 5);
 
         if (!isGraduating) {
             educationLevel--;
@@ -1709,8 +1920,8 @@ public class EducationController {
         }
 
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        Integer curriculumXpRate = campaignOptions.getCurriculumXpRate();
-        boolean isLogSkillGain = campaignOptions.isPersonnelLogSkillGain();
+        Integer curriculumXpRate = campaignOptions.get(CampaignOption.CURRICULUM_XP_RATE);
+        boolean isLogSkillGain = campaignOptions.get(CampaignOption.PERSONNEL_LOG_SKILL_GAIN);
         for (String skill : curriculum) {
             if (skill.equalsIgnoreCase("none")) {
                 return;
@@ -1795,10 +2006,10 @@ public class EducationController {
 
         double bonusPercentage = (double) bonusCount / 5;
 
-        if (EducationLevel.parseToInt(person.getEduHighestEducation()) < academy.getEducationLevel(person)) {
+        if (person.getEduHighestEducation().getLevel() < academy.getEducationLevel(person)) {
             int xpRate = max(1, (12 - academy.getFacultySkill()) * (academyDuration / 600));
 
-            xpRate *= campaign.getCampaignOptions().getFacultyXpRate();
+            xpRate = (int) round(xpRate * campaign.getCampaignOptions().get(CampaignOption.FACULTY_XP_RATE));
 
             int bonusAmount = (int) max(bonusCount, xpRate * bonusPercentage);
             person.awardXP(campaign, xpRate + bonusAmount);
@@ -1827,11 +2038,11 @@ public class EducationController {
 
             String skillName = curriculum.get(roll);
             if (skillName.equalsIgnoreCase("xp")) {
-                person.awardXP(campaign, campaign.getCampaignOptions().getCurriculumXpRate());
+                person.awardXP(campaign, campaign.getCampaignOptions().get(CampaignOption.CURRICULUM_XP_RATE));
 
                 campaign.addReport(PERSONNEL, String.format(resources.getString("bonusXp.text"),
                       person.getFirstName(),
-                      campaign.getCampaignOptions().getCurriculumXpRate()));
+                      campaign.getCampaignOptions().get(CampaignOption.CURRICULUM_XP_RATE)));
             } else if (!skillName.equalsIgnoreCase("none")) {
                 String skillParsed = Academy.skillParser(skillName);
 
@@ -1845,11 +2056,11 @@ public class EducationController {
                     campaign.addReport(PERSONNEL,
                           String.format(resources.getString("bonusAdded.text"), person.getFirstName()));
                 } else {
-                    person.awardXP(campaign, campaign.getCampaignOptions().getCurriculumXpRate());
+                    person.awardXP(campaign, campaign.getCampaignOptions().get(CampaignOption.CURRICULUM_XP_RATE));
 
                     campaign.addReport(PERSONNEL, String.format(resources.getString("bonusXp.text"),
                           person.getFirstName(),
-                          campaign.getCampaignOptions().getCurriculumXpRate()));
+                          campaign.getCampaignOptions().get(CampaignOption.CURRICULUM_XP_RATE)));
                 }
             }
         }
@@ -2113,8 +2324,8 @@ public class EducationController {
      *   <li>If the person's education reaches the doctorate level, they are granted the pre-nominal "Dr".</li>
      * </ul>
      *
-     * <p>The pass rate is influenced by the campaign's settings. When using random personalities, the person's
-     * reasoning modifies the base pass rate (defaulting to average reasoning if personalities are disabled).</p>
+     * <p>The pass rate is influenced by the campaign's settings. When using random talent, the person's
+     * reasoning modifies the base pass rate (defaulting to average reasoning if talent is disabled).</p>
      *
      * @param campaign the campaign context, used to retrieve the current date, options, and calculate the person's
      *                 experience.
@@ -2132,12 +2343,17 @@ public class EducationController {
         }
 
         // Get the person's experience level and role (combat or non-combat)
-        final int experienceLevel = person.getExperienceLevel(campaign, false, true);
+        final int experienceLevel = person.getExperienceLevel(campaign.getCampaignOptions(),
+              campaign.getPlayerForce().isClanForce(),
+              campaign.getLocalDate(),
+              false,
+              true);
         final boolean isCombatRole = person.getPrimaryRole().isCombat();
+        final boolean isDoctor = person.isDoctor();
 
         // We base passRate on US averages
         int passRate = 60 - (Reasoning.values().length / 2);
-        final int reasoningModifier = campaign.getCampaignOptions().isUseRandomPersonalities() ?
+        final int reasoningModifier = campaign.getCampaignOptions().get(CampaignOption.USE_RANDOM_TALENT) ?
                                             person.getReasoning().getReasoningScore() :
                                             Reasoning.values().length / 2;
         passRate += reasoningModifier;
@@ -2149,8 +2365,10 @@ public class EducationController {
             // Determine education levels for combat roles
             educationLevel = getCombatEducationLevel(experienceLevel, flunked, passRate);
         } else {
+            // Calculate effective experience level (boost for doctors)
+            final int effectiveExperienceLevel = isDoctor ? experienceLevel + EXP_VETERAN : experienceLevel;
             // Determine education levels for non-combat roles
-            educationLevel = getNonCombatEducationLevel(experienceLevel, flunked, passRate);
+            educationLevel = getNonCombatEducationLevel(effectiveExperienceLevel, flunked, passRate);
         }
 
         // Assign the determined education level

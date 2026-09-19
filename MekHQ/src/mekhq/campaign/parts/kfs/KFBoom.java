@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -54,6 +54,7 @@ import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * @author MKerensky
@@ -63,8 +64,8 @@ public class KFBoom extends Part {
 
     public static final TechAdvancement TA_KF_BOOM = new TechAdvancement(TechBase.ALL)
                                                            .setAdvancement(2458, 2470, 2500)
-                                                           .setPrototypeFactions(Faction.TH)
-                                                           .setProductionFactions(Faction.TH)
+                                                           .setPrototypeFactions(Faction.TH, Faction.CS)
+                                                           .setProductionFactions(Faction.TH, Faction.CS)
                                                            .setTechRating(TechRating.C)
                                                            .setAvailability(AvailabilityValue.D,
                                                                  AvailabilityValue.C,
@@ -73,8 +74,8 @@ public class KFBoom extends Part {
                                                            .setStaticTechLevel(SimpleTechLevel.STANDARD);
     public static final TechAdvancement TA_PROTOTYPE_KF_BOOM = new TechAdvancement(TechBase.ALL)
                                                                      .setAdvancement(2458, 2470, 2500)
-                                                                     .setPrototypeFactions(Faction.TH)
-                                                                     .setProductionFactions(Faction.TH)
+                                                                     .setPrototypeFactions(Faction.TH, Faction.CS)
+                                                                     .setProductionFactions(Faction.TH, Faction.CS)
                                                                      .setTechRating(TechRating.C)
                                                                      .setAvailability(AvailabilityValue.F,
                                                                            AvailabilityValue.X,
@@ -84,6 +85,7 @@ public class KFBoom extends Part {
 
     private int boomType;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public KFBoom() {
         this(0, null, Dropship.BOOM_STANDARD);
     }
@@ -119,7 +121,7 @@ public class KFBoom extends Part {
             }
             if (checkForDestruction
                       && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }
@@ -160,12 +162,12 @@ public class KFBoom extends Part {
     public void remove(boolean salvage) {
         if (null != unit && unit.getEntity() instanceof Dropship) {
             ((Dropship) unit.getEntity()).setDamageKFBoom(true);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();

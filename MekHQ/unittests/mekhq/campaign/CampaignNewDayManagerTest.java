@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,8 +34,6 @@ package mekhq.campaign;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 import java.util.stream.Stream;
 
@@ -43,8 +41,8 @@ import megamek.common.equipment.EquipmentType;
 import mekhq.MHQOptions;
 import mekhq.MekHQ;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.enums.PersonnelRole;
-import mekhq.campaign.personnel.ranks.Ranks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -52,6 +50,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.Mockito;
 import testUtilities.MHQTestUtilities;
 
 /**
@@ -62,18 +61,20 @@ import testUtilities.MHQTestUtilities;
 public class CampaignNewDayManagerTest {
 
     private Campaign testCampaign;
+    private ForceHumanResources humanResources;
     private CampaignOptions campaignOptions;
     private MHQOptions mhqOptions;
 
     @BeforeAll
     public static void setupAll() {
         EquipmentType.initializeTypes();
-        Ranks.initializeRankSystems();
     }
 
     @BeforeEach
     public void setup() {
         testCampaign = spy(MHQTestUtilities.getTestCampaign());
+        humanResources = spy(testCampaign.getPlayerForce().getHumanResources());
+        testCampaign.getPlayerForce().setHumanResources(humanResources);
         campaignOptions = testCampaign.getCampaignOptions();
         mhqOptions = MekHQ.getMHQOptions();
     }
@@ -152,7 +153,7 @@ public class CampaignNewDayManagerTest {
             configureMHQOption(role, mhqOptionEnabled);
 
             // Set initial pool value
-            testCampaign.setTempCrewPool(role, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 10);
 
             // Act
             processNewDayForRole(role);
@@ -160,11 +161,12 @@ public class CampaignNewDayManagerTest {
             // Assert
             if (shouldDistribute) {
                 // Pool should be reset to 0, then distribution called
-                verify(testCampaign, times(1)).setTempCrewPool(role, 0);
-                verify(testCampaign, times(1)).distributeTempCrewPoolToUnits(role);
+                Mockito.verify(humanResources, Mockito.times(1)).setTempCrewPool(testCampaign, role, 0);
+                Mockito.verify(humanResources, Mockito.times(1))
+                      .distributeTempCrewPoolToUnits(testCampaign, testCampaign.getCampaignOptions(), role);
             } else {
                 // Pool should remain unchanged
-                assertEquals(10, testCampaign.getTempCrewPool(role));
+                assertEquals(10, testCampaign.getPlayerForce().getHumanResources().getTempCrewPool(role));
             }
         }
 
@@ -174,18 +176,24 @@ public class CampaignNewDayManagerTest {
         @Test
         void testDailyProcessingIsolation() {
             // Arrange
-            campaignOptions.setUseBlobInfantry(true);
+            campaignOptions.set(CampaignOption.USE_BLOB_INFANTRY, true);
             mhqOptions.setNewDaySoldierPoolFill(true);
 
-            testCampaign.setTempCrewPool(PersonnelRole.SOLDIER, 10);
-            testCampaign.setTempCrewPool(PersonnelRole.BATTLE_ARMOUR, 20);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, PersonnelRole.SOLDIER, 10);
+            testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign,
+                  PersonnelRole.BATTLE_ARMOUR,
+                  20);
 
             // Act
             processNewDayForRole(PersonnelRole.SOLDIER);
 
             // Assert
-            verify(testCampaign, times(1)).setTempCrewPool(PersonnelRole.SOLDIER, 0);
-            assertEquals(20, testCampaign.getTempCrewPool(PersonnelRole.BATTLE_ARMOUR));
+            Mockito.verify(humanResources, Mockito.times(1))
+                  .setTempCrewPool(testCampaign, PersonnelRole.SOLDIER, 0);
+            assertEquals(20,
+                  testCampaign.getPlayerForce()
+                        .getHumanResources()
+                        .getTempCrewPool(mekhq.campaign.personnel.enums.PersonnelRole.BATTLE_ARMOUR));
         }
 
         /**
@@ -193,14 +201,14 @@ public class CampaignNewDayManagerTest {
          */
         private void configureCampaignOption(PersonnelRole role, boolean enabled) {
             switch (role) {
-                case SOLDIER -> campaignOptions.setUseBlobInfantry(enabled);
-                case BATTLE_ARMOUR -> campaignOptions.setUseBlobBattleArmor(enabled);
-                case VEHICLE_CREW_GROUND -> campaignOptions.setUseBlobVehicleCrewGround(enabled);
-                case VEHICLE_CREW_VTOL -> campaignOptions.setUseBlobVehicleCrewVTOL(enabled);
-                case VEHICLE_CREW_NAVAL -> campaignOptions.setUseBlobVehicleCrewNaval(enabled);
-                case VESSEL_PILOT -> campaignOptions.setUseBlobVesselPilot(enabled);
-                case VESSEL_GUNNER -> campaignOptions.setUseBlobVesselGunner(enabled);
-                case VESSEL_CREW -> campaignOptions.setUseBlobVesselCrew(enabled);
+                case SOLDIER -> campaignOptions.set(CampaignOption.USE_BLOB_INFANTRY, enabled);
+                case BATTLE_ARMOUR -> campaignOptions.set(CampaignOption.USE_BLOB_BATTLE_ARMOR, enabled);
+                case VEHICLE_CREW_GROUND -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_GROUND, enabled);
+                case VEHICLE_CREW_VTOL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_VTOL, enabled);
+                case VEHICLE_CREW_NAVAL -> campaignOptions.set(CampaignOption.USE_BLOB_VEHICLE_CREW_NAVAL, enabled);
+                case VESSEL_PILOT -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_PILOT, enabled);
+                case VESSEL_GUNNER -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_GUNNER, enabled);
+                case VESSEL_CREW -> campaignOptions.set(CampaignOption.USE_BLOB_VESSEL_CREW, enabled);
             }
         }
 
@@ -226,11 +234,16 @@ public class CampaignNewDayManagerTest {
          */
         private void processNewDayForRole(PersonnelRole role) {
             boolean mhqOptionEnabled = getMHQOptionForRole(role);
-            boolean campaignOptionEnabled = testCampaign.isBlobCrewEnabled(role);
+            boolean campaignOptionEnabled = testCampaign.getPlayerForce()
+                                                  .getHumanResources()
+                                                  .isBlobCrewEnabled(role, testCampaign.getCampaignOptions());
 
             if (mhqOptionEnabled && campaignOptionEnabled) {
-                testCampaign.setTempCrewPool(role, 0);
-                testCampaign.distributeTempCrewPoolToUnits(role);
+                testCampaign.getPlayerForce().getHumanResources().setTempCrewPool(testCampaign, role, 0);
+                testCampaign.getPlayerForce()
+                      .getHumanResources()
+                      .distributeTempCrewPoolToUnits(testCampaign, testCampaign.getCampaignOptions(),
+                            role);
             }
         }
 

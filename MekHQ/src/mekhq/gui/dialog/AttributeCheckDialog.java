@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,7 +34,6 @@ package mekhq.gui.dialog;
 
 import static megamek.common.compute.Compute.randomInt;
 import static mekhq.campaign.enums.DailyReportType.SKILL_CHECKS;
-import static mekhq.campaign.personnel.skills.AttributeCheckUtility.determineTargetNumber;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.BODY;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.CHARISMA;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.DEXTERITY;
@@ -58,8 +57,9 @@ import javax.swing.SpinnerNumberModel;
 
 import megamek.client.ui.comboBoxes.MMComboBox;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.personnel.skills.AttributeCheckUtility;
+import mekhq.campaign.personnel.skills.ActionCheckResult;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore.ButtonLabelTooltipPair;
@@ -157,7 +157,7 @@ public class AttributeCheckDialog {
         String results = performAttributeCheck(dialog.getComboBoxChoiceIndex(), dialog.getSpinnerValue(), choiceIndex);
 
         // Results Dialog
-        campaign.addReport(SKILL_CHECKS, results.replaceAll("<p>", "<br><br>").replaceAll("</p>", ""));
+        campaign.addReport(SKILL_CHECKS, results.replace("<p>", "<br><br>").replace("</p>", ""));
         showResultsDialog(results);
     }
 
@@ -177,7 +177,7 @@ public class AttributeCheckDialog {
               character,
               null,
               getInCharacterMessage(),
-              getButtons(character.getCurrentEdge() > 0, campaign.getCampaignOptions().isUseEdge()),
+              getButtons(character.getCurrentEdge() > 0, campaign.getCampaignOptions().get(CampaignOption.USE_EDGE)),
               getFormattedTextAt(RESOURCE_BUNDLE, "message.ooc.attribute"),
               null,
               false,
@@ -200,20 +200,15 @@ public class AttributeCheckDialog {
      */
     private String performAttributeCheck(int selectedOption, int selectedModifier, int choiceIndex) {
         List<SkillAttribute> attributes = deriveAttributesFromOption(ATTRIBUTE_CHECK_OPTIONS.get(selectedOption));
-        SkillAttribute firstAttribute = attributes.get(0);
+        SkillAttribute firstAttribute = attributes.getFirst();
         SkillAttribute secondAttribute = attributes.size() > 1 ? attributes.get(1) : null;
         boolean useEdge = choiceIndex == DIALOG_USE_EDGE_INDEX;
-        AttributeCheckUtility utility = new AttributeCheckUtility(null,
-              character,
-              firstAttribute,
-              secondAttribute,
-              null,
-              selectedModifier,
-              useEdge,
-              true);
-        isSuccess = utility.isSuccess();
+        ActionCheckResult attributeCheckResult =
+              character.checkAttributes(firstAttribute, secondAttribute).withMiscModifier(selectedModifier)
+                    .resolve(useEdge, null);
+        isSuccess = attributeCheckResult.isSuccess();
 
-        return utility.getResultsText();
+        return attributeCheckResult.getReport();
     }
 
 
@@ -364,9 +359,9 @@ public class AttributeCheckDialog {
 
         for (String attributeOption : ATTRIBUTE_CHECK_OPTIONS) {
             List<SkillAttribute> attributes = deriveAttributesFromOption(attributeOption);
-            SkillAttribute firstAttribute = attributes.get(0);
+            SkillAttribute firstAttribute = attributes.getFirst();
             SkillAttribute secondAttribute = attributes.size() > 1 ? attributes.get(1) : null;
-            int targetNumber = determineTargetNumber(character, firstAttribute, secondAttribute, 0).getValue();
+            int targetNumber = character.checkAttributes(firstAttribute, secondAttribute).getTargetNumber().getValue();
 
             // Build the label with the target number
             String formattedAttributeName = "<html><b>" + attributeOption + "</b>";

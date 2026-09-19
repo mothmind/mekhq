@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2011-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -45,9 +45,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.module.SimpleModule;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import jakarta.annotation.Nullable;
 import megamek.common.preference.PreferenceManager;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
@@ -64,21 +62,72 @@ import org.w3c.dom.DOMException;
 public class Systems {
     private static final MMLogger logger = MMLogger.create(Systems.class);
 
-    private static Systems systems;
+    private static Systems activeSystems;
+    private static Systems canonicalSystems;
 
     private final int HPG_RADIUS_A_STATION = 50;
     private final int HPG_RADIUS_B_STATION = 30;
 
+    /**
+     * Returns the active runtime systems registry.
+     *
+     * <p>During normal campaign play this may be a campaign overlay containing campaign-save planetary overrides. New
+     * campaign-aware code should prefer {@link mekhq.campaign.Campaign} system accessors when a campaign is available.
+     */
     public static Systems getInstance() {
-        if (systems == null) {
-            systems = new Systems();
+        if (activeSystems == null) {
+            activeSystems = new Systems();
+            if (canonicalSystems == null) {
+                canonicalSystems = activeSystems;
+            }
         }
 
-        return systems;
+        return activeSystems;
     }
 
+    /** Replaces the active runtime systems registry. Primarily retained for legacy callers and tests. */
     public static void setInstance(Systems instance) {
-        systems = instance;
+        activeSystems = instance;
+        if (canonicalSystems == null) {
+            canonicalSystems = instance;
+        }
+    }
+
+    /** Loads startup systems data and makes it active until a campaign overlay is installed. */
+    public static void initializeDefaultSystems() throws DOMException, IOException {
+        setCanonicalSystems(loadDefault());
+    }
+
+    /** Creates a systems registry for a campaign with no planetary overrides. */
+    public static Systems createCampaignSystems() {
+        return createCampaignSystems(List.of());
+    }
+
+    /** Creates a systems registry for a campaign by applying campaign-save overrides to the startup systems data. */
+    public static Systems createCampaignSystems(Collection<PlanetarySystem> overrides) {
+        return getCanonicalSystems().copyWithOverrides(overrides);
+    }
+
+    /**
+     * Creates and activates a campaign systems registry by applying campaign-save overrides to the startup systems
+     * data.
+     */
+    public static Systems activateCampaignSystems(Collection<PlanetarySystem> overrides) {
+        Systems campaignSystems = createCampaignSystems(overrides);
+        setInstance(campaignSystems);
+        return campaignSystems;
+    }
+
+    private static void setCanonicalSystems(Systems systems) {
+        canonicalSystems = systems;
+        activeSystems = systems;
+    }
+
+    private static Systems getCanonicalSystems() {
+        if (canonicalSystems == null) {
+            canonicalSystems = getInstance();
+        }
+        return canonicalSystems;
     }
 
     protected ConcurrentMap<String, PlanetarySystem> systemList = new ConcurrentHashMap<>();
@@ -141,7 +190,21 @@ public class Systems {
         return systemList;
     }
 
-    public PlanetarySystem getSystemById(String id) {
+    private Systems copyWithOverrides(Collection<PlanetarySystem> overrides) {
+        Systems copy = new Systems();
+        copy.systemList.putAll(systemList);
+        if (overrides != null) {
+            for (PlanetarySystem override : overrides) {
+                if ((override != null) && (override.getId() != null)) {
+                    copy.systemList.put(override.getId(), override);
+                }
+            }
+        }
+        copy.cleanupSystems();
+        return copy;
+    }
+
+    public @Nullable PlanetarySystem getSystemById(String id) {
         return (null != id ? systemList.get(id) : null);
     }
 
@@ -236,12 +299,13 @@ public class Systems {
     // Data loading methods
 
     /**
-     * Loads the default planetary system data. This includes all *.yml files in data/universe/planetary_systems and
-     * subfolders. It also loads a player's custom planets in their custom user directory, if it exists.
+     * Loads startup planetary system data. This includes all *.yml files in data/universe/planetary_systems,
+     * subfolders, and any matching files in the configured user directory. Campaign-save planetary overrides are
+     * applied separately.
      *
      */
     public static Systems loadDefault() throws DOMException, IOException {
-        logger.info("Starting load of system data from XML...");
+        logger.info("Starting load of system data from YAML...");
         long currentTime = java.lang.System.currentTimeMillis();
 
         Systems systems = new Systems();
@@ -249,9 +313,11 @@ public class Systems {
         // load default systems
         systems.load(MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH);
 
-        // load user directory systems
+        // load user-installed systems for backwards compatibility
         String userDir = PreferenceManager.getClientPreferences().getUserDir();
-        systems.load(new File(userDir, MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH).toString());
+        if ((userDir != null) && !userDir.isBlank()) {
+            systems.load(new File(userDir, MHQConstants.PLANETARY_SYSTEM_DIRECTORY_PATH).toString());
+        }
 
         // a bit of post loading clean up
         systems.cleanupSystems();
@@ -267,23 +333,11 @@ public class Systems {
     /**
      * Loads Systems data from files.
      *
-     * @param planetsPath The path to the folder containing planetary XML files.
+     * @param planetsPath The path to the folder containing planetary YAML files.
      *
      */
     public void load(String planetsPath) throws DOMException {
-        // set up mapper
-        ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-        // add custom deserializer for any complex objects that need to be read from Strings, etc.
-        SimpleModule module = new SimpleModule();
-        module.addDeserializer(SocioIndustrialData.class, new SocioIndustrialData.SocioIndustrialDataDeserializer());
-        module.addDeserializer(StarType.class, new StarType.StarTypeDeserializer());
-        module.addDeserializer(SourceableValue.class, new SourceableValue.SourceableValueDeserializer());
-        mapper.registerModule(module);
-        // this will allow the mapper to deserialize LocalDate objects
-        mapper.registerModule(new JavaTimeModule());
-
-        // Now we can Load all the yml files in the planetsPath and subdirectories
-        parsePlanetarySystemFiles(planetsPath, mapper);
+        parsePlanetarySystemFiles(planetsPath, PlanetarySystemYamlIO.createMapper());
     }
 
     /**
@@ -297,6 +351,13 @@ public class Systems {
             throw new NullPointerException();
         }
 
+        // Detect whether the current directory is the connector_systems subtree. Connector systems
+        // (DPR/HWY/LTR/FDR/ER/HL prefixes) are synthetic jump-path routing helpers with no inhabitants
+        // and need to be flagged so UI code can filter them out — see issue #8934. Path normalization
+        // requires directory boundaries on either side so a hypothetical filename containing the
+        // substring (e.g. "my_connector_systems_notes.yml") doesn't trip the check.
+        boolean isConnectorDir = isConnectorPath(dirName);
+
         File dir = new File(dirName);
         if (dir.isDirectory()) {
             File[] files = dir.listFiles((dir1, name) -> name.toLowerCase(Locale.ROOT).endsWith(".yml"));
@@ -307,7 +368,7 @@ public class Systems {
                 for (File file : files) {
                     if (file.isFile()) {
                         try (FileInputStream fis = new FileInputStream(file)) {
-                            loadPlanetarySystem(fis, mapper);
+                            loadPlanetarySystem(fis, mapper, isConnectorDir);
                         } catch (Exception ex) {
                             // Ignore this file then
                             logger.error(ex, "Exception trying to parse {} - ignoring.", file.getPath());
@@ -319,14 +380,22 @@ public class Systems {
             File[] zipFiles = dir.listFiles((dir1, name) -> name.toLowerCase(Locale.ROOT).endsWith(".zip"));
             if (zipFiles != null) {
                 for (File zipFile : zipFiles) {
+                    // The connector subtree ships as a zip (connector_systems.zip) whose entries are flat
+                    // filenames (e.g. HWY-Spinward-040.yml) with no connector_systems/ path. So derive
+                    // connector-ness from the zip's own name; the per-entry check below still catches the
+                    // case where a connector entry lives inside a zip that sits elsewhere.
+                    boolean zipIsConnector = isConnectorDir
+                                                   || isConnectorPath(zipFile.getName()
+                                                                            .replaceFirst("(?i)\\.zip$", ""));
                     try (ZipFile zip = new ZipFile(zipFile.getPath())) {
                         Enumeration<? extends ZipEntry> entries = zip.entries();
                         while (entries.hasMoreElements()) {
                             ZipEntry entry = entries.nextElement();
                             // Check if entry is a directory
                             if (!entry.isDirectory() && entry.getName().toLowerCase(Locale.ROOT).endsWith(".yml")) {
+                                boolean entryIsConnector = zipIsConnector || isConnectorPath(entry.getName());
                                 try (InputStream inputStream = zip.getInputStream(entry)) {
-                                    loadPlanetarySystem(inputStream, mapper);
+                                    loadPlanetarySystem(inputStream, mapper, entryIsConnector);
                                 } catch (Exception ex) {
                                     // Ignore this file then
                                     logger.error(ex, "Exception trying to parse zip  entry {} - ignoring.",
@@ -353,7 +422,7 @@ public class Systems {
         } else {
             if (dir.isFile()) {
                 try (FileInputStream fis = new FileInputStream(dir)) {
-                    loadPlanetarySystem(fis, mapper);
+                    loadPlanetarySystem(fis, mapper, isConnectorDir);
                 } catch (Exception ex) {
                     // Ignore this dir then
                     logger.error(ex, "Exception trying to parse {} - ignoring.", dir.getPath());
@@ -363,11 +432,33 @@ public class Systems {
         }
     }
 
-    private void loadPlanetarySystem(InputStream source, ObjectMapper mapper) throws IOException {
+    private void loadPlanetarySystem(InputStream source, ObjectMapper mapper, boolean isConnector) throws IOException {
 
         PlanetarySystem system = mapper.readValue(source, PlanetarySystem.class);
+        if (isConnector) {
+            system.setConnector(true);
+        }
         systemList.put(system.getId(), system);
 
+    }
+
+    /**
+     * @return {@code true} if the path identifies the {@code connector_systems} subtree - either the directory itself
+     *       (as passed to {@link #parsePlanetarySystemFiles} when recursing into it) or an entry within it (e.g. a zip
+     *       entry). {@code connector_systems} must be a full path segment, bounded by directory separators or the path
+     *       ends, so a stray substring match in a filename or unrelated directory (e.g.
+     *       {@code my_connector_systems_notes.yml}) is not flagged. Both {@code /} and {@code \} separators are
+     *       normalized. See issue #8934.
+     */
+    private static boolean isConnectorPath(String path) {
+        if (path == null) {
+            return false;
+        }
+        String normalized = path.replace('\\', '/');
+        return normalized.contains("/connector_systems/")    // an entry inside the subtree
+                     || normalized.startsWith("connector_systems/")  // ... at the path root
+                     || normalized.endsWith("/connector_systems")    // the directory itself (no trailing slash)
+                     || normalized.equals("connector_systems");      // ... at the path root
     }
 
     private void cleanupSystems() {
@@ -403,11 +494,21 @@ public class Systems {
     }
 
     private void logVeryCloseSystems() {
-        // Planetary sanity check time!
+        // Planetary sanity check: this catches genuine canon coordinate data errors (two real
+        // systems at nearly the same spot). Connector systems are synthetic jump-path waypoints
+        // (see PlanetarySystem#isConnector / issue #8934) that are intentionally placed dense
+        // along routes, so they trip this check en masse with no data-error meaning. Skip them on
+        // both sides to keep the warning useful instead of flooding the log every startup.
         for (PlanetarySystem system : systemList.values()) {
+            if (system.isConnector()) {
+                continue;
+            }
             List<PlanetarySystem> veryCloseSystems = getNearbySystems(system, 1);
             if (veryCloseSystems.size() > 1) {
                 for (PlanetarySystem closeSystem : veryCloseSystems) {
+                    if (closeSystem.isConnector()) {
+                        continue;
+                    }
                     if (!system.getId().equals(closeSystem.getId())) {
                         logger.warn(String.format(Locale.ROOT,
                               "Extremely close systems detected. Data error? %s <-> %s: %.3f ly",

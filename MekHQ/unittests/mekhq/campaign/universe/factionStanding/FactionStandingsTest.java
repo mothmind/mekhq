@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,6 +32,7 @@
  */
 package mekhq.campaign.universe.factionStanding;
 
+import static megamek.common.universe.Factions2.FACTIONS2_TEST_DIRECTORY;
 import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STANDING_LEVEL_3;
 import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STANDING_LEVEL_4;
 import static mekhq.campaign.universe.factionStanding.FactionStandingLevel.STANDING_LEVEL_5;
@@ -43,19 +44,23 @@ import static mekhq.campaign.universe.factionStanding.FactionStandings.DEFAULT_R
 import static mekhq.campaign.universe.factionStanding.FactionStandings.DEFAULT_REGARD_DEGRADATION;
 import static mekhq.campaign.universe.factionStanding.FactionStandings.REGARD_DELTA_EXECUTING_PRISONER;
 import static mekhq.campaign.universe.factionStanding.FactionStandings.REGARD_DELTA_REFUSE_BATCHALL;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Stream;
 
+import megamek.common.universe.Factions2;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
+import mekhq.campaign.universe.TestSystems;
+import mekhq.campaign.universe.factionHints.FactionHints;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -67,11 +72,14 @@ class FactionStandingsTest {
 
     @BeforeEach
     void setUp() {
-        try {
+        TestSystems.resetAndGetInstance();
+
+        assertDoesNotThrow(() -> {
+            Factions2.setInstance(new Factions2(FACTIONS2_TEST_DIRECTORY));
             Factions.setInstance(Factions.loadDefault(true));
+            FactionHints.initializeTestInstance();
             factions = Factions.getInstance();
-        } catch (Exception ignored) {
-        }
+        });
 
         // Validate our Faction data, an error here will throw everything off
         assertFalse(factions.getFactions().isEmpty(), "Factions list is empty");
@@ -98,7 +106,7 @@ class FactionStandingsTest {
         LocalDate today = LocalDate.of(3028, 8, 20); // Start of the 4th Succession War
 
         FactionStandings factionStandings = new FactionStandings();
-        factionStandings.updateClimateRegard(campaignFaction, today, 1.0, true, true);
+        factionStandings.updateClimateRegard(campaignFaction, today, 1.0, false);
 
         // Act
         double actualRegard = factionStandings.getRegardForFaction(targetFaction, true);
@@ -165,8 +173,8 @@ class FactionStandingsTest {
               false); // Initial regard for Capellan Confederation
         factionStandings.setRegardForFaction(null, "CS", -5.0, 3025, false); // Initial regard for ComStar
 
-        Campaign mockCampaign = mock(Campaign.class);
-        when(mockCampaign.getFaction()).thenReturn(factions.getDefaultFaction());
+        Campaign mockCampaign = mockCampaign();
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(factions.getDefaultFaction());
 
         Faction federatedSuns = factions.getFaction("FS");
         Faction capellanConfederation = factions.getFaction("CC");

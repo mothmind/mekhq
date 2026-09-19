@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -56,6 +56,7 @@ import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
 import mekhq.gui.dialog.NewsDialog;
 import mekhq.gui.dialog.factionStanding.factionJudgment.FactionJudgmentSceneDialog;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Dialog logic for resolving a Faction Standing ultimatum event.
@@ -106,11 +107,17 @@ public class FactionStandingUltimatumDialog {
     public FactionStandingUltimatumDialog(Campaign campaign, Person challenger, Person incumbent,
           boolean isViolentTransition, String ultimatumName) {
         this.campaign = campaign;
-        Person commander = campaign.getCommander();
+        Person commander = campaign.getPlayerForce().getHumanResources()
+                                 .getCommander(campaign.getCampaignOptions(),
+                                       campaign.getPlayerForce().isClanForce(),
+                                       campaign.getLocalDate());
         String commanderAddress = campaign.getCommanderAddress(false);
-        Person secondInCommand = campaign.getSecondInCommand();
+        Person secondInCommand = campaign.getPlayerForce().getHumanResources()
+                                       .getSecondInCommand(campaign.getCampaignOptions(),
+                                             campaign.getPlayerForce().isClanForce(),
+                                             campaign.getLocalDate());
         Person thirdInCommand = getThirdInCommand(commander, secondInCommand);
-        String campaignName = campaign.getName();
+        String campaignName = campaign.getPlayerForce().getName();
 
         // Helper to show an ImmersiveDialogSimple with i18n text key
         showDialog(ultimatumName, KEY_INITIAL_OFFER, commander, secondInCommand, challenger, null, campaignName,
@@ -250,13 +257,13 @@ public class FactionStandingUltimatumDialog {
               commander,
               secondInCommand,
               FactionJudgmentSceneType.GO_ROGUE,
-              campaign.getFaction());
+              campaign.getPlayerForce().getFaction());
 
-        Faction oldFaction = campaign.getFaction();
+        Faction oldFaction = campaign.getPlayerForce().getFaction();
         Faction newFaction = Factions.getInstance()
                                    .getFaction(isMercenary ? MERCENARY_FACTION_CODE : PIRATE_FACTION_CODE);
         processGoingRogue(campaign, newFaction, commander, secondInCommand,
-              isViolentTransition, true, campaign.getCampaignOptions().isTrackFactionStanding());
+              isViolentTransition, true, campaign.getCampaignOptions().get(CampaignOption.TRACK_FACTION_STANDING));
 
         if (secondInCommand != null &&
                   !(secondInCommand.getStatus().isDepartedUnit() || secondInCommand.getStatus().isDead())) {
@@ -334,7 +341,7 @@ public class FactionStandingUltimatumDialog {
     public @Nullable Person getThirdInCommand(Person commander, Person secondInCommand) {
         Person thirdInCommand = null;
 
-        for (Person person : campaign.getActivePersonnel(false, false)) {
+        for (Person person : campaign.getPlayerForce().getHumanResources().getActivePersonnel(false, false)) {
             if (person.equals(commander) || person.equals(secondInCommand)) {
                 continue;
             }

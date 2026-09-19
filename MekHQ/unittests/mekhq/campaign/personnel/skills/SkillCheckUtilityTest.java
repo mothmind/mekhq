@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -40,19 +40,15 @@ import static mekhq.campaign.personnel.skills.SkillCheckUtility.UNTRAINED_TARGET
 import static mekhq.campaign.personnel.skills.SkillCheckUtility.UNTRAINED_TARGET_NUMBER_TWO_LINKED_ATTRIBUTES;
 import static mekhq.campaign.personnel.skills.SkillCheckUtility.determineTargetNumber;
 import static mekhq.campaign.personnel.skills.SkillCheckUtility.getTotalAttributeScoreForSkill;
-import static mekhq.campaign.personnel.skills.SkillCheckUtility.performQuickSkillCheck;
-import static mekhq.campaign.personnel.skills.SkillType.S_GUN_MEK;
-import static mekhq.campaign.personnel.skills.enums.MarginOfSuccess.DISASTROUS;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.DEXTERITY;
-import static mekhq.campaign.personnel.skills.enums.SkillAttribute.NONE;
+import static mekhq.campaign.personnel.skills.enums.SkillAttribute.NO_ATTRIBUTE;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.REFLEXES;
-import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.time.LocalDate;
 
@@ -61,6 +57,7 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.universe.Faction;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -86,64 +83,15 @@ import org.mockito.Mockito;
 class SkillCheckUtilityTest {
     private static final LocalDate CURRENT_DATE = LocalDate.of(3151, 1, 1);
 
-    @Test
-    void testIsPersonNull_EdgeDisallowed() {
-        SkillCheckUtility checkUtility = new SkillCheckUtility(null,
-              null,
-              S_GUN_MEK,
-              null,
-              0,
-              false,
-              false,
-              false,
-              false,
-              CURRENT_DATE);
-
-        int expectedMarginOfSuccess = DISASTROUS.getValue();
-        assertEquals(expectedMarginOfSuccess, checkUtility.getMarginOfSuccess());
-
-        String RESOURCE_BUNDLE = "mekhq.resources.SkillCheckUtility";
-        String expectedResultsText = getFormattedTextAt(RESOURCE_BUNDLE, "skillCheck.nullPerson");
-        assertEquals(expectedResultsText, checkUtility.getResultsText());
-
-        int expectedTargetNumber = Integer.MAX_VALUE;
-        assertEquals(expectedTargetNumber, checkUtility.getTargetNumber().getValue());
-
-        int expectedRoll = Integer.MIN_VALUE;
-        assertEquals(expectedRoll, checkUtility.getRoll());
+    @BeforeAll
+    static void beforeAll() {
+        SkillType.initializeTypes();
     }
 
-    @Test
-    void testIsPersonNull_EdgeAllowed() {
-        SkillCheckUtility checkUtility = new SkillCheckUtility(null,
-              null,
-              S_GUN_MEK,
-              null,
-              0,
-              true,
-              false,
-              false,
-              false,
-              CURRENT_DATE);
-
-        int expectedMarginOfSuccess = DISASTROUS.getValue();
-        assertEquals(expectedMarginOfSuccess, checkUtility.getMarginOfSuccess());
-
-        String RESOURCE_BUNDLE = "mekhq.resources.SkillCheckUtility";
-        String expectedResultsText = getFormattedTextAt(RESOURCE_BUNDLE, "skillCheck.nullPerson");
-        assertEquals(expectedResultsText, checkUtility.getResultsText());
-
-        int expectedTargetNumber = Integer.MAX_VALUE;
-        assertEquals(expectedTargetNumber, checkUtility.getTargetNumber().getValue());
-
-        int expectedRoll = Integer.MIN_VALUE;
-        assertEquals(expectedRoll, checkUtility.getRoll());
-    }
-
-    @Test
-    void testIsPersonNull_PerformQuickSkillCheck() {
-        boolean results = performQuickSkillCheck(null, S_GUN_MEK, null, 0, false, false, CURRENT_DATE);
-        assertFalse(results);
+    private static Person personWithSkill(String skillName) {
+        Person person = new Person("GivenName", "Surname", null, "Faction");
+        person.addSkill(skillName, 3, 0);
+        return person;
     }
 
     @Test
@@ -151,7 +99,7 @@ class SkillCheckUtilityTest {
         // Setup
         SkillType testSkillType = new SkillType();
         testSkillType.setFirstAttribute(REFLEXES);
-        testSkillType.setSecondAttribute(NONE);
+        testSkillType.setSecondAttribute(NO_ATTRIBUTE);
 
         Attributes attributes = new Attributes(DEFAULT_ATTRIBUTE_SCORE,
               DEFAULT_ATTRIBUTE_SCORE,
@@ -202,8 +150,8 @@ class SkillCheckUtilityTest {
     void testGetTotalAttributeScoreForSkill_NoLinkedAttributes() {
         // Setup
         SkillType testSkillType = new SkillType();
-        testSkillType.setFirstAttribute(NONE);
-        testSkillType.setSecondAttribute(NONE);
+        testSkillType.setFirstAttribute(NO_ATTRIBUTE);
+        testSkillType.setSecondAttribute(NO_ATTRIBUTE);
 
         Attributes attributes = new Attributes(DEFAULT_ATTRIBUTE_SCORE,
               DEFAULT_ATTRIBUTE_SCORE,
@@ -228,7 +176,7 @@ class SkillCheckUtilityTest {
     void testGetTotalAttributeScoreForSkill_SingleLinkedAttribute_None() {
         // Setup
         SkillType testSkillType = new SkillType();
-        testSkillType.setFirstAttribute(NONE);
+        testSkillType.setFirstAttribute(NO_ATTRIBUTE);
         testSkillType.setSecondAttribute(REFLEXES);
 
         Attributes attributes = new Attributes(DEFAULT_ATTRIBUTE_SCORE,
@@ -253,20 +201,20 @@ class SkillCheckUtilityTest {
     @Test
     void testDetermineTargetNumber_UntrainedWithOneLinkedAttribute() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
         Person person = new Person(mockCampaign);
 
         try (MockedStatic<SkillType> mockSkillType = Mockito.mockStatic(SkillType.class)) {
             SkillType testSkillType = new SkillType();
-            testSkillType.setSecondAttribute(NONE);
+            testSkillType.setSecondAttribute(NO_ATTRIBUTE);
 
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(testSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int expectedTargetNumber = UNTRAINED_TARGET_NUMBER_ONE_LINKED_ATTRIBUTE + UNTRAINED_SKILL_MODIFIER -
@@ -278,9 +226,9 @@ class SkillCheckUtilityTest {
     @Test
     void testDetermineTargetNumber_UntrainedWithTwoLinkedAttributes() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         Person person = new Person(mockCampaign);
@@ -291,7 +239,7 @@ class SkillCheckUtilityTest {
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(testSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int expectedTargetNumber = UNTRAINED_TARGET_NUMBER_TWO_LINKED_ATTRIBUTES -
@@ -306,7 +254,7 @@ class SkillCheckUtilityTest {
         for (int attributeScore = MINIMUM_ATTRIBUTE_SCORE; attributeScore < MAXIMUM_ATTRIBUTE_SCORE; attributeScore++) {
             // Setup
             SkillType testSkillType = new SkillType();
-            testSkillType.setSecondAttribute(NONE);
+            testSkillType.setSecondAttribute(NO_ATTRIBUTE);
 
             Skill skill = new Skill(testSkillType, 0, 0);
 
@@ -327,7 +275,7 @@ class SkillCheckUtilityTest {
             when(mockPerson.getSkill("MISSING_NAME")).thenReturn(skill);
             when(mockPerson.getATOWAttributes()).thenReturn(characterAttributes);
             when(mockPerson.getOptions()).thenReturn(new PersonnelOptions());
-            when(mockPerson.getReputation()).thenReturn(0);
+            when(mockPerson.getFame()).thenReturn(0);
             when(mockPerson.getSkillModifierData(anyBoolean(), anyBoolean(), any(LocalDate.class))).thenReturn(
                   skillModifierData);
 
@@ -338,7 +286,6 @@ class SkillCheckUtilityTest {
                 // Act
                 TargetRoll targetNumber = determineTargetNumber(mockPerson,
                       testSkillType,
-                      0,
                       false,
                       false,
                       CURRENT_DATE);
@@ -355,7 +302,7 @@ class SkillCheckUtilityTest {
     void testDetermineTargetNumber_TrainedWithOneLinkedAttribute_AboveNormalAttributeScore() {
         // Setup
         SkillType testSkillType = new SkillType();
-        testSkillType.setSecondAttribute(NONE);
+        testSkillType.setSecondAttribute(NO_ATTRIBUTE);
 
         Skill skill = new Skill(testSkillType, 0, 0);
 
@@ -376,7 +323,7 @@ class SkillCheckUtilityTest {
         when(mockPerson.getSkill("MISSING_NAME")).thenReturn(skill);
         when(mockPerson.getATOWAttributes()).thenReturn(characterAttributes);
         when(mockPerson.getOptions()).thenReturn(new PersonnelOptions());
-        when(mockPerson.getReputation()).thenReturn(0);
+        when(mockPerson.getFame()).thenReturn(0);
         when(mockPerson.getSkillModifierData(anyBoolean(), anyBoolean(), any(LocalDate.class))).thenReturn(
               skillModifierData);
 
@@ -384,7 +331,7 @@ class SkillCheckUtilityTest {
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(testSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(mockPerson, testSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(mockPerson, testSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int skillTargetNumber = skill.getFinalSkillValue(skillModifierData);
@@ -417,7 +364,7 @@ class SkillCheckUtilityTest {
             when(mockPerson.getSkill("MISSING_NAME")).thenReturn(skill);
             when(mockPerson.getATOWAttributes()).thenReturn(characterAttributes);
             when(mockPerson.getOptions()).thenReturn(new PersonnelOptions());
-            when(mockPerson.getReputation()).thenReturn(0);
+            when(mockPerson.getFame()).thenReturn(0);
             when(mockPerson.getSkillModifierData(anyBoolean(), anyBoolean(), any(LocalDate.class))).thenReturn(
                   skillModifierData);
 
@@ -427,7 +374,6 @@ class SkillCheckUtilityTest {
                 // Act
                 TargetRoll targetNumber = determineTargetNumber(mockPerson,
                       testSkillType,
-                      0,
                       false,
                       false,
                       CURRENT_DATE);
@@ -444,9 +390,9 @@ class SkillCheckUtilityTest {
     @Test
     void testDetermineTargetNumber_InvalidAttributes() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
         Person person = new Person(mockCampaign);
 
@@ -461,7 +407,7 @@ class SkillCheckUtilityTest {
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(testSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int expectedTargetNumber = UNTRAINED_TARGET_NUMBER_TWO_LINKED_ATTRIBUTES + UNTRAINED_SKILL_MODIFIER -
@@ -475,23 +421,23 @@ class SkillCheckUtilityTest {
     @Test
     void testDetermineTargetNumber_EdgeCaseSkillType() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
         Person person = new Person(mockCampaign);
 
         // Using default attributes.
         SkillType edgeCaseSkillType = new SkillType();
-        edgeCaseSkillType.setFirstAttribute(NONE); // No attributes linked
-        edgeCaseSkillType.setSecondAttribute(NONE);
+        edgeCaseSkillType.setFirstAttribute(NO_ATTRIBUTE); // No attributes linked
+        edgeCaseSkillType.setSecondAttribute(NO_ATTRIBUTE);
         person.setATOWAttributes(new Attributes());
 
         try (MockedStatic<SkillType> mockSkillType = Mockito.mockStatic(SkillType.class)) {
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(edgeCaseSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(person, edgeCaseSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(person, edgeCaseSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int expectedTargetNumber = UNTRAINED_TARGET_NUMBER_ONE_LINKED_ATTRIBUTE + UNTRAINED_SKILL_MODIFIER;
@@ -502,9 +448,9 @@ class SkillCheckUtilityTest {
     @Test
     void testDetermineTargetNumber_NegativeAttributeModifier() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
         Person person = new Person(mockCampaign);
 
@@ -528,7 +474,7 @@ class SkillCheckUtilityTest {
             mockSkillType.when(() -> SkillType.getType("MISSING_NAME")).thenReturn(testSkillType);
 
             // Act
-            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, 0, false, false, CURRENT_DATE);
+            TargetRoll targetNumber = determineTargetNumber(person, testSkillType, false, false, CURRENT_DATE);
 
             // Assert
             int expectedTargetNumber = UNTRAINED_TARGET_NUMBER_TWO_LINKED_ATTRIBUTES + UNTRAINED_SKILL_MODIFIER -

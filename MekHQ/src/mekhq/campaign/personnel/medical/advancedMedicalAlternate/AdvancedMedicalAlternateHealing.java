@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,31 +33,39 @@
 package mekhq.campaign.personnel.medical.advancedMedicalAlternate;
 
 import static java.lang.Math.max;
+import static megamek.common.compute.Compute.randomInt;
+import static megamek.common.units.Crew.DEATH;
 import static mekhq.campaign.personnel.PersonnelOptions.ATOW_FIT;
 import static mekhq.campaign.personnel.PersonnelOptions.ATOW_TOUGHNESS;
-import static mekhq.campaign.personnel.PersonnelOptions.EDGE_MEDICAL;
+import static mekhq.campaign.personnel.enums.PersonnelStatus.MEDICAL_COMPLICATIONS;
+import static mekhq.campaign.personnel.medical.BodyLocation.GENERIC;
 import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.HealingMarginOfSuccessEffects.getEffectFromHealingAttempt;
 import static mekhq.campaign.personnel.skills.SkillType.S_SURGERY;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.BODY;
-import static mekhq.campaign.personnel.skills.enums.SkillAttribute.NONE;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import megamek.common.TargetRollModifier;
 import megamek.common.annotations.Nullable;
+import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.enums.DailyReportType;
 import mekhq.campaign.log.MedicalLogger;
 import mekhq.campaign.log.PatientLogger;
 import mekhq.campaign.personnel.Injury;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.medical.BodyLocation;
-import mekhq.campaign.personnel.skills.AttributeCheckUtility;
-import mekhq.campaign.personnel.skills.SkillCheckUtility;
+import mekhq.campaign.personnel.skills.ActionCheckResult;
+import mekhq.campaign.personnel.skills.AttributeCheck;
+import mekhq.campaign.personnel.skills.SkillCheck;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 
 
@@ -82,31 +90,30 @@ public class AdvancedMedicalAlternateHealing {
      * unassisted based on the presence of a doctor, and then performs the appropriate healing checks. It also handles
      * optional fatigue changes and the use of medical Edge.</p>
      *
-     * @param today        the current in-game date
-     * @param isUseFatigue {@code true} if fatigue effects from healing should be applied; {@code false} otherwise
-     * @param fatigueRate  the user-defined rate fatigue is gained
-     * @param patient      the person undergoing healing
-     * @param doctor       the doctor providing treatment, or {@code null} if the patient is healing naturally
+     * @param campaign the {@link Campaign} context
+     * @param patient  the person undergoing healing
+     * @param doctor   the doctor providing treatment, or {@code null} if the patient is healing naturally
      *
      * @author Illiani
      * @since 0.50.10
      */
-    public static void processNewDay(LocalDate today, boolean isUseFatigue, int fatigueRate, Person patient,
+    public static void processNewDay(Campaign campaign, Person patient,
           @Nullable Person doctor) {
         // Modifiers
         List<TargetRollModifier> modifiers = getSPAModifiers(patient);
         Set<BodyLocation> prostheticPenalties = getProstheticPenalties(patient);
 
+
         // Healing
         if (doctor == null) {
-            boolean patientUsesEdge = patient.getOptions().booleanOption(EDGE_MEDICAL);
-            performUnassistedHealingCheck(today, isUseFatigue, fatigueRate, patient, modifiers, prostheticPenalties,
-                  patientUsesEdge);
-        } else {
-            boolean doctorUsesEdge = doctor.getOptions().booleanOption(EDGE_MEDICAL);
-            performAssistedHealingCheck(today, isUseFatigue, fatigueRate, patient, doctor, modifiers,
-                  prostheticPenalties, doctorUsesEdge);
+            modifiers.add(new TargetRollModifier(-3, "Unassisted Healing"));
         }
+
+        performHealingCheck(campaign,
+              patient,
+              Objects.requireNonNullElse(doctor, patient),
+              modifiers,
+              prostheticPenalties);
     }
 
     /**
@@ -165,52 +172,10 @@ public class AdvancedMedicalAlternateHealing {
         return modifiers;
     }
 
-    /**
-     * Performs the daily natural (unassisted) healing checks for a patient.
-     *
-     * <p>This method iterates over all non-permanent injuries, decrements their remaining healing time, and performs
-     * an attribute-based healing check when appropriate. Depending on the margin of success, injuries may fully heal,
-     * be delayed, or become permanent. If configured, medical Edge can be used to reroll potentially permanent
-     * injuries.</p>
-     *
-     * <p>A defensive copy of the injury list is used because successful healing may remove injuries from the
-     * underlying collection.</p>
-     *
-     * @param today               the current in-game date
-     * @param isUseFatigue        {@code true} if fatigue effects from healing should be applied; {@code false}
-     *                            otherwise
-     * @param fatigueRate         the user-defined rate fatigue is gained
-     * @param patient             the person attempting to heal naturally
-     * @param modifiers           the list of SPA-based and other modifiers applied to the natural healing roll
-     * @param prostheticPenalties the set of body locations that should incur a prosthetic penalty
-     * @param useEdge             {@code true} if the patient is allowed to use medical Edge for rerolls; {@code false}
-     *                            otherwise
-     *
-     * @author Illiani
-     * @since 0.50.10
-     */
-    public static void performUnassistedHealingCheck(LocalDate today, boolean isUseFatigue, int fatigueRate,
-          Person patient, List<TargetRollModifier> modifiers, Set<BodyLocation> prostheticPenalties, boolean useEdge) {
-        // We need a defensive copy of the list as we're going to be removing injuries from it when successfully healing
-        for (Injury injury : new ArrayList<>(patient.getInjuries())) {
-            if (!injury.isPermanent()) {
-                // This needs to be refetched each cycle as the number of concurrent injuries might have changed
-                int injuryPenalty = max(0, patient.getTotalInjurySeverity() - patient.getAdjustedToughness());
-
-                injury.changeTime(-1);
-                int miscPenalty = getMiscPenalty(injuryPenalty, prostheticPenalties, injury.getLocation());
-                int marginOfSuccess = getMarginOfSuccessForUnassistedHealing(patient, modifiers, miscPenalty, useEdge);
-
-                if (injury.getTime() <= 0) { // Time to try and fully heal the injury
-                    processHealingEffects(isUseFatigue, fatigueRate, patient, injury, marginOfSuccess, today);
-                    processTaskAwardsAndPersonnelLogUpdates(today, patient, null, injury, marginOfSuccess);
-                } else if (marginOfSuccess <= -6) { // The injury became permanent
-                    injury.setPermanent(true);
-                    MedicalLogger.permanentInjuryAltAdvancedMedical(patient, today, injury.getName());
-                } else if (marginOfSuccess < 0) { // The injury worsened
-                    injury.changeTime(1); // Undo the prior reduction
-                }
-            }
+    private static void addPathologicInsightModifier(List<TargetRollModifier> modifiers, Injury injury,
+          boolean hasPathologicInsight) {
+        if (hasPathologicInsight && injury.isDisease()) {
+            modifiers.add(new TargetRollModifier(-2, "Pathologic Insight"));
         }
     }
 
@@ -222,72 +187,37 @@ public class AdvancedMedicalAlternateHealing {
      * represented by a prosthetic and that location is present in {@code prostheticPenalties}, the prosthetic penalty
      * is added.</p>
      *
-     * @param injuryPenalty       the total injury severity for the patient
-     * @param prostheticPenalties the set of body locations that incur prosthetic penalties
-     * @param location            the body location of the injury being healed
+     * @param injuryPenalty          the total injury severity for the patient
+     * @param prostheticPenalties    the set of body locations that incur prosthetic penalties
+     * @param location               the body location of the injury being healed
+     * @param hasTraumaSurgeon       {@code true} if the patient has the trauma surgeon SPA (reduces injury penalty)
+     * @param hasProthesisTechnician {@code true} if the patient has the prothesis technician SPA (reduces prosthetic
+     *                               penalty)
      *
      * @return the sum of the base injury penalty and any applicable prosthetic penalty
      *
      * @author Illiani
      * @since 0.50.10
      */
-    private static int getMiscPenalty(int injuryPenalty, Set<BodyLocation> prostheticPenalties, BodyLocation location) {
+    private static int getMiscPenalty(int injuryPenalty, Set<BodyLocation> prostheticPenalties, BodyLocation location,
+          boolean hasTraumaSurgeon, boolean hasProthesisTechnician) {
         int miscPenalty = injuryPenalty;
+        int traumaSurgeonModifier = hasTraumaSurgeon ? -1 : 0;
+        miscPenalty = max(0, miscPenalty + traumaSurgeonModifier);
 
+        boolean hasProstheticPenalty = false;
         BodyLocation primaryLocation = location.getPrimaryLocation();
         if (prostheticPenalties.contains(primaryLocation)) {
             miscPenalty += PROSTHETIC_PENALTY;
+            hasProstheticPenalty = true;
+        }
+
+        if (hasProstheticPenalty) {
+            int technicianModifier = hasProthesisTechnician ? -1 : 0;
+            miscPenalty = max(0, miscPenalty + technicianModifier);
         }
 
         return miscPenalty;
-    }
-
-    /**
-     * Performs the natural healing roll for an unassisted healing attempt and returns its margin of success.
-     *
-     * <p>The roll is an attribute check based on the patient's {@link SkillAttribute#BODY} attribute, modified by the
-     * provided target roll modifiers and miscellaneous penalties. If the initial result causes the injury to become
-     * permanent (margin of success &le; -6) and {@code useEdge} is {@code true}, a second roll is made and its result
-     * replaces the original.</p>
-     *
-     * @param patient     the person attempting to heal naturally
-     * @param modifiers   the list of modifiers applied to the healing roll
-     * @param miscPenalty the combined penalty for this healing attempt
-     * @param useEdge     {@code true} if medical Edge may be used to reroll a potentially permanent injury;
-     *                    {@code false} otherwise
-     *
-     * @return the final margin of success after any Edge reroll
-     *
-     * @author Illiani
-     * @since 0.50.10
-     */
-    private static int getMarginOfSuccessForUnassistedHealing(Person patient, List<TargetRollModifier> modifiers,
-          int miscPenalty, boolean useEdge) {
-        AttributeCheckUtility naturalHealing = new AttributeCheckUtility(
-              getTextAt(RESOURCE_BUNDLE, "AdvancedMedicalAlternateHealing.naturalHealing.normal"),
-              patient,
-              BODY,
-              NONE,
-              modifiers,
-              miscPenalty,
-              false,
-              true);
-        int marginOfSuccess = naturalHealing.getMarginOfSuccess();
-
-        // Edge
-        if (marginOfSuccess <= -6 && useEdge) { // Attempt to reroll a permanent injury
-            AttributeCheckUtility edgeReroll = new AttributeCheckUtility(
-                  getTextAt(RESOURCE_BUNDLE, "AdvancedMedicalAlternateHealing.naturalHealing.edge"),
-                  patient,
-                  BODY,
-                  NONE,
-                  modifiers,
-                  miscPenalty,
-                  false,
-                  true);
-            marginOfSuccess = edgeReroll.getMarginOfSuccess(); // Edge always replaces the original
-        }
-        return marginOfSuccess;
     }
 
     /**
@@ -301,51 +231,108 @@ public class AdvancedMedicalAlternateHealing {
      * <p>A defensive copy of the injury list is used because successful healing may remove injuries from the
      * underlying collection.</p>
      *
-     * @param today               the current in-game date
-     * @param isUseFatigue        {@code true} if fatigue effects from healing should be applied; {@code false}
-     *                            otherwise
-     * @param fatigueRate         the user-defined rate fatigue is gained
+     * @param campaign            the {@link Campaign} context
      * @param patient             the person being treated
      * @param doctor              the doctor performing the assisted healing
      * @param modifiers           the list of modifiers applied to the surgery check
      * @param prostheticPenalties the set of body locations that should incur a prosthetic penalty
-     * @param useEdge             {@code true} if the doctor is allowed to use medical Edge for rerolls; {@code false}
-     *                            otherwise
      *
      * @author Illiani
      * @since 0.50.10
      */
-    public static void performAssistedHealingCheck(LocalDate today, boolean isUseFatigue, int fatigueRate,
-          Person patient, Person doctor, List<TargetRollModifier> modifiers, Set<BodyLocation> prostheticPenalties,
-          boolean useEdge) {
+    private static void performHealingCheck(Campaign campaign, Person patient, Person doctor,
+          List<TargetRollModifier> modifiers, Set<BodyLocation> prostheticPenalties) {
+        HealingSPAOptions healingSPAOptions = HealingSPAOptions.from(doctor, patient);
+        LocalDate today = campaign.getLocalDate();
+
         // We need a defensive copy of the list as we're going to be removing injuries from it when successfully healing
         for (Injury injury : new ArrayList<>(patient.getInjuries())) {
-            if (!injury.isPermanent()) {
-                // This needs to be refetched each cycle as the number of concurrent injuries might have changed
-                int injuryPenalty = max(0, patient.getTotalInjurySeverity() - patient.getAdjustedToughness());
+            attemptHealing(campaign, patient, doctor, modifiers, prostheticPenalties, injury, healingSPAOptions, today);
+        }
+    }
 
-                injury.changeTime(-1);
+    /**
+     * Attempts to heal a specified injury for a given patient under the care of a doctor within a campaign context. The
+     * method takes into account various modifiers, penalties, and situational factors to determine the progress of
+     * healing or possible worsening of the injury.
+     *
+     * <p><b>Note:</b> for unassisted healing the patient is also going to be the doctor.</p>
+     *
+     * @param campaign            The campaign context in which the healing attempt is taking place.
+     * @param patient             The person receiving treatment for the injury.
+     * @param doctor              The person providing medical care for the injury.
+     * @param modifiers           A list of target roll modifiers that influence the healing outcome.
+     * @param prostheticPenalties A set of body locations where prosthetic-related penalties may apply.
+     * @param injury              The injury being treated, which includes severity, location, and status.
+     * @param healingSPAOptions   Various special options and attributes influencing the healing process, such as
+     *                            holistic care or medical proficiency features.
+     * @param today               The current date in the campaign, used for determining the healing progress for
+     *                            unassisted healing and for reporting healing outcomes.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static void attemptHealing(Campaign campaign, Person patient, Person doctor,
+          List<TargetRollModifier> modifiers, Set<BodyLocation> prostheticPenalties, Injury injury,
+          HealingSPAOptions healingSPAOptions, LocalDate today) {
+        addPathologicInsightModifier(modifiers, injury, healingSPAOptions.hasPathologicInsight());
 
-                if (injury.getTime() <= 0) {
-                    int miscPenalty = getMiscPenalty(injuryPenalty, prostheticPenalties, injury.getLocation());
-                    int marginOfSuccess = getMarginOfSuccessForAssistedHealing(doctor, modifiers, miscPenalty, useEdge);
+        // If we're performing unassisted healing, recovery time is substantially decreased sevenfold, as per ATOW
+        // pg193 (6th printing). We represent this by only decreasing healing time on Mondays.
+        boolean isUnassistedHealing = Objects.equals(doctor, patient);
+        if (isUnassistedHealing) {
+            if (today.getDayOfWeek() != DayOfWeek.MONDAY) {
+                return;
+            }
+        }
 
-                    processHealingEffects(isUseFatigue, fatigueRate, patient, injury, marginOfSuccess, today);
-                    processTaskAwardsAndPersonnelLogUpdates(today, patient, doctor, injury, marginOfSuccess);
-                }
+        if (!injury.isPermanent()) {
+            // This needs to be refetched each cycle as the number of concurrent injuries might have changed
+            int injuryPenalty = max(0, patient.getTotalInjurySeverity() - patient.getAdjustedToughness());
+
+            int healingDelta = healingSPAOptions.hasHolisticCareSPA() && randomInt(20) == 0 ? -2 : -1;
+            injury.changeTime(healingDelta);
+
+            int miscPenalty = getMiscPenalty(injuryPenalty, prostheticPenalties, injury.getLocation(),
+                  healingSPAOptions.hasTraumaSurgeon(), healingSPAOptions.hasProthesisTechnician());
+            miscPenalty += healingSPAOptions.hasHypochondriac() ? 1 : 0;
+
+            boolean isUseKinderHealing = campaign.getCampaignOptions()
+                                               .get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL_FEWER_PERMANENT_INJURIES);
+
+            // The healing outcome is only applied on the cycle where the recovery timer has run out; on every other
+            // cycle a bad roll simply stalls that cycle's progress. Medical Edge is a limited resource, so we only
+            // allow it to be spent on the resolving cycle (and, within the roll, only to avert an injury that is
+            // genuinely permanent under the active campaign options).
+            boolean willResolveThisCycle = injury.getTime() <= 0;
+
+            boolean useEdge = campaign.getCampaignOptions().get(CampaignOption.USE_EDGE);
+            useEdge = useEdge && healingSPAOptions.hasMedicalEdge() && willResolveThisCycle;
+            int marginOfSuccess = getMarginOfSuccessForHealing(doctor,
+                  campaign,
+                  modifiers,
+                  miscPenalty,
+                  useEdge,
+                  isUnassistedHealing,
+                  isUseKinderHealing);
+
+            if (willResolveThisCycle) {
+                HealingMarginOfSuccessEffects outcome = processHealingEffects(campaign,
+                      patient,
+                      injury,
+                      marginOfSuccess);
+                processTaskAwardsAndPersonnelLogUpdates(today, patient, doctor, injury, outcome);
+            } else if (marginOfSuccess < 0) { // The injury took longer to heal
+                injury.changeTime(1); // Undo the prior reduction
             }
         }
     }
 
     /**
-     * Performs the assisted healing roll for a doctor and returns its margin of success.
-     *
-     * <p>The roll is a skill check using the doctor's {@code Surgery} skill, modified by the provided target roll
-     * modifiers and miscellaneous penalties. If the initial result causes the injury to become permanent (margin of
-     * success &le; -6) and {@code useEdge} is {@code true}, a second roll is made and its result replaces the
-     * original.</p>
+     * Performs the healing roll for a doctor and returns its margin of success.
      *
      * @param doctor      the person performing the surgery check
+     * @param campaign    the {@link Campaign} context
      * @param modifiers   the list of modifiers applied to the surgery roll
      * @param miscPenalty the combined penalty for this healing attempt
      * @param useEdge     {@code true} if medical Edge may be used to reroll a potentially permanent injury;
@@ -356,31 +343,106 @@ public class AdvancedMedicalAlternateHealing {
      * @author Illiani
      * @since 0.50.10
      */
-    private static int getMarginOfSuccessForAssistedHealing(Person doctor, List<TargetRollModifier> modifiers,
-          int miscPenalty, boolean useEdge) {
-        SkillCheckUtility surgery = new SkillCheckUtility(
-              getTextAt(RESOURCE_BUNDLE, "AdvancedMedicalAlternateHealing.assistedHealing.normal"),
-              doctor,
-              S_SURGERY,
+    private static int getMarginOfSuccessForHealing(Person doctor, Campaign campaign,
+          List<TargetRollModifier> modifiers, int miscPenalty, boolean useEdge, boolean isUnassistedHealing,
+          boolean isUseKinderHealing) {
+        ActionCheckResult actionCheckResult = getActionCheckResult(doctor,
+              campaign,
               modifiers,
               miscPenalty,
-              false,
-              true);
-        int marginOfSuccess = surgery.getMarginOfSuccess();
+              useEdge,
+              isUnassistedHealing,
+              isUseKinderHealing);
 
-        // Edge
-        if (marginOfSuccess <= -6 && useEdge) { // Permanent injury
-            SkillCheckUtility edgeReroll = new SkillCheckUtility(
-                  getTextAt(RESOURCE_BUNDLE, "AdvancedMedicalAlternateHealing.assistedHealing.edge"),
-                  doctor,
-                  S_SURGERY,
+        return actionCheckResult.getMarginOfSuccess();
+    }
+
+    private static ActionCheckResult getActionCheckResult(Person doctor, Campaign campaign,
+          List<TargetRollModifier> modifiers, int miscPenalty, boolean useEdge, boolean isUnassistedHealing,
+          boolean isUseKinderHealing) {
+        ActionCheckResult actionCheckResult;
+        if (isUnassistedHealing) {
+            actionCheckResult = performBodyAttributeCheck(doctor, modifiers, miscPenalty, useEdge, isUseKinderHealing);
+        } else {
+            actionCheckResult = performSurgerySkillCheck(doctor,
+                  campaign,
                   modifiers,
                   miscPenalty,
-                  false,
-                  true);
-            marginOfSuccess = edgeReroll.getMarginOfSuccess(); // Edge always replaces the original
+                  useEdge,
+                  isUseKinderHealing);
         }
-        return marginOfSuccess;
+
+        campaign.addReport(DailyReportType.SKILL_CHECKS, actionCheckResult.getReport());
+
+        return actionCheckResult;
+    }
+
+    /**
+     * Determines whether the supplied healing roll would leave the injury permanent under the currently active campaign
+     * options.
+     *
+     * <p>This is what gates a Medical Edge reroll: with {@code useAlternativeAdvancedMedicalFewerPermanentInjuries}
+     * enabled, margins of -3 through -5 resolve to a delay rather than a permanent injury, so Edge should not be spent
+     * (and potentially rerolled into a worse result) in that case.</p>
+     */
+    private static boolean isPermanentOutcome(ActionCheckResult actionCheckResult, boolean isUseKinderHealing) {
+        return getEffectFromHealingAttempt(actionCheckResult.getMarginOfSuccess(), isUseKinderHealing).isPermanent();
+    }
+
+    /**
+     * Performs a healing action check.
+     *
+     * <p>The roll is an attribute check based on the patient's {@link SkillAttribute#BODY} attribute, modified by the
+     * provided target roll modifiers and miscellaneous penalties. If the initial result would leave the injury
+     * permanent under the active campaign options and {@code useEdge} is {@code true}, a second roll is made and its
+     * result replaces the original.</p>
+     */
+    private static ActionCheckResult performBodyAttributeCheck(Person doctor, List<TargetRollModifier> modifiers,
+          int miscPenalty, boolean useEdge, boolean isUseKinderHealing) {
+        ActionCheckResult actionCheckResult;
+        AttributeCheck attributeCheck = doctor.checkAttribute(BODY)
+                                              .withMiscModifier(miscPenalty)
+                                              .withExternalModifiers(modifiers);
+        String resourceBundleKey = "AdvancedMedicalAlternateHealing.naturalHealing.normal";
+        String reportText = getTextAt(RESOURCE_BUNDLE, resourceBundleKey);
+        actionCheckResult = attributeCheck.resolve(false, reportText);
+
+        // Edge
+        if (isPermanentOutcome(actionCheckResult, isUseKinderHealing) && useEdge && doctor.getCurrentEdge() > 0) {
+            // manually update edge because if we pass useEdge == true, the doctor will get one free roll
+            doctor.spendEdge();
+            actionCheckResult = attributeCheck.resolve(false, getTextAt(RESOURCE_BUNDLE,
+                  "AdvancedMedicalAlternateHealing.naturalHealing.edge"));
+        }
+        return actionCheckResult;
+    }
+
+    /**
+     * Performs a healing action check.
+     *
+     * <p>The roll is a skill check using the doctor's {@code Surgery} skill, modified by the provided target roll
+     * modifiers and miscellaneous penalties. If the initial result would leave the injury permanent under the active
+     * campaign options and {@code useEdge} is {@code true}, a second roll is made and its result replaces the
+     * original.</p>
+     */
+    private static ActionCheckResult performSurgerySkillCheck(Person doctor, Campaign campaign,
+          List<TargetRollModifier> modifiers, int miscPenalty, boolean useEdge, boolean isUseKinderHealing) {
+        ActionCheckResult actionCheckResult;
+        SkillCheck skillCheck = doctor.checkSkill(S_SURGERY, campaign)
+                                      .withMiscModifier(miscPenalty)
+                                      .withExternalModifiers(modifiers);
+        String resourceBundleKey = "AdvancedMedicalAlternateHealing.assistedHealing.normal";
+        String reportText = getTextAt(RESOURCE_BUNDLE, resourceBundleKey);
+        actionCheckResult = skillCheck.resolve(false, reportText);
+
+        // Edge
+        if (isPermanentOutcome(actionCheckResult, isUseKinderHealing) && useEdge && doctor.getCurrentEdge() > 0) {
+            // manually update edge because if we pass useEdge == true, the doctor will get one free roll
+            doctor.spendEdge();
+            actionCheckResult = skillCheck.resolve(false, getTextAt(RESOURCE_BUNDLE,
+                  "AdvancedMedicalAlternateHealing.assistedHealing.edge"));
+        }
+        return actionCheckResult;
     }
 
     /**
@@ -402,24 +464,23 @@ public class AdvancedMedicalAlternateHealing {
      * @since 0.50.10
      */
     private static void processTaskAwardsAndPersonnelLogUpdates(LocalDate today, Person patient,
-          @Nullable Person doctor, Injury injury, int marginOfSuccess) {
-        if (marginOfSuccess >= 0) { // 0+ is a success, the injury will have been removed
-            if (doctor != null) {
+          @Nullable Person doctor, Injury injury, HealingMarginOfSuccessEffects marginOfSuccess) {
+        if (marginOfSuccess.isHealed()) {
+            if (doctor != null && !Objects.equals(doctor, patient)) {
                 doctor.changeNTasks(1);
-                PatientLogger.successfullyTreatedAltAdvancedMedical(doctor,
-                      patient,
-                      today,
-                      injury.getName());
+                PatientLogger.successfullyTreatedAltAdvancedMedical(doctor, patient, today, injury.getName());
             } else {
-                patient.changeNTasks(1); // Patient gets credit for their own medical prowess
-                PatientLogger.successfullyTreatedOwnInjuryAltAdvancedMedical(patient,
-                      today,
-                      injury.getName());
+                patient.changeNTasks(1);
+                PatientLogger.successfullyTreatedOwnInjuryAltAdvancedMedical(patient, today, injury.getName());
             }
-        } else if (marginOfSuccess > -6) { // Injury is taking longer to heal
-            MedicalLogger.unsuccessfullyTreatedAltAdvancedMedical(patient, today, injury.getName());
-        } else { // Injury has become permanent
+        }
+
+        if (marginOfSuccess.isPermanent()) {
             MedicalLogger.permanentInjuryAltAdvancedMedical(patient, today, injury.getName());
+        }
+
+        if (marginOfSuccess.isHasComplication()) {
+            MedicalLogger.medicalComplicationAltAdvancedMedical(patient, today, injury.getName());
         }
     }
 
@@ -431,39 +492,61 @@ public class AdvancedMedicalAlternateHealing {
      * fatigue is changed. If the effect indicates recovery, the injury is removed. If the effect indicates permanence,
      * the injury is marked permanent. Otherwise, the configured delay adjusts the injury's remaining healing time.</p>
      *
-     * @param isUseFatigue    {@code true} if fatigue effects from healing should be applied; {@code false} otherwise
-     * @param fatigueRate     the user-defined rate fatigue is gained
+     * @param campaign        the {@link Campaign} context
      * @param patient         the person undergoing healing
      * @param injury          the injury being updated
      * @param marginOfSuccess the final margin of success for the healing attempt
      *
+     * @return the {@link HealingMarginOfSuccessEffects} instance representing the healing outcome
+     *
      * @author Illiani
      * @since 0.50.10
      */
-    private static void processHealingEffects(boolean isUseFatigue, int fatigueRate, Person patient, Injury injury,
-          int marginOfSuccess, LocalDate today) {
-        HealingMarginOfSuccessEffects healingEffect = getEffectFromHealingAttempt(marginOfSuccess);
-        if (isUseFatigue) {
-            patient.changeFatigue(healingEffect.getFatigueDamage() * fatigueRate);
-        }
+    private static HealingMarginOfSuccessEffects processHealingEffects(Campaign campaign, Person patient, Injury injury,
+          int marginOfSuccess) {
+        boolean isUseKinderHealing = campaign.getCampaignOptions()
+                                           .get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL_FEWER_PERMANENT_INJURIES);
+        HealingMarginOfSuccessEffects healingEffect = getEffectFromHealingAttempt(marginOfSuccess, isUseKinderHealing);
 
+        // Some healing effects are mutually exclusive. These conditionals are constructed so we bypass illogical
+        // values.
+        LocalDate today = campaign.getLocalDate();
         if (healingEffect.isHealed()) {
             patient.removeInjury(injury, today);
 
             if (patient.getInjuries().isEmpty()) {
+                if (!(null == patient.getDoctorId()) && patient.getPrisonerStatus().isFreeOrBondsman()) {
+                    MedicalLogger.dismissedFromInfirmary(patient, campaign);
+                }
                 // AAM doesn't use 'days to wait for healing' so we just set it to '1.' If the player toggles AAM off,
                 // they will get a free day's worth of healing the next day, but that's not a huge issue.
                 patient.setDoctorId(null, 1); // Clear old doctor assignment, if any
             }
-
-            return;
+        } else {
+            if (healingEffect.isDelayed()) {
+                injury.changeTime(healingEffect.getHealingDelay(injury.getOriginalTime()));
+            } else if (healingEffect.isPermanent()) {
+                injury.setPermanent(true);
+            }
         }
 
-        if (healingEffect.isPermanent()) {
-            injury.setPermanent(true);
-            return;
+        // The following effects are universal and can apply even if the original injury is healed
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_FATIGUE)) {
+            int fatigueRate = campaign.getCampaignOptions().get(CampaignOption.FATIGUE_RATE);
+            patient.changeFatigue(healingEffect.getFatigueDamage() * fatigueRate);
         }
 
-        injury.changeTime(healingEffect.getHealingDelay(injury.getOriginalTime()));
+        if (healingEffect.isHasComplication()) {
+            patient.addInjury(createMedicalComplicationInjury(campaign, patient));
+            if (patient.getTotalInjurySeverity() >= DEATH) {
+                patient.changeStatus(campaign, today, MEDICAL_COMPLICATIONS);
+            }
+        }
+
+        return healingEffect;
+    }
+
+    private static Injury createMedicalComplicationInjury(Campaign campaign, Person person) {
+        return AlternateInjuries.MEDICAL_COMPLICATION.newInjury(campaign, person, GENERIC, 1);
     }
 }

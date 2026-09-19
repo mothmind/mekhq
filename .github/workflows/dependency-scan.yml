@@ -10,38 +10,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Data Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: megamek/mm-data
           path: mm-data
 
       - name: "Check out MekHQ"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: MekHQ
 
       - name: "Check out MegaMekLab"
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: MegaMek/megameklab
           ref: main
           path: megameklab
 
       - name: Checkout MegaMek
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: MegaMek/megamek
           ref: main
           path: megamek
 
-      - name: Set up Temurin JDK 17
-        uses: actions/setup-java@v5
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: Generate and submit dependency graph
-        uses: gradle/actions/dependency-submission@v6
+        uses: gradle/actions/dependency-submission@v6.3.0
         with:
           build-scan-publish: true
           build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"

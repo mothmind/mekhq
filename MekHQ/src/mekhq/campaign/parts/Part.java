@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 - Jay Lawson (jaylawson39 at yahoo.com). All Rights Reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,6 +34,7 @@
 package mekhq.campaign.parts;
 
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
+import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.io.PrintWriter;
 import java.text.DecimalFormat;
@@ -42,9 +43,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.ResourceBundle;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.UUID;
 
+import jakarta.annotation.Nonnull;
 import megamek.Version;
 import megamek.common.SimpleTechLevel;
 import megamek.common.TechAdvancement;
@@ -64,7 +67,12 @@ import megamek.common.units.Tank;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.LocalWarehouse;
 import mekhq.campaign.finances.Money;
+import mekhq.campaign.location.ILocatable;
+import mekhq.campaign.location.ILocation;
+import mekhq.campaign.location.IPlace;
+import mekhq.campaign.location.LocationNode;
 import mekhq.campaign.parts.enums.PartQuality;
 import mekhq.campaign.parts.enums.PartRepairType;
 import mekhq.campaign.parts.equipment.EquipmentPart;
@@ -89,6 +97,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Parts do the lions share of the work of repairing, salvaging, reloading, refueling, etc. for units. Each unit has an
@@ -104,7 +113,7 @@ import org.w3c.dom.NodeList;
  *
  * @author Jay Lawson (jaylawson39 at yahoo.com)
  */
-public abstract class Part implements IPartWork, ITechnology {
+public abstract class Part implements IPartWork, ITechnology, ILocatable {
     private static final MMLogger LOGGER = MMLogger.create(Part.class);
     private static final String RESOURCE_BUNDLE = "mekhq.resources.Parts";
 
@@ -120,6 +129,8 @@ public abstract class Part implements IPartWork, ITechnology {
                                                                     AvailabilityValue.C,
                                                                     AvailabilityValue.C)
                                                               .setStaticTechLevel(SimpleTechLevel.STANDARD);
+
+    private final LocationNode locationNode = new LocationNode(this);
 
     protected String name;
     protected int id;
@@ -148,6 +159,10 @@ public abstract class Part implements IPartWork, ITechnology {
 
     protected Person tech;
     private boolean isTeamSalvaging;
+    // when true, this (missing) part is being fabricated from scratch rather than replaced from stock
+    private boolean isFabricating;
+    // when true (and fabricating), a failed attempt is automatically retried until it succeeds
+    private boolean fabricateUntilSuccess;
 
     // null is valid. It indicates parts that are not attached to units.
     protected Unit unit;
@@ -234,7 +249,7 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     public String getQualityName() {
-        return quality.toName(campaign.getCampaignOptions().isReverseQualityNames());
+        return quality.toName(campaign.getCampaignOptions().get(CampaignOption.REVERSE_QUALITY_NAMES));
     }
 
     public void setId(int id) {
@@ -304,26 +319,26 @@ public abstract class Part implements IPartWork, ITechnology {
 
         switch (getTechBase()) {
             case IS:
-                cost = cost.multipliedBy(campaign.getCampaignOptions().getInnerSphereUnitPriceMultiplier());
+                cost = cost.multipliedBy(campaign.getCampaignOptions().get(CampaignOption.INNER_SPHERE_UNIT_PRICE_MULTIPLIER));
                 break;
             case CLAN:
-                cost = cost.multipliedBy(campaign.getCampaignOptions().getClanUnitPriceMultiplier());
+                cost = cost.multipliedBy(campaign.getCampaignOptions().get(CampaignOption.CLAN_UNIT_PRICE_MULTIPLIER));
                 break;
             case ALL:
             default:
-                cost = cost.multipliedBy(campaign.getCampaignOptions().getCommonPartPriceMultiplier());
+                cost = cost.multipliedBy(campaign.getCampaignOptions().get(CampaignOption.COMMON_PART_PRICE_MULTIPLIER));
                 break;
         }
 
         if (!isBrandNew()) {
             cost = cost.multipliedBy(campaign.getCampaignOptions()
-                                           .getUsedPartPriceMultipliers()[getQuality().toNumeric()]);
+                                           .get(CampaignOption.USED_PART_PRICE_MULTIPLIERS)[getQuality().toNumeric()]);
         }
 
         if (!ignoreDamage && needsFixing() && !isPriceAdjustedForAmount()) {
             cost = cost.multipliedBy((getSkillMin() > SkillType.EXP_LEGENDARY) ?
-                                           campaign.getCampaignOptions().getUnrepairablePartsValueMultiplier() :
-                                           campaign.getCampaignOptions().getDamagedPartsValueMultiplier());
+                                           campaign.getCampaignOptions().get(CampaignOption.UNREPAIRABLE_PARTS_VALUE_MULTIPLIER) :
+                                           campaign.getCampaignOptions().get(CampaignOption.DAMAGED_PARTS_VALUE_MULTIPLIER));
         }
 
         return cost;
@@ -331,6 +346,10 @@ public abstract class Part implements IPartWork, ITechnology {
 
     public boolean isBrandNew() {
         return brandNew;
+    }
+
+    public boolean isDamagedBeyondRepair() {
+        return getSkillMin() > SkillType.EXP_LEGENDARY;
     }
 
     public void setBrandNew(boolean b) {
@@ -378,6 +397,40 @@ public abstract class Part implements IPartWork, ITechnology {
 
     public void setOmniPodded(boolean omniPod) {
         this.omniPodded = omniPod;
+    }
+
+    @Override
+    public @Nonnull LocationNode getLocationNode() {
+        return locationNode;
+    }
+
+    /**
+     * A part installed on a unit lives wherever the unit is, so its place resolves through the unit's
+     * {@link LocationNode} chain; spares resolve via their own node.
+     */
+    @Override
+    public @Nullable IPlace getPlace() {
+        Unit unit = getUnit();
+        if (unit != null) {
+            return ILocation.findPlace(unit.getLocationNode());
+        }
+        return ILocation.findPlace(getLocationNode());
+    }
+
+    @Override
+    public @Nullable LocalWarehouse getWarehouse() {
+        IPlace place = getPlace();
+        return place != null ? place.getWarehouse() : campaign.getPlayerForce().getWarehouse();
+    }
+
+    @Override
+    public Set<Part> fetchPartsAtLocation() {
+        return Set.of(this);
+    }
+
+    public PartInventory getPartInventory(Part forPart) {
+        IPlace place = getPlace();
+        return place != null ? place.getPartInventory(forPart) : campaign.getPartInventory(forPart);
     }
 
     @Override
@@ -449,7 +502,7 @@ public abstract class Part implements IPartWork, ITechnology {
             toReturn.append(" (").append(tonnage).append(" ton)");
         }
 
-        if (!getCampaign().getCampaignOptions().isDestroyByMargin()) {
+        if (!getCampaign().getCampaignOptions().get(CampaignOption.DESTROY_BY_MARGIN)) {
             toReturn.append(" - ")
                   .append(ReportingUtilities.messageSurroundedBySpanWithColor(SkillType.getExperienceLevelColor(
                         getSkillMin()), SkillType.getExperienceLevelName(getSkillMin()) + "+"));
@@ -464,11 +517,28 @@ public abstract class Part implements IPartWork, ITechnology {
         if (this.isSalvaging()) {
             int inStock = 0;
             if (this instanceof mekhq.campaign.parts.equipment.AmmoBin ammoBin) {
-                if (campaign.getQuartermaster() != null) {
-                    inStock = campaign.getQuartermaster().getAmmoAvailable(ammoBin.getType());
+                LocalWarehouse localWarehouse = getWarehouse();
+                if (localWarehouse != null) {
+                    megamek.common.equipment.AmmoType ammoType = ammoBin.getType();
+                    boolean useAmmoByType = campaign.getCampaignOptions().get(CampaignOption.USE_AMMO_BY_TYPE);
+                    inStock = localWarehouse.streamSpareParts()
+                                    .filter(p -> p instanceof AmmoStorage
+                                                       && p.isPresent()
+                                                       && !p.isReservedForRefit())
+                                    .mapToInt(p -> {
+                                        AmmoStorage spare = (AmmoStorage) p;
+                                        if (spare.isSameAmmoType(ammoType)) {
+                                            return spare.getShots();
+                                        } else if (useAmmoByType && spare.isCompatibleAmmo(ammoType)) {
+                                            return mekhq.campaign.ForceQuartermaster.convertShots(
+                                                  spare.getType(), spare.getShots(), ammoType);
+                                        }
+                                        return 0;
+                                    })
+                                    .sum();
                 }
-            } else if (campaign.getWarehouse() != null) {
-                inStock = campaign.getWarehouse().getSparePartsCount(this);
+            } else if (getWarehouse() != null) {
+                inStock = getWarehouse().getSparePartsCount(this);
             }
             String inStockText = inStock == 0 ?
                                        ReportingUtilities.messageSurroundedBySpanWithColor(MekHQ.getMHQOptions()
@@ -483,7 +553,7 @@ public abstract class Part implements IPartWork, ITechnology {
             toReturn.append("<br>");
         }
 
-        if (getSkillMin() <= SkillType.EXP_LEGENDARY) {
+        if (!isDamagedBeyondRepair()) {
             toReturn.append(getTimeLeft())
                   .append(" minutes")
                   .append(null != getTech() ? " (scheduled)" : "")
@@ -493,6 +563,10 @@ public abstract class Part implements IPartWork, ITechnology {
             if (getMode() != WorkTime.NORMAL) {
                 toReturn.append(" <i>").append(getCurrentModeName()).append("</i>");
             }
+        } else {
+            toReturn.append(ReportingUtilities.messageSurroundedBySpanWithColor(
+                  MekHQ.getMHQOptions().getFontColorNegativeHexColor(),
+                  getTextAt(RESOURCE_BUNDLE, "Part.damaged.beyond.repair")));
         }
         toReturn.append("</html>");
         return toReturn.toString();
@@ -507,7 +581,7 @@ public abstract class Part implements IPartWork, ITechnology {
                   .append(" minutes")
                   .append(null != getTech() ? " (scheduled) " : "");
 
-            if (!getCampaign().getCampaignOptions().isDestroyByMargin()) {
+            if (!getCampaign().getCampaignOptions().get(CampaignOption.DESTROY_BY_MARGIN)) {
                 toReturn.append(" - <b>")
                       .append(ReportingUtilities.messageSurroundedBySpanWithColor(SkillType.getExperienceLevelColor(
                             getSkillMin()), SkillType.getExperienceLevelName(getSkillMin()) + "+"))
@@ -542,7 +616,7 @@ public abstract class Part implements IPartWork, ITechnology {
      * @return TechConstants tech level
      */
     public int getTechLevel() {
-        return getSimpleTechLevel().getCompoundTechLevel(campaign.getFaction().isClan());
+        return getSimpleTechLevel().getCompoundTechLevel(campaign.getPlayerForce().getFaction().isClan());
     }
 
     public SimpleTechLevel getSimpleTechLevel() {
@@ -617,7 +691,7 @@ public abstract class Part implements IPartWork, ITechnology {
     protected int writeToXMLBegin(final PrintWriter pw, int indent) {
         MHQXMLUtility.writeSimpleXMLOpenTag(pw, indent++, "part", "id", id, "type", getClass());
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "id", id);
-        MHQXMLUtility.writeSimpleXMLTag(pw, indent, "name", name);
+        MHQXMLUtility.writeSimpleXMLTag(pw, indent, "name", getName());
         if (omniPodded) {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "omniPodded", true);
         }
@@ -671,6 +745,14 @@ public abstract class Part implements IPartWork, ITechnology {
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "quality", quality.toNumeric());
         if (isTeamSalvaging) {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "isTeamSalvaging", true);
+        }
+
+        if (isFabricating) {
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "isFabricating", true);
+        }
+
+        if (fabricateUntilSuccess) {
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "fabricateUntilSuccess", true);
         }
 
         if (parentPart != null) {
@@ -844,6 +926,10 @@ public abstract class Part implements IPartWork, ITechnology {
                     retVal.workingOvertime = wn2.getTextContent().equalsIgnoreCase("true");
                 } else if (wn2.getNodeName().equalsIgnoreCase("isTeamSalvaging")) {
                     retVal.isTeamSalvaging = wn2.getTextContent().equalsIgnoreCase("true");
+                } else if (wn2.getNodeName().equalsIgnoreCase("isFabricating")) {
+                    retVal.isFabricating = wn2.getTextContent().equalsIgnoreCase("true");
+                } else if (wn2.getNodeName().equalsIgnoreCase("fabricateUntilSuccess")) {
+                    retVal.fabricateUntilSuccess = wn2.getTextContent().equalsIgnoreCase("true");
                 } else if (wn2.getNodeName().equalsIgnoreCase("brandNew")) {
                     retVal.brandNew = Boolean.parseBoolean(wn2.getTextContent().trim());
                 } else if (wn2.getNodeName().equalsIgnoreCase("replacementId")) {
@@ -965,7 +1051,7 @@ public abstract class Part implements IPartWork, ITechnology {
         }
 
         final TargetRoll mods = new TargetRoll(difficulty, "difficulty");
-        final int modeMod = getMode().getMod(getCampaign().getCampaignOptions().isDestroyByMargin());
+        final int modeMod = getMode().getMod(getCampaign().getCampaignOptions().get(CampaignOption.DESTROY_BY_MARGIN));
         if (modeMod != 0) {
             mods.addModifier(modeMod, getCurrentModeName());
         }
@@ -1030,7 +1116,7 @@ public abstract class Part implements IPartWork, ITechnology {
     public TargetRoll getAllModsForMaintenance() {
         // according to Campaign Ops [p.197] you get a -1 mod when performing a maintenance check on individual parts,
         // but we will make this user customizable
-        final TargetRoll mods = new TargetRoll(campaign.getCampaignOptions().getMaintenanceBonus(), "maintenance");
+        final TargetRoll mods = new TargetRoll(campaign.getCampaignOptions().get(CampaignOption.MAINTENANCE_BONUS), "maintenance");
         mods.addModifier(Availability.getTechModifier(getTechRating()),
               "tech rating " + getTechRating().getName());
 
@@ -1085,7 +1171,7 @@ public abstract class Part implements IPartWork, ITechnology {
             mods.addModifier(1, "prototype TSM");
         }
 
-        return getCampaign().getCampaignOptions().isUseQualityMaintenance() ?
+        return getCampaign().getCampaignOptions().get(CampaignOption.USE_QUALITY_MAINTENANCE) ?
                      getQualityMods(mods, getUnit().getTech()) :
                      mods;
     }
@@ -1135,10 +1221,45 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     /**
+     * @return {@code true} if this (missing) part is being fabricated from scratch rather than replaced from stock
+     */
+    public boolean isFabricating() {
+        return isFabricating;
+    }
+
+    /**
+     * Flags this part as being fabricated from scratch. Only meaningful for
+     * {@link mekhq.campaign.parts.missing.MissingPart} instances; other part types ignore the flag.
+     *
+     * @param isFabricating whether the part is being fabricated
+     */
+    public void setFabricating(final boolean isFabricating) {
+        this.isFabricating = isFabricating;
+    }
+
+    /**
+     * @return {@code true} if a failed fabrication attempt should be automatically retried until it succeeds. Only
+     *       meaningful while {@link #isFabricating()} is {@code true}.
+     */
+    public boolean isFabricateUntilSuccess() {
+        return fabricateUntilSuccess;
+    }
+
+    /**
+     * Sets whether a failed fabrication attempt is automatically retried until it succeeds.
+     *
+     * @param fabricateUntilSuccess whether to retry fabrication until success
+     */
+    public void setFabricateUntilSuccess(final boolean fabricateUntilSuccess) {
+        this.fabricateUntilSuccess = fabricateUntilSuccess;
+    }
+
+    /**
      * Gets the team member who has reserved this part for overnight work.
      *
      * @return the {@link Person} who reserved this part, or {@code null} if the part is not reserved
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public Person getReservedBy() {
         return reservedBy;
     }
@@ -1248,7 +1369,7 @@ public abstract class Part implements IPartWork, ITechnology {
 
         if (includeRepairDetails && hits > 0) {
             details.add(hits + (hits == 1 ? " hit" : " hits"));
-            if (campaign.getCampaignOptions().isPayForRepairs()) {
+            if (campaign.getCampaignOptions().get(CampaignOption.PAY_FOR_REPAIRS)) {
                 details.add(getActualValue().multipliedBy(0.2).toAmountAndSymbolString() + " to repair");
             }
         }
@@ -1379,6 +1500,12 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     @Override
+    public boolean canBeManuallyDispatched() {
+        // A part still in transit from a purchase hasn't arrived yet, and a reserved part is committed to work.
+        return isPresent() && !isReservedForRefit() && !isReservedForReplacement();
+    }
+
+    @Override
     public boolean isBeingWorkedOn() {
         return getTech() != null;
     }
@@ -1458,9 +1585,9 @@ public abstract class Part implements IPartWork, ITechnology {
         quantity = Math.max(number, 0);
         if (quantity == 0) {
             for (Part childPart : childParts) {
-                campaign.getWarehouse().removePart(childPart);
+                getWarehouse().removePart(childPart);
             }
-            campaign.getWarehouse().removePart(this);
+            getWarehouse().removePart(this);
         }
     }
 
@@ -1494,23 +1621,46 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     /**
+     * Returns the base quantity of this part for Parts In Use reporting, without checking whether the part is reserved
+     * or in use.
+     *
+     * <p>Returns {@code 1} if the part is assigned to a unit, or the part's stored quantity otherwise.</p>
+     *
+     * <p>Subclasses that track quantity differently (e.g. {@code Armor} using armor points, or {@code AmmoStorage}
+     * using shots) should override this method.</p>
+     *
+     * @return the base quantity of this part for reporting purposes
+     *
+     * @see #getQuantityForPartsInUse()
+     */
+    public int getBaseQuantityForPartsInUse() {
+        return (this.getUnit() != null) ? 1 : this.getQuantity();
+    }
+
+    /**
      * Gets the quantity of this part if it is currently in use (not available as a spare).
      *
-     * <p>This method returns {@code 0} if the part is available as a spare (determined by
-     * {@link #isPartUsedOrReserved()}).</p>
+     * <p>This method returns {@code 0} if {@link #isPartUsedOrReserved()} is {@code true}, which covers
+     * any of the following conditions:</p>
+     * <ul>
+     *     <li>The part is a sub-component of another part ({@code parentPart != null})</li>
+     *     <li>The part is reserved for a refit ({@code refitUnit != null})</li>
+     *     <li>The part is reserved by a technician for overnight work ({@code reservedBy != null})</li>
+     * </ul>
      *
-     * <p>Otherwise, it returns {@code 1} if the part is assigned to a unit, or the part's stored quantity if it is
-     * not.</p>
+     * <p>Otherwise, it delegates to {@link #getBaseQuantityForPartsInUse()}.</p>
      *
-     * @return {@code 0} if the part is available as a spare, {@code 1} if assigned to a unit, otherwise the part's
-     *       quantity
+     * @return {@code 0} if the part is reserved or a sub-component, otherwise the base quantity
+     *
+     * @see #isPartUsedOrReserved()
+     * @see #getBaseQuantityForPartsInUse()
      */
     public int getQuantityForPartsInUse() {
         if (isPartUsedOrReserved()) {
             return 0;
         }
 
-        return (this.getUnit() != null) ? 1 : this.getQuantity();
+        return getBaseQuantityForPartsInUse();
     }
 
     @Override
@@ -1527,7 +1677,7 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     public void resetDaysToWait() {
-        this.daysToWait = campaign.getCampaignOptions().getWaitingPeriod();
+        this.daysToWait = campaign.getCampaignOptions().get(CampaignOption.WAITING_PERIOD);
     }
 
     public void decrementDaysToWait() {
@@ -1788,7 +1938,7 @@ public abstract class Part implements IPartWork, ITechnology {
     }
 
     @Override
-    public TechRating getTechRating() {
+    public @Nonnull TechRating getTechRating() {
         return getTechAdvancement().getTechRating();
     }
 
@@ -1893,10 +2043,10 @@ public abstract class Part implements IPartWork, ITechnology {
     @Override
     public AvailabilityValue calcYearAvailability(int year, boolean clan) {
         AvailabilityValue av = getTechAdvancement().calcYearAvailability(campaign.getGameYear(),
-              campaign.getFaction().isClan());
+              campaign.getPlayerForce().getFaction().isClan());
         if (omniPodded) {
             AvailabilityValue podRating = TA_POD.calcYearAvailability(campaign.getGameYear(),
-                  campaign.getFaction().isClan());
+                  campaign.getPlayerForce().getFaction().isClan());
             if (podRating.isBetterThan(av)) {
                 av = podRating;
             }
@@ -1952,7 +2102,7 @@ public abstract class Part implements IPartWork, ITechnology {
     public void fixReferences(Campaign campaign) {
         if (replacementPart instanceof PartRef) {
             int id = replacementPart.getId();
-            replacementPart = campaign.getWarehouse().getPart(id);
+            replacementPart = getWarehouse().getPart(id);
             if ((replacementPart == null) && (id > 0)) {
                 LOGGER.error("Part {} ('{}') references missing replacement part {}", getId(), getName(), id);
             }
@@ -1960,7 +2110,7 @@ public abstract class Part implements IPartWork, ITechnology {
 
         if (parentPart instanceof PartRef) {
             int id = parentPart.getId();
-            parentPart = campaign.getWarehouse().getPart(id);
+            parentPart = getWarehouse().getPart(id);
             if ((parentPart == null) && (id > 0)) {
                 LOGGER.error("Part {} ('{}') references missing replacement part {}", getId(), getName(), id);
             }
@@ -1969,7 +2119,7 @@ public abstract class Part implements IPartWork, ITechnology {
         for (int ii = childParts.size() - 1; ii >= 0; --ii) {
             Part childPart = childParts.get(ii);
             if (childPart instanceof PartRef) {
-                Part realPart = campaign.getWarehouse().getPart(childPart.getId());
+                Part realPart = getWarehouse().getPart(childPart.getId());
                 if (realPart != null) {
                     childParts.set(ii, realPart);
                 } else if (childPart.getId() > 0) {
@@ -1984,14 +2134,14 @@ public abstract class Part implements IPartWork, ITechnology {
 
         if (tech instanceof PartPersonRef) {
             UUID id = tech.getId();
-            tech = campaign.getPerson(id);
+            tech = campaign.getPlayerForce().getHumanResources().getPerson(id);
             if (tech == null) {
                 LOGGER.error("Part {} ('{}') references missing tech {}", getId(), getName(), id);
             }
         }
         if (reservedBy instanceof PartPersonRef) {
             UUID id = reservedBy.getId();
-            reservedBy = campaign.getPerson(id);
+            reservedBy = campaign.getPlayerForce().getHumanResources().getPerson(id);
             if (reservedBy == null) {
                 LOGGER.error("Part {} ('{}') references missing tech (reservation) {}", getId(), getName(), id);
             }

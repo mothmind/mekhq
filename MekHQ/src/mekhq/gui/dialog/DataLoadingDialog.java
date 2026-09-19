@@ -34,6 +34,8 @@ package mekhq.gui.dialog;
 
 import static java.util.Arrays.sort;
 import static mekhq.campaign.enums.DailyReportType.POLITICS;
+import static mekhq.campaign.universe.warriorsAlmanac.WarriorsAlmanacEntry.buildAlmanacPartsData;
+import static mekhq.campaign.universe.warriorsAlmanac.WarriorsAlmanacEntry.buildAlmanacUnitsData;
 import static mekhq.gui.campaignOptions.CampaignOptionsDialog.CampaignOptionsDialogMode.STARTUP;
 import static mekhq.gui.campaignOptions.CampaignOptionsDialog.CampaignOptionsDialogMode.STARTUP_ABRIDGED;
 import static mekhq.utilities.EntityUtilities.isUnsupportedEntity;
@@ -44,15 +46,20 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.FileInputStream;
+import java.lang.reflect.InvocationTargetException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.JProgressBar;
+import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 
 import megamek.Version;
@@ -71,31 +78,33 @@ import mekhq.MHQStaticDirectoryManager;
 import mekhq.MekHQ;
 import mekhq.NullEntityException;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.CampaignEventProcessor;
 import mekhq.campaign.CampaignFactory;
-import mekhq.campaign.camOpsReputation.ReputationController;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.OptionsChangedEvent;
 import mekhq.campaign.finances.CurrencyManager;
 import mekhq.campaign.finances.financialInstitutions.FinancialInstitutions;
-import mekhq.campaign.market.enums.ContractMarketMethod;
-import mekhq.campaign.mission.atb.AtBScenarioModifier;
+import mekhq.campaign.market.PartsStore;
+import mekhq.campaign.mission.scenarios.atb.AtBScenarioModifier;
 import mekhq.campaign.personnel.Bloodname;
 import mekhq.campaign.personnel.SpecialAbility;
 import mekhq.campaign.personnel.backgrounds.RandomCompanyNameGenerator;
+import mekhq.campaign.personnel.divorce.AbstractDivorce;
+import mekhq.campaign.personnel.enums.PersonnelRole;
+import mekhq.campaign.personnel.marriage.AbstractMarriage;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryTypes;
+import mekhq.campaign.personnel.procreation.AbstractProcreation;
 import mekhq.campaign.personnel.ranks.Ranks;
 import mekhq.campaign.personnel.skills.SkillType;
-import mekhq.campaign.storyArc.StoryArc;
-import mekhq.campaign.storyArc.StoryArcStub;
+import mekhq.campaign.reputation.camOpsReputation.ForceReputationController;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Factions;
-import mekhq.campaign.universe.Planet;
 import mekhq.campaign.universe.Systems;
 import mekhq.campaign.universe.eras.Eras;
 import mekhq.campaign.universe.factionHints.WarAndPeaceProcessor;
 import mekhq.campaign.universe.factionStanding.FactionStandings;
 import mekhq.gui.baseComponents.AbstractMHQDialogBasic;
+import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.campaignOptions.CampaignOptionsDialog;
 import mekhq.gui.campaignOptions.CampaignOptionsDialog.CampaignOptionsDialogMode;
 import mekhq.gui.campaignOptions.CampaignOptionsPresetPicker;
@@ -109,25 +118,26 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
     private final Task task;
     private RawImagePanel splash;
     private JProgressBar progressBar;
-    private final StoryArcStub storyArcStub;
     private final boolean isInAppNewCampaign;
+    private final Consumer<Campaign> completionHandler;
 
-    private final LocalDate DEFAULT_START_DATE = LocalDate.of(3051, 1, 1);
+    private static final LocalDate DEFAULT_START_DATE = LocalDate.of(3151, 1, 1);
 
     // endregion Variable Declarations
 
     // region Constructors
-    public DataLoadingDialog(final JFrame frame, final MekHQ application, final @Nullable File campaignFile) {
-        this(frame, application, campaignFile, null, false);
+    public DataLoadingDialog(final JFrame frame, final MekHQ application, final @Nullable File campaignFile,
+          Consumer<Campaign> completionHandler) {
+        this(frame, application, campaignFile, false, completionHandler);
     }
 
     public DataLoadingDialog(final JFrame frame, final MekHQ application, final @Nullable File campaignFile,
-          StoryArcStub stub, final boolean isInAppNewCampaign) {
+          final boolean isInAppNewCampaign, Consumer<Campaign> completionHandler) {
         super(frame, "DataLoadingDialog", "DataLoadingDialog.title");
         this.application = application;
         this.campaignFile = campaignFile;
-        this.storyArcStub = stub;
         this.isInAppNewCampaign = isInAppNewCampaign;
+        this.completionHandler = completionHandler;
         this.task = new Task(this);
         getTask().addPropertyChangeListener(this);
         initialize();
@@ -177,12 +187,12 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
 
     @Override
     protected Container createCenterPane() {
-        setSplash(UIUtil.createSplashComponent(getApplication().getIconPackage().getLoadingScreenImages(), getFrame()));
+        setSplash(UIUtil.createSplashComponent(getApplication().getIconPackage().getLoadingScreenImages(), this));
         return getSplash();
     }
 
     private JProgressBar createProgressBar() {
-        setProgressBar(new JProgressBar(0, 7));
+        setProgressBar(new JProgressBar(0, 8));
         getProgressBar().setString(resources.getString("loadingBaseData.text"));
         getProgressBar().setValue(0);
         getProgressBar().setStringPainted(true);
@@ -196,7 +206,7 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
         setSize(getSplash().getPreferredSize());
         pack();
         fitAndCenter();
-        getFrame().setVisible(true);
+        setVisible(true);
     }
     // endregion Initialization
 
@@ -235,6 +245,9 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                 progressBar.setString(resources.getString((getCampaignFile() == null) ?
                                                                 "applyingNewCampaign.text" :
                                                                 "applyingLoadedCampaign.text"));
+                break;
+            case 8:
+                progressBar.setString(resources.getString("performingFinalSteps.text"));
                 break;
             default:
                 progressBar.setString(resources.getString("Error.text"));
@@ -303,7 +316,7 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
 
             // region progress 3
             setProgress(3);
-            Systems.setInstance(Systems.loadDefault());
+            Systems.initializeDefaultSystems();
             // endregion Progress 3
 
             // region progress 4
@@ -358,34 +371,50 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                 campaign.getGameOptions().getOption(OptionsConstants.ALLOWED_YEAR).setValue(campaign.getGameYear());
 
                 CampaignOptionsDialogMode mode = isSelect ? STARTUP_ABRIDGED : STARTUP;
-                CampaignOptionsDialog optionsDialog = new CampaignOptionsDialog(getFrame(), campaign, preset, mode);
-                setVisible(false); // cede visibility to `optionsDialog`
-                optionsDialog.setVisible(true);
-                if (optionsDialog.wasCanceled()) {
+                // This method runs in a worker thread, but the construction of the UI for Campaign Options must run on
+                // the EDT, so dispatch it there using invokeAndWait.
+                final boolean[] optionsCanceled = { false };
+                try {
+                    SwingUtilities.invokeAndWait(
+                          () -> optionsCanceled[0] = showStartupCampaignOptionsDialog(campaign, preset, mode));
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
                     return null;
-                } else {
-                    setVisible(true); // restore loader visibility
+                } catch (InvocationTargetException exception) {
+                    // Let a genuine UI-construction failure propagate through the worker so done() reports it via its
+                    // ExecutionException handling, rather than returning null (which looks like a normal cancel and
+                    // silently hides the error). The Runnable can only fail with an unchecked throwable, so unwrap the
+                    // cause to keep done()'s per-type error dialogs working.
+                    LOGGER.error("Failed to display the Campaign Options dialog", exception);
+                    if (exception.getCause() instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    if (exception.getCause() instanceof Error error) {
+                        throw error;
+                    }
+                    throw exception;
+                }
+                if (optionsCanceled[0]) {
+                    return null;
                 }
 
-                // Starting planet
-                Planet startingPlanet = (preset == null) ? null : preset.getPlanet();
-                // If the player hasn't set a starting planet in the preset, use the default for their chosen faction
-                if (startingPlanet == null) {
-                    startingPlanet = campaign.getNewCampaignStartingPlanet();
+                // Starting planet: the campaign options General page resolves and sets the starting system during
+                // apply. A preset with a pinned planet overrides that choice.
+                if ((preset != null) && (preset.getPlanet() != null)) {
+                    campaign.setStartingSystem(preset.getPlanet());
                 }
-                campaign.setStartingSystem(startingPlanet);
 
                 // initialize reputation
-                ReputationController reputationController = new ReputationController();
+                ForceReputationController reputationController = new ForceReputationController();
                 reputationController.initializeReputation(campaign);
-                campaign.setReputation(reputationController);
+                campaign.getPlayerForce().setCamOpsReputation(reputationController);
 
                 // initialize starting faction standings
                 CampaignOptions campaignOptions = campaign.getCampaignOptions();
-                if (campaignOptions.isTrackFactionStanding()) {
-                    FactionStandings factionStandings = campaign.getFactionStandings();
-                    String report = factionStandings.updateClimateRegard(campaign.getFaction(),
-                          campaign.getLocalDate(), campaignOptions.getRegardMultiplier(),
+                if (campaignOptions.get(CampaignOption.TRACK_FACTION_STANDING)) {
+                    FactionStandings factionStandings = campaign.getPlayerForce().getFactionStandings();
+                    String report = factionStandings.updateClimateRegard(campaign.getPlayerForce().getFaction(),
+                          campaign.getLocalDate(), campaignOptions.get(CampaignOption.REGARD_MULTIPLIER),
                           true);
                     campaign.addReport(POLITICS, report);
                 }
@@ -398,25 +427,25 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                                            "</b>");
 
                 // Setup Personnel Modules
-                campaign.setMarriage(campaignOptions
-                                           .getRandomMarriageMethod()
-                                           .getMethod(campaignOptions));
-                campaign.setDivorce(campaignOptions
-                                          .getRandomDivorceMethod()
-                                          .getMethod(campaignOptions));
-                campaign.setProcreation(campaignOptions
-                                              .getRandomProcreationMethod()
-                                              .getMethod(campaignOptions));
+                final AbstractMarriage marriage = campaignOptions
+                                                        .get(CampaignOption.RANDOM_MARRIAGE_METHOD)
+                                                        .getMethod(campaignOptions);
+                campaign.getPlayerForce().getHumanResources().setMarriage(marriage);
+                final AbstractDivorce divorce = campaignOptions
+                                                      .get(CampaignOption.RANDOM_DIVORCE_METHOD)
+                                                      .getMethod(campaignOptions);
+                campaign.getPlayerForce().getHumanResources().setDivorce(divorce);
+                final AbstractProcreation procreation = campaignOptions
+                                                              .get(CampaignOption.RANDOM_PROCREATION_METHOD)
+                                                              .getMethod(campaignOptions);
+                campaign.getPlayerForce().getHumanResources().setProcreation(procreation);
 
                 // Setup Markets
-                campaign.refreshPersonnelMarkets(true);
-                ContractMarketMethod contractMarketMethod = campaignOptions.getContractMarketMethod();
-                campaign.setContractMarket(contractMarketMethod.getContractMarket());
-                if (!contractMarketMethod.isNone()) {
-                    campaign.getContractMarket().generateContractOffers(campaign, true);
-                }
-                if (!campaignOptions.getUnitMarketMethod().isNone()) {
-                    campaign.setUnitMarket(campaignOptions.getUnitMarketMethod().getUnitMarket());
+                campaign.getPlayerForce().getHumanResources().refreshApplicants(campaign, true);
+                showRarePersonnelDialog(campaign, true);
+
+                if (!campaignOptions.get(CampaignOption.UNIT_MARKET_METHOD).isNone()) {
+                    campaign.setUnitMarket(campaignOptions.get(CampaignOption.UNIT_MARKET_METHOD).getUnitMarket());
                     campaign.getUnitMarket().generateUnitOffers(campaign);
                 }
 
@@ -428,7 +457,7 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                 campaign.setGMMode((preset == null) || preset.isGM());
 
                 // AtB
-                if (campaignOptions.isUseAtB()) {
+                if (campaignOptions.isUseStratCon()) {
                     campaign.initAtB(true);
                 }
 
@@ -465,19 +494,25 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                 // This needs to be the final stage in Progress 7 as otherwise the display of any confirmation
                 // dialogs will get 'stuck' behind other dialogs
                 if (campaignVersion.isLowerThan(MHQConstants.VERSION)) {
-                    handleCampaignUpgrading(campaign);
+                    handleCampaignUpgrading(application, campaign);
                 }
                 // endregion Progress 7
             }
 
+            // region progress 8
+            setProgress(8);
+
+            PartsStore partsStore = campaign.getPartsStore();
+            // Parts carry separate Inner Sphere and Clan tech dates; use the player force's perspective.
+            boolean isClanForce = campaign.getPlayerForce().isClanForce();
+            campaign.setPartsAlmanac(buildAlmanacPartsData(partsStore, isClanForce));
+            campaign.setUnitsAlmanac(buildAlmanacUnitsData());
+
             if (isNewCampaign) {
                 new WarAndPeaceProcessor(campaign, true);
             }
+            // endregion Progress 8
 
-            // Generic event processor
-            campaign.setCampaignEventProcessor(new CampaignEventProcessor(campaign));
-
-            campaign.setApp(getApplication());
             return campaign;
         }
 
@@ -495,13 +530,39 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
          * <p><b>Note:</b> This method should not be called from the Event Dispatch Thread (EDT), as it will block
          * the thread until the upgrade is finished.</p>
          *
+         * @param app      the application context
          * @param campaign the {@link Campaign} instance to be upgraded
          *
          * @author Illiani
          * @since 0.50.07
          */
-        private static void handleCampaignUpgrading(Campaign campaign) {
-            CampaignUpgradeDialog.campaignUpgradeDialog(campaign);
+        private static void handleCampaignUpgrading(MekHQ app, Campaign campaign) {
+            CampaignUpgradeDialog.campaignUpgradeDialog(app, campaign);
+        }
+
+        /**
+         * Builds and shows the modal Campaign Options dialog for a brand-new campaign, then reports whether the user
+         * canceled it.
+         *
+         * <p>Must run on the Event Dispatch Thread (it is invoked through {@link SwingUtilities#invokeAndWait} from
+         * the worker thread) because it constructs the dialog's entire Swing component tree.</p>
+         *
+         * @param campaign the new campaign being configured
+         * @param preset   the preset to seed the dialog with, or {@code null}
+         * @param mode     the dialog mode (abridged or full startup)
+         *
+         * @return {@code true} if the user canceled the dialog; {@code false} if the settings were applied
+         */
+        private boolean showStartupCampaignOptionsDialog(final Campaign campaign, final @Nullable CampaignPreset preset,
+              final CampaignOptionsDialogMode mode) {
+            final CampaignOptionsDialog optionsDialog = new CampaignOptionsDialog(getFrame(), campaign, preset, mode);
+            setVisible(false); // cede visibility to `optionsDialog`
+            optionsDialog.setVisible(true);
+            if (optionsDialog.wasCanceled()) {
+                return true;
+            }
+            setVisible(true); // restore loader visibility
+            return false;
         }
 
         /**
@@ -515,6 +576,42 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
          *
          * @param units The {@link Collection} of {@link Unit} instances to process. Must not be {@code null}.
          */
+        private static void showRarePersonnelDialog(Campaign campaign, boolean isCampaignStart) {
+            if (!campaign.getPlayerForce().getHumanResources().getNewPersonnelMarket().getHasRarePersonnel()) {
+                return;
+            }
+
+            StringBuilder oocReport = new StringBuilder(
+                  campaign.getResources().getString("personnelMarket.rareProfession.outOfCharacter"));
+            for (PersonnelRole profession : campaign.getPlayerForce().getHumanResources().getNewPersonnelMarket().getRareProfessions()) {
+                oocReport.append("<p>- ").append(profession.getLabel(campaign.getPlayerForce().isClanForce())).append("</p>");
+            }
+
+            List<String> buttons = new ArrayList<>();
+            buttons.add(campaign.getResources().getString("personnelMarket.rareProfession.button.later"));
+            buttons.add(campaign.getResources().getString("personnelMarket.rareProfession.button.decline"));
+            if (!isCampaignStart) {
+                buttons.add(campaign.getResources().getString("personnelMarket.rareProfession.button.immediate"));
+            }
+
+            ImmersiveDialogSimple dialog = new ImmersiveDialogSimple(campaign,
+                  campaign.getPlayerForce()
+                        .getHumanResources()
+                        .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                              campaign.getPlayerForce().isClanForce(),
+                              campaign.getLocalDate()),
+                  null,
+                  campaign.getResources().getString("personnelMarket.rareProfession.inCharacter"),
+                  buttons,
+                  oocReport.toString(),
+                  null,
+                  true);
+
+            if (dialog.getDialogChoice() == 2) {
+                campaign.getPlayerForce().getHumanResources().getNewPersonnelMarket().showPersonnelMarketDialog();
+            }
+        }
+
         private void unassignCrewFromUnsupportedUnits(Collection<Unit> units) {
             for (Unit unit : units) {
                 Entity entity = unit.getEntity();
@@ -534,11 +631,12 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
          */
         @Override
         public void done() {
-            Campaign campaign;
+            setVisible(false);
             try {
-                campaign = get();
+                Campaign campaign = get();
+                completionHandler.accept(campaign);
             } catch (InterruptedException | CancellationException ignored) {
-                campaign = null;
+                completionHandler.accept(null);
             } catch (ExecutionException ex) {
                 LOGGER.error("", ex);
                 if (ex.getCause() instanceof NullEntityException) {
@@ -564,24 +662,7 @@ public class DataLoadingDialog extends AbstractMHQDialogBasic implements Propert
                           resources.getString("DataLoadingDialog.ExecutionException.title"),
                           JOptionPane.ERROR_MESSAGE);
                 }
-                campaign = null;
-            }
-
-            setVisible(false);
-            if (campaign != null) {
-                getApplication().setCampaign(campaign);
-                getApplication().getCampaignController().setHost(campaign.getId());
-                getApplication().showNewView();
-                getFrame().dispose();
-                if (null != storyArcStub) {
-                    StoryArc storyArc = storyArcStub.loadStoryArc(campaign);
-                    if (null != storyArc) {
-                        campaign.useStoryArc(storyArc, true);
-                    }
-                }
-            } else {
-                cancel(true);
-                getFrame().setVisible(true);
+                completionHandler.accept(null);
             }
         }
     }

@@ -46,8 +46,7 @@ import javax.xml.parsers.DocumentBuilder;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.Contract;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.PlanetarySystem;
@@ -132,6 +131,7 @@ public class CurrencyManager extends CurrencyUnitDataProvider {
         return this.uiAmountAndSymbolPrinter;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     MoneyFormatter getUiAmountAndNamePrinter() {
         return this.uiAmountAndNamePrinter;
     }
@@ -169,15 +169,13 @@ public class CurrencyManager extends CurrencyUnitDataProvider {
             }
 
             // Use the currency of the Faction in any of our contracts, if it exists
-            for (Contract contract : this.campaign.getActiveContracts()) {
-                if (contract instanceof AtBContract) {
-                    Currency currency = possibleCurrencies.getOrDefault(Factions.getInstance()
-                                                                              .getFaction(((AtBContract) contract).getEmployerCode())
-                                                                              .getCurrencyCode(), null);
+            for (AbstractContract contract : this.campaign.getActiveContracts()) {
+                Currency currency = possibleCurrencies.getOrDefault(Factions.getInstance()
+                                                                          .getFaction(contract.getEmployerFactionCode())
+                                                                          .getCurrencyCode(), null);
 
-                    if (currency != null) {
-                        return defaultCurrency = currency;
-                    }
+                if (currency != null) {
+                    return defaultCurrency = currency;
                 }
             }
 

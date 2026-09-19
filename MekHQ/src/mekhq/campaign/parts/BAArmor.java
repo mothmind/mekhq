@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -39,18 +39,21 @@ import megamek.common.equipment.ArmorType;
 import megamek.common.equipment.EquipmentType;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.finances.Money;
+import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.work.IAcquisitionWork;
 
 /**
  * @author Jay Lawson (jaylawson39 at yahoo.com)
  */
 public class BAArmor extends Armor {
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static boolean canBeClan(int type) {
         return type == EquipmentType.T_ARMOR_BA_STANDARD || type == EquipmentType.T_ARMOR_BA_STEALTH_BASIC
                      || type == EquipmentType.T_ARMOR_BA_STEALTH_IMP || type == EquipmentType.T_ARMOR_BA_STEALTH
                      || type == EquipmentType.T_ARMOR_BA_FIRE_RESIST;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static boolean canBeIs(int type) {
         return type != EquipmentType.T_ARMOR_BA_FIRE_RESIST;
     }
@@ -66,6 +69,11 @@ public class BAArmor extends Armor {
     public BAArmor(int tonnage, int points, int type, int loc, boolean clan, Campaign c) {
         // Amount is used for armor quantity, not tonnage
         super(tonnage, type, points, loc, false, clan, c);
+    }
+
+    @Override
+    public boolean isRightTechType(String skillType) {
+        return skillType.equals(SkillType.S_TECH_BA);
     }
 
     @Override
@@ -151,7 +159,7 @@ public class BAArmor extends Armor {
 
     @Override
     public int getAmountAvailable() {
-        return campaign.getWarehouse()
+        return getWarehouse()
                      .streamSpareParts()
                      .filter(this::isSameBAArmorPart)
                      .mapToInt(part -> ((BAArmor) part).getAmount())
@@ -160,14 +168,14 @@ public class BAArmor extends Armor {
 
     @Override
     protected int changeAmountAvailableSingle(int amount) {
-        BAArmor armor = (BAArmor) campaign.getWarehouse()
+        BAArmor armor = (BAArmor) getWarehouse()
                                         .findSparePart(part -> isSamePartType(part) && part.isPresent());
 
         if (null != armor) {
             int amountRemaining = armor.getAmount() + amount;
             armor.setAmount(amountRemaining);
             if (armor.getAmount() <= 0) {
-                campaign.getWarehouse().removePart(armor);
+                getWarehouse().removePart(armor);
                 return Math.min(0, amountRemaining);
             }
         } else if (amount > 0) {

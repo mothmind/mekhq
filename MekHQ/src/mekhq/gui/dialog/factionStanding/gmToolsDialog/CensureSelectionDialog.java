@@ -74,7 +74,7 @@ import mekhq.campaign.universe.factionStanding.FactionCensureLevel;
 import mekhq.campaign.universe.factionStanding.FactionStandings;
 import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
-import mekhq.gui.dialog.glossary.NewGlossaryDialog;
+import mekhq.gui.dialog.glossary.GlossaryDialog;
 
 /**
  * {@link CensureSelectionDialog} is a modal dialog allowing a user to select a faction and a censure action for that
@@ -210,10 +210,10 @@ public class CensureSelectionDialog extends JDialog {
         activeFactions.sort(Comparator.comparing(faction -> faction.getFullName(today.getYear())));
 
         Faction piracySuccessIndex = factions.getFaction("PSI");
-        activeFactions.add(0, piracySuccessIndex);
+        activeFactions.addFirst(piracySuccessIndex);
 
         Faction mercenaryOrganization = Faction.getActiveMercenaryOrganization(today.getYear());
-        activeFactions.add(0, mercenaryOrganization);
+        activeFactions.addFirst(mercenaryOrganization);
 
         allFactions.clear();
         allFactions.addAll(activeFactions);
@@ -490,7 +490,7 @@ public class CensureSelectionDialog extends JDialog {
      */
     private void hyperlinkEventListenerActions(HyperlinkEvent evt) {
         if (evt.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
-            NewGlossaryDialog.handleGlossaryHyperlinkClick(this, evt);
+            GlossaryDialog.handleGlossaryHyperlinkClick(this, evt);
         }
     }
 }

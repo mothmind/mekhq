@@ -53,15 +53,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import megamek.common.equipment.MiscType;
 import megamek.common.units.Entity;
 import megamek.common.units.Mek;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.force.CombatTeam;
 import mekhq.campaign.force.Formation;
+import mekhq.campaign.location.IPlace;
 import mekhq.campaign.market.PartsInUseManager;
 import mekhq.campaign.market.procurement.Procurement;
-import mekhq.campaign.mission.AtBContract;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.parts.*;
 import mekhq.campaign.parts.enums.PartQuality;
 import mekhq.campaign.parts.equipment.AmmoBin;
@@ -92,7 +95,7 @@ import mekhq.campaign.universe.factionStanding.FactionStandings;
  */
 public class Resupply {
     private final Campaign campaign;
-    private final AtBContract contract;
+    private final AbstractContract contract;
     private final ResupplyType resupplyType;
     private final Faction employerFaction;
     private final int currentYear;
@@ -131,7 +134,7 @@ public class Resupply {
      * @param campaign The current campaign.
      * @param contract The specific contract under which the resupply process is conducted.
      */
-    public Resupply(Campaign campaign, AtBContract contract, ResupplyType resupplyType) {
+    public Resupply(Campaign campaign, AbstractContract contract, ResupplyType resupplyType) {
         this.campaign = campaign;
         this.contract = contract;
         this.resupplyType = resupplyType;
@@ -168,9 +171,9 @@ public class Resupply {
     /**
      * Retrieves the current contract associated with the resupply operation.
      *
-     * @return An {@link AtBContract} representing the current contract.
+     * @return An {@link AbstractContract} representing the current contract.
      */
-    public AtBContract getContract() {
+    public AbstractContract getContract() {
         return contract;
     }
 
@@ -402,14 +405,15 @@ public class Resupply {
         this.usePlayerConvoy = usePlayerConvoy;
     }
 
-    static int calculateTargetCargoTonnage(Campaign campaign, AtBContract contract) {
+    static int calculateTargetCargoTonnage(Campaign campaign, AbstractContract contract) {
         double unitTonnage = 0;
 
         // First, calculate the total tonnage across all combat units in the campaign.
         // We define a 'combat unit' as any unit not flagged as non-combat who is both in a Combat
         // Team and not in a Force flagged as non-combat
-        for (CombatTeam formation : campaign.getCombatTeamsAsMap().values()) {
-            Formation force = campaign.getFormation(formation.getFormationId());
+        for (CombatTeam formation : campaign.getPlayerForce().getCombatTeamsAsMap(campaign).values()) {
+            int id = formation.getFormationId();
+            Formation force = campaign.getPlayerForce().getFormation(id);
 
             if (force == null) {
                 continue;
@@ -420,7 +424,7 @@ public class Resupply {
             }
 
             for (UUID unitId : force.getAllUnits(true)) {
-                Entity entity = getEntityFromUnitId(campaign.getHangar(), unitId);
+                Entity entity = getEntityFromUnitId(campaign.getPlayerForce().getHangar(), unitId);
 
                 if (entity == null) {
                     continue;
@@ -435,11 +439,13 @@ public class Resupply {
         }
 
         // Next, we determine the tonnage cap. This is the maximum tonnage the employer is willing to support.
-        double dropSize = getDropSize(contract, unitTonnage);
+        boolean includeBSPInScale = campaign.getCampaignOptions()
+                                          .get(CampaignOption.USE_CHAOS_SCALE_SUPPORT_POINT_CONVERSION);
+        double dropSize = getDropSize(contract, unitTonnage, includeBSPInScale);
 
         if (campaign.getCampaignOptions().isUseFactionStandingResupplySafe()) {
-            FactionStandings standings = campaign.getFactionStandings();
-            double regard = standings.getRegardForFaction(contract.getEmployerCode(), true);
+            FactionStandings standings = campaign.getPlayerForce().getFactionStandings();
+            double regard = standings.getRegardForFaction(contract.getEmployerFactionCode(), true);
             double resupplyMultiplier = FactionStandingUtilities.getResupplyWeightModifier(regard);
             dropSize *= resupplyMultiplier;
         }
@@ -447,9 +453,9 @@ public class Resupply {
         return (int) max(CARGO_MINIMUM_WEIGHT, round(dropSize));
     }
 
-    private static double getDropSize(AtBContract contract, double unitTonnage) {
-        final int INDIVIDUAL_TONNAGE_ALLOWANCE = 80; // This is how many tons the employer will budget per unit
-        final int tonnageCap = contract.getRequiredCombatElements() * INDIVIDUAL_TONNAGE_ALLOWANCE;
+    private static double getDropSize(AbstractContract contract, double unitTonnage, boolean isIncludeBSP) {
+        final int INDIVIDUAL_TONNAGE_ALLOWANCE = isIncludeBSP ? 80 * 12 : 80 * 4;
+        final int tonnageCap = contract.getScale() * INDIVIDUAL_TONNAGE_ALLOWANCE;
 
         // Then we determine the size of each individual 'drop'. This uses the lowest of
         // unitTonnage and tonnageCap and divides that by 100
@@ -462,16 +468,19 @@ public class Resupply {
     /**
      * Determines if the given entity is a prohibited unit type based on specific criteria.
      *
-     * @param entity                       the entity to check for prohibited unit type
-     * @param excludeDropShipsFromCheck    if true, DropShip entities are excluded from being considered prohibited
-     * @param excludeSuperHeaviesFromCheck if true, Super Heavy entities are excluded from being considered prohibited
+     * @param entity                                 the entity to check for prohibited unit type
+     * @param excludeSmallCraftAndDropShipsFromCheck if true, Small Craft and DropShip entities are excluded from being
+     *                                               considered prohibited
+     * @param excludeSuperHeaviesFromCheck           if true, Super Heavy entities are excluded from being considered
+     *                                               prohibited
      *
      * @return {@code true} if the entity is a prohibited unit type such as Small Craft, Large Craft, or Conventional
      *       Infantry, and not excluded by the specified parameters; {@code false} otherwise
      */
-    public static boolean isProhibitedUnitType(Entity entity, boolean excludeDropShipsFromCheck,
+    public static boolean isProhibitedUnitType(Entity entity, boolean excludeSmallCraftAndDropShipsFromCheck,
           boolean excludeSuperHeaviesFromCheck) {
-        if (entity.isDropShip() && excludeDropShipsFromCheck) {
+        boolean isSmallCraftOrDropShip = entity.isSmallCraft() || entity.isDropShip();
+        if (isSmallCraftOrDropShip && excludeSmallCraftAndDropShipsFromCheck) {
             return false;
         }
 
@@ -479,7 +488,7 @@ public class Resupply {
             return false;
         }
 
-        return entity.isSmallCraft() || entity.isLargeCraft() || entity.isConventionalInfantry();
+        return entity.isLargeCraft() || entity.isConventionalInfantry();
     }
 
     /**
@@ -553,15 +562,21 @@ public class Resupply {
      */
 
     private Map<Part, PartDetails> collectParts() {
-        PartsInUseManager partsInUseManager = new PartsInUseManager(campaign);
-        Set<PartInUse> partsInUse = partsInUseManager.getPartsInUse(true, true, PartQuality.QUALITY_A);
+        Set<PartInUse> partsInUse = collectPartsInUseAcrossLocations();
 
-        Faction campaignFaction = campaign.getFaction();
+        Faction campaignFaction = campaign.getPlayerForce().getFaction();
         LocalDate today = campaign.getLocalDate();
         boolean removeClan = !campaignFaction.isClan() && today.isBefore(BATTLE_OF_TUKAYYID);
 
         Set<PartInUse> partsToRemove = new HashSet<>();
         for (PartInUse partInUse : partsInUse) {
+            // Only resupply what the player actually fields. A use count of zero means the part is not
+            // mounted on any active unit and is only present as warehouse salvage.
+            if (partInUse.getUseCount() == 0) {
+                partsToRemove.add(partInUse);
+                continue;
+            }
+
             Part part = partInUse.getPartToBuy().getAcquisitionPart();
             if (removeClan && (part.isClan() || part.isMixedTech())) {
                 partsToRemove.add(partInUse);
@@ -576,6 +591,41 @@ public class Resupply {
         partsInUse.removeAll(partsToRemove);
 
         return applyWarehouseWeightModifiers(partsInUse);
+    }
+
+    /**
+     * Gathers the parts in use from the main force and every base into a single set, accumulating the per-location
+     * counts for parts that appear in more than one location.
+     */
+    private Set<PartInUse> collectPartsInUseAcrossLocations() {
+        List<IPlace> places = new ArrayList<>();
+        places.add(campaign.getPlayerForce().getForceDetachment());
+        places.addAll(campaign.getCampaignLocationManager().getPlayerBases());
+
+        Map<PartInUse, PartInUse> merged = new HashMap<>();
+        for (IPlace place : places) {
+            PartsInUseManager partsInUseManager = new PartsInUseManager(campaign, place);
+            for (PartInUse partInUse : partsInUseManager.getPartsInUse(true, true, PartQuality.QUALITY_A)) {
+                mergePartInUse(merged, partInUse);
+            }
+        }
+        return new HashSet<>(merged.values());
+    }
+
+    /**
+     * Adds {@code incoming} to {@code merged}, or accumulates its per-location counts onto the existing entry for the
+     * same part. Planned count comes from the campaign-wide shopping list and is identical for every location, so it is
+     * not summed.
+     */
+    private static void mergePartInUse(Map<PartInUse, PartInUse> merged, PartInUse incoming) {
+        PartInUse existing = merged.get(incoming);
+        if (existing == null) {
+            merged.put(incoming, incoming);
+            return;
+        }
+        existing.setUseCount(existing.getUseCount() + incoming.getUseCount());
+        existing.setStoreCount(existing.getStoreCount() + incoming.getStoreCount());
+        existing.setTransferCount(existing.getTransferCount() + incoming.getTransferCount());
     }
 
     /**
@@ -603,8 +653,11 @@ public class Resupply {
      * @return {@code true} if the part is in the exclusion list, {@code false} otherwise.
      */
     private boolean checkExclusionList(Part part) {
-        if (part instanceof EquipmentPart equipmentPart) {
-            return equipmentPart.getType().hasFlag(F_SPONSON_TURRET);
+        // F_SPONSON_TURRET is a MiscType flag, so only check it when the underlying type is actually a
+        // MiscType. This correctly excludes EquipmentParts backed by other types (AmmoType, WeaponType, etc.).
+        if (part instanceof EquipmentPart equipmentPart &&
+                  equipmentPart.getType() instanceof MiscType miscType) {
+            return miscType.hasFlag(F_SPONSON_TURRET);
         }
         return false;
     }
@@ -770,23 +823,14 @@ public class Resupply {
      */
     private static boolean checkEquipmentSubType(Part part) {
         if (part instanceof EquipmentPart) {
-            if (part instanceof AmmoBin) {
-                return false;
-            }
+            return switch (part) {
+                case AmmoBin ignored -> false;
+                case AmmoStorage ignored -> false;
+                case BattleArmorEquipmentPart ignored -> false;
+                case HeatSink ignored -> false;
+                default -> !(part instanceof JumpJet);
+            };
 
-            if (part instanceof AmmoStorage) {
-                return false;
-            }
-
-            if (part instanceof BattleArmorEquipmentPart) {
-                return false;
-            }
-
-            if (part instanceof HeatSink) {
-                return false;
-            }
-
-            return !(part instanceof JumpJet);
         }
 
         return true;
@@ -795,20 +839,23 @@ public class Resupply {
     /**
      * Calculates the negotiation skill level by selecting the most qualified negotiator in the current campaign. If the
      * contract type is classified as guerrilla warfare, the flagged commander is prioritized. Otherwise,
-     * Admin/Logistics personnel are evaluated.
+     * Admin personnel are evaluated.
      */
     private void calculateNegotiationSkill() {
         Person negotiator;
         negotiatorSkill = NONE.ordinal();
 
-        if (contract.getContractType().isGuerrillaType() || PIRATE_FACTION_CODE.equals(contract.getEmployerCode())) {
-            negotiator = campaign.getCommander();
+        if (contract.getObjectiveType().isGuerrillaType() ||
+                  PIRATE_FACTION_CODE.equals(contract.getEmployerFactionCode())) {
+            negotiator = campaign.getPlayerForce().getHumanResources()
+                               .getCommander(campaign.getCampaignOptions(),
+                                     campaign.getPlayerForce().isClanForce(),
+                                     campaign.getLocalDate());
         } else {
             negotiator = null;
 
-            for (Person admin : campaign.getAdmins()) {
-                if (admin.getPrimaryRole().isAdministratorLogistics() ||
-                          admin.getSecondaryRole().isAdministratorLogistics()) {
+            for (Person admin : campaign.getPlayerForce().getHumanResources().getAdmins()) {
+                if (admin.isAdministrator()) {
                     if (negotiator == null || (admin.outRanksUsingSkillTiebreaker(campaign, negotiator))) {
                         negotiator = admin;
                     }
@@ -821,8 +868,8 @@ public class Resupply {
 
             if (skill != null) {
                 SkillModifierData skillModifierData = negotiator.getSkillModifierData(campaign.getCampaignOptions()
-                                                                                            .isUseAgeEffects(),
-                      campaign.isClanCampaign(), campaign.getLocalDate());
+                                                                                            .get(CampaignOption.USE_AGE_EFFECTS),
+                      campaign.getPlayerForce().isClanForce(), campaign.getLocalDate());
                 int skillLevel = skill.getFinalSkillValue(skillModifierData);
                 negotiatorSkill = skill.getType().getExperienceLevel(skillLevel);
             }
@@ -837,7 +884,7 @@ public class Resupply {
         playerConvoys = new HashMap<>();
         totalPlayerCargoCapacity = 0;
 
-        for (Formation formation : campaign.getAllFormations()) {
+        for (Formation formation : campaign.getPlayerForce().getAllFormations()) {
             if (!formation.isFormationType(CONVOY)) {
                 continue;
             }
@@ -922,6 +969,7 @@ public class Resupply {
          *
          * @param weight The new weight to assign.
          */
+        @Deprecated(since = "0.51.0", forRemoval = true)
         public void setWeight(double weight) {
             this.weight = weight;
         }

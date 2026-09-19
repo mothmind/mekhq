@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -68,8 +68,8 @@ public class TankLocation extends Part {
     public static final TechAdvancement TECH_ADVANCEMENT = new TechAdvancement(TechBase.ALL)
                                                                  .setAdvancement(2460, 2470, 2510)
                                                                  .setApproximate(true, false, false)
-                                                                 .setPrototypeFactions(Faction.TH)
-                                                                 .setProductionFactions(Faction.TH)
+                                                                 .setPrototypeFactions(Faction.TH, Faction.CS)
+                                                                 .setProductionFactions(Faction.TH, Faction.CS)
                                                                  .setTechRating(TechRating.D)
                                                                  .setAvailability(AvailabilityValue.A,
                                                                        AvailabilityValue.A,
@@ -210,12 +210,12 @@ public class TankLocation extends Part {
     public void remove(boolean salvage) {
         if (null != unit) {
             unit.getEntity().setInternal(IArmorState.ARMOR_DESTROYED, loc);
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
         }
@@ -231,7 +231,7 @@ public class TankLocation extends Part {
             } else {
                 int originalInternal = unit.getEntity().getOInternal(loc);
                 int internal = unit.getEntity().getInternal(loc);
-                damage = originalInternal - Math.min(originalInternal, Math.max(internal, 0));
+                damage = originalInternal - Math.clamp(internal, 0, originalInternal);
                 if (unit.isLocationBreached(loc)) {
                     breached = true;
                 }
@@ -337,7 +337,7 @@ public class TankLocation extends Part {
 
     @Override
     public String getDesc() {
-        if (!isBreached() || isSalvaging()) {
+        if (isDamagedBeyondRepair() || isSalvaging() || !isBreached()) {
             return super.getDesc();
         }
         String toReturn = "<html><font";
@@ -356,7 +356,7 @@ public class TankLocation extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_MECHANIC);
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
     }
 
     @Override

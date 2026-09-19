@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -61,6 +61,7 @@ public class InfantryArmorPart extends Part {
     private boolean sneak_ir;
     private boolean sneak_ecm;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public InfantryArmorPart() {
         this(0, null, 1.0, false, false, false, false, false, false);
     }
@@ -154,16 +155,16 @@ public class InfantryArmorPart extends Part {
     @Override
     public void remove(boolean salvage) {
         if (null != unit) {
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 int number = quantity;
                 while (number > 0) {
                     spare.changeQuantity(1);
                     number--;
                 }
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
         }

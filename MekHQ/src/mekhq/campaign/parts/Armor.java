@@ -58,6 +58,7 @@ import megamek.common.units.Tank;
 import megamek.common.units.Warship;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.enums.PartRepairType;
 import mekhq.campaign.parts.missing.MissingPart;
@@ -94,10 +95,19 @@ public class Armor extends Part implements IAcquisitionWork {
         this.location = loc;
         this.rear = r;
         this.clan = clan;
-        this.name = "Armor";
+    }
+
+    @Override
+    public boolean isRightTechType(String skillType) {
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
+    }
+
+    @Override
+    public String getName() {
         if (type > -1) {
-            this.name += " (" + (clan ? "Clan " : "IS ") + ArmorType.of(type, clan).getName() + ')';
+            return "Armor (" + (clan ? "Clan " : "IS ") + ArmorType.of(type, clan).getName() + ')';
         }
+        return "Armor";
     }
 
     @Override
@@ -147,7 +157,7 @@ public class Armor extends Part implements IAcquisitionWork {
         }
         StringBuilder toReturn = new StringBuilder();
         toReturn.append("<html><b>Replace ").append(getName());
-        if (!getCampaign().getCampaignOptions().isDestroyByMargin()) {
+        if (!getCampaign().getCampaignOptions().get(CampaignOption.DESTROY_BY_MARGIN)) {
             toReturn.append(" - ")
                   .append(messageSurroundedBySpanWithColor(SkillType.getExperienceLevelColor(
                         getSkillMin()), SkillType.getExperienceLevelName(getSkillMin()) + "+"));
@@ -212,7 +222,7 @@ public class Armor extends Part implements IAcquisitionWork {
                 }
             }
 
-            PartInventory inventories = campaign.getPartInventory(getNewPart());
+            PartInventory inventories = getPartInventory(getNewPart());
             String orderTransitString = inventories.getTransitOrderedDetails();
             if (!orderTransitString.isEmpty()) {
                 toReturn.append(spanOpeningWithCustomColor(getWarningColor()))
@@ -372,7 +382,9 @@ public class Armor extends Part implements IAcquisitionWork {
         Part newPart = getNewPart();
         newPart.setBrandNew(true);
         newPart.setDaysToArrival(transitDays);
-        if (campaign.getQuartermaster().buyPart(newPart, valueMultiplier, transitDays)) {
+        // Deliver to this order's own warehouse — a base warehouse for a base order, or the campaign warehouse for the
+        // main force.
+        if (campaign.getQuartermaster().buyPart(newPart, valueMultiplier, transitDays, getWarehouse())) {
             return "<font color='" +
                          ReportingUtilities.getPositiveColor() +
                          "'><b> part found</b>.</font> It will be delivered in " +
@@ -430,16 +442,12 @@ public class Armor extends Part implements IAcquisitionWork {
         // Options include: Waiting for Java to support that, or changing the entire
         // way the 'ETYPE' works on Entity to implement bitset or some similar.
         // For repair types, see CamOps, Master Repair Table, p207
-        String typeKey;
-        if (entity instanceof Tank) {
-            typeKey = "TANK";
-        } else if (entity instanceof Warship) {
-            typeKey = "CAPITAL";
-        } else if (entity instanceof Aero) {
-            typeKey = "AEROSPACE";
-        } else {
-            typeKey = "DEFAULT";
-        }
+        String typeKey = switch (entity) {
+            case Tank ignored -> "TANK";
+            case Warship ignored -> "CAPITAL";
+            case Aero ignored -> "AEROSPACE";
+            default -> "DEFAULT";
+        };
 
         return (switch (typeKey) {
             case "TANK" -> 3;
@@ -531,7 +539,7 @@ public class Armor extends Part implements IAcquisitionWork {
         toReturn += ">";
         toReturn += "<b>" + getAcquisitionDisplayName() + "</b> " + getAcquisitionBonus() + "<br/>";
         toReturn += getAcquisitionExtraDesc() + "<br/>";
-        PartInventory inventories = campaign.getPartInventory(getAcquisitionPart());
+        PartInventory inventories = getPartInventory(getAcquisitionPart());
         toReturn += inventories.getTransitOrderedDetails() + "<br/>";
         toReturn += adjustCostsForCampaignOptions(getStickerPrice()).toAmountAndSymbolString() + "<br/>";
         toReturn += "</font></html>";
@@ -571,10 +579,10 @@ public class Armor extends Part implements IAcquisitionWork {
     public TargetRoll getAllAcquisitionMods() {
         TargetRoll target = new TargetRoll();
         // Faction and Tech mod
-        if (isClanTechBase() && campaign.getCampaignOptions().getClanAcquisitionPenalty() > 0) {
-            target.addModifier(campaign.getCampaignOptions().getClanAcquisitionPenalty(), "clan-tech");
-        } else if (campaign.getCampaignOptions().getIsAcquisitionPenalty() > 0) {
-            target.addModifier(campaign.getCampaignOptions().getIsAcquisitionPenalty(), "Inner Sphere tech");
+        if (isClanTechBase() && campaign.getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY) > 0) {
+            target.addModifier(campaign.getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY), "clan-tech");
+        } else if (campaign.getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY) > 0) {
+            target.addModifier(campaign.getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY), "Inner Sphere tech");
         }
         // availability mod
         AvailabilityValue avail = getAvailability();
@@ -593,12 +601,17 @@ public class Armor extends Part implements IAcquisitionWork {
     }
 
     @Override
+    public int getBaseQuantityForPartsInUse() {
+        return this.getAmount();
+    }
+
+    @Override
     public int getQuantityForPartsInUse() {
         if (isPartUsedOrReserved()) {
             return 0;
         }
 
-        return this.getAmount();
+        return getBaseQuantityForPartsInUse();
     }
 
     public Part getNewPart() {
@@ -615,7 +628,7 @@ public class Armor extends Part implements IAcquisitionWork {
      * @return returns points of armor are found
      */
     public int getAmountAvailable() {
-        return campaign.getWarehouse()
+        return getWarehouse()
                      .streamSpareParts()
                      .filter(this::isSameArmorPart)
                      .mapToInt(part -> ((Armor) part).getAmount())
@@ -737,10 +750,6 @@ public class Armor extends Part implements IAcquisitionWork {
     public void changeType(int ty, boolean cl) {
         this.type = ty;
         this.clan = cl;
-        this.name = "Armor";
-        if (type > -1) {
-            this.name += " (" + ArmorType.of(type, clan).getName() + ')';
-        }
     }
 
     @Override
@@ -766,7 +775,7 @@ public class Armor extends Part implements IAcquisitionWork {
      * @return leftover amount; should be 0 except when removing if the part removed didn't have enough
      */
     protected int changeAmountAvailableSingle(int amount) {
-        Armor armor = (Armor) campaign.getWarehouse()
+        Armor armor = (Armor) getWarehouse()
                                     .findSparePart(part -> (part instanceof Armor) &&
                                                                  part.isPresent() &&
                                                                  Objects.equals(getRefitUnit(), part.getRefitUnit()) &&
@@ -776,7 +785,7 @@ public class Armor extends Part implements IAcquisitionWork {
             int amountRemaining = armor.getAmount() + amount;
             armor.setAmount(amountRemaining);
             if (armor.getAmount() <= 0) {
-                campaign.getWarehouse().removePart(armor);
+                getWarehouse().removePart(armor);
                 return Math.min(0, amountRemaining);
             }
         } else if (amount > 0) {

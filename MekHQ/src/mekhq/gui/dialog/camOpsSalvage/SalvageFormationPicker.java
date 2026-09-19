@@ -42,6 +42,7 @@ import static mekhq.utilities.ReportingUtilities.messageSurroundedBySpanWithColo
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -59,26 +60,28 @@ import javax.swing.table.TableRowSorter;
 
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.annotations.Nullable;
 import megamek.common.util.sorter.NaturalOrderComparator;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Hangar;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.force.FormationType;
-import mekhq.campaign.mission.camOpsSalvage.SalvageFormationData;
+import mekhq.campaign.mission.scenarios.ScenarioTemplate;
+import mekhq.campaign.mission.scenarios.camOpsSalvage.SalvageFormationData;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 
 /**
- * Modal dialog that lists available formations capable of participating in salvage operations and lets the user select one
- * or more for the current task.
+ * Modal dialog that lists available formations capable of participating in salvage operations and lets the user select
+ * one or more for the current task.
  *
  * <p>The center of the dialog is a sortable {@link JTable} backed by
- * {@link SalvageFormationTableModel}. Columns include formation name/type, assigned tech (with
- * experience/rank-aware sort), cargo/tow capacities, salvage-capable unit count, and a tug availability flag. Tooltips
- * provide detailed capacity reasoning and tech status.</p>
+ * {@link SalvageFormationTableModel}. Columns include formation name/type, assigned tech (with experience/rank-aware
+ * sort), cargo/tow capacities, salvage-capable unit count, and a tug availability flag. Tooltips provide detailed
+ * capacity reasoning and tech status.</p>
  *
  * <p>Use {@link #wasConfirmed()} to check whether the user confirmed and {@link #getSelectedFormations()} to retrieve
  * the chosen formations after the dialog closes.</p>
@@ -112,8 +115,8 @@ public class SalvageFormationPicker extends JDialog {
     }
 
     /**
-     * Returns all selected {@link Formation}s from the table. If the table was never constructed (e.g., no formations were
-     * provided), returns an empty list.
+     * Returns all selected {@link Formation}s from the table. If the table was never constructed (e.g., no formations
+     * were provided), returns an empty list.
      *
      * @return a list of selected formations (never {@code null})
      *
@@ -134,26 +137,27 @@ public class SalvageFormationPicker extends JDialog {
      * operations. A read-only instruction panel is shown at the top, and Confirm/Cancel controls are placed at the
      * bottom.</p>
      *
-     * @param campaign            current campaign context; used for tech labels, experience, tooltips, and hangar
-     *                            lookups
-     * @param formations              the candidate salvage-capable formations with precomputed stats; may be {@code null} or
-     *                            empty
-     * @param isSpaceOperation    {@code true} to show space-specific columns (e.g., tug availability); {@code false} to
-     *                            hide them
+     * @param campaign                current campaign context; used for tech labels, experience, tooltips, and hangar
+     *                                lookups
+     * @param formations              the candidate salvage-capable formations with precomputed stats; may be
+     *                                {@code null} or empty
+     * @param isSpaceOperation        {@code true} to show space-specific columns (e.g., tug availability);
+     *                                {@code false} to hide them
      * @param priorSelectedFormations a list of formations that were previously selected
+     * @param fieldControl            who controls the field at the end of the scenario
      *
      * @author Illiani
      * @since 0.50.10
      */
     public SalvageFormationPicker(Campaign campaign, List<SalvageFormationData> formations, boolean isSpaceOperation,
-                                  List<Integer> priorSelectedFormations) {
+          List<Integer> priorSelectedFormations, @Nullable ScenarioTemplate.BattlefieldControlType fieldControl) {
         setTitle(getText("accessingTerminal.title"));
         setModal(true);
         setLayout(new BorderLayout());
 
         // Instructions at the top
         JPanel instructionsPanel = new JPanel(new BorderLayout());
-        JTextArea instructionsLabel = new JTextArea(getInstructions());
+        JTextArea instructionsLabel = new JTextArea(getInstructions(fieldControl));
         instructionsLabel.setLineWrap(true);
         instructionsLabel.setWrapStyleWord(true);
         instructionsLabel.setEditable(false);
@@ -276,8 +280,8 @@ public class SalvageFormationPicker extends JDialog {
 
             // Table sorting
             sorter.setComparator(SalvageFormationTableModel.COL_SELECT, (b1, b2) ->
-                                                                          Boolean.compare(((Boolean) b1),
-                                                                                ((Boolean) b2)));
+                                                                              Boolean.compare(((Boolean) b1),
+                                                                                    ((Boolean) b2)));
             sorter.setComparator(SalvageFormationTableModel.COL_FORMATION_NAME,
                   new NaturalOrderComparator());
             sorter.setComparator(SalvageFormationTableModel.COL_FORMATION_TYPE,
@@ -314,8 +318,8 @@ public class SalvageFormationPicker extends JDialog {
             sorter.setComparator(SalvageFormationTableModel.COL_CREW_TECHS,
                   Comparator.comparingInt(i -> ((int) i)));
             sorter.setComparator(SalvageFormationTableModel.COL_HAS_TUG, (b1, b2) ->
-                                                                           Boolean.compare(((Boolean) b1),
-                                                                                 ((Boolean) b2)));
+                                                                               Boolean.compare(((Boolean) b1),
+                                                                                     ((Boolean) b2)));
         } catch (ClassCastException e) {
             // There's a lot of class casting so we want to catch anything that is malformed. For example, if the
             // underlying data structure in the table changes.
@@ -359,8 +363,11 @@ public class SalvageFormationPicker extends JDialog {
         boolean isTechSecondary1 = tech1.getSecondaryRole().isTechSecondary();
         boolean isTechSecondary2 = tech2.getSecondaryRole().isTechSecondary();
 
-        int expLevel1 = tech1.getExperienceLevel(model.campaign, isTechSecondary1, true);
-        int expLevel2 = tech2.getExperienceLevel(model.campaign, isTechSecondary2, true);
+        CampaignOptions campaignOptions = model.campaign.getCampaignOptions();
+        boolean isClanCampaign = model.campaign.getPlayerForce().isClanForce();
+        LocalDate today = model.campaign.getLocalDate();
+        int expLevel1 = tech1.getExperienceLevel(campaignOptions, isClanCampaign, today, isTechSecondary1, true);
+        int expLevel2 = tech2.getExperienceLevel(campaignOptions, isClanCampaign, today, isTechSecondary2, true);
 
         int expCompare = Integer.compare(expLevel2, expLevel1); // Reversed (highest -> lowest, more experienced first)
         if (expCompare != 0) {return expCompare;}
@@ -375,7 +382,8 @@ public class SalvageFormationPicker extends JDialog {
 
     /**
      * Comparator used for the Formation Type column. Ensures types with the display name containing
-     * {@link FormationType#SALVAGE} sort before others, then falls back to natural-order comparison of the type labels.
+     * {@link FormationType#SALVAGE} sort before others, then falls back to natural-order comparison of the type
+     * labels.
      *
      * @param s1 first type display string
      * @param s2 second type display string
@@ -396,18 +404,30 @@ public class SalvageFormationPicker extends JDialog {
     /**
      * Loads the localized instruction string shown at the top of the dialog.
      *
+     * @param fieldControl the field control type to use for the instructions text
+     *
      * @return localized instructions text
      *
      * @author Illiani
      * @since 0.50.10
      */
-    private static String getInstructions() {
-        return getTextAt(RESOURCE_BUNDLE, "SalvageFormationPicker.instructions");
+    private static String getInstructions(@Nullable ScenarioTemplate.BattlefieldControlType fieldControl) {
+        String instructions = getTextAt(RESOURCE_BUNDLE, "SalvageFormationPicker.instructions");
+
+        if (fieldControl != null) {
+            String controlText = getText("ResolveDialog.control." + fieldControl.name());
+
+            return instructions + ' ' + controlText;
+        }
+
+        String unknownFieldControlText = getTextAt(RESOURCE_BUNDLE,
+              "SalvageFormationPicker.instructions.fieldControlUnknown");
+        return instructions + ' ' + unknownFieldControlText;
     }
 
     /**
-     * Adds Cancel (always) and Confirm (only if formations exist) buttons to the provided panel and wires up their actions
-     * to close the dialog and set {@link #wasConfirmed}.
+     * Adds Cancel (always) and Confirm (only if formations exist) buttons to the provided panel and wires up their
+     * actions to close the dialog and set {@link #wasConfirmed}.
      *
      * @param buttonPanel panel to populate
      *
@@ -432,8 +452,8 @@ public class SalvageFormationPicker extends JDialog {
     }
 
     /**
-     * Table model that exposes {@link SalvageFormationData} properties to the UI and tracks which rows are selected. Also
-     * formats tech labels (experience and injury highlighting).
+     * Table model that exposes {@link SalvageFormationData} properties to the UI and tracks which rows are selected.
+     * Also formats tech labels (experience and injury highlighting).
      *
      * @author Illiani
      * @since 0.50.10
@@ -477,7 +497,7 @@ public class SalvageFormationPicker extends JDialog {
         /**
          * Creates a new table model over the provided data.
          *
-         * @param campaign            campaign context for skill/experience labels and tooltips
+         * @param campaign                campaign context for skill/experience labels and tooltips
          * @param formations              row data; one entry per formation
          * @param priorSelectedFormations a list of formations that were previously selected
          *
@@ -541,7 +561,7 @@ public class SalvageFormationPicker extends JDialog {
                 case COL_FORMATION_NAME -> data.formation().getName();
                 case COL_FORMATION_TYPE -> data.formationType().getDisplayName();
                 case COL_TOE_TECH -> getTechLabel(data.tech());
-                case COL_CREW_TECHS -> getCrewTechCount(campaign.getHangar(), data.formation());
+                case COL_CREW_TECHS -> getCrewTechCount(campaign.getPlayerForce().getHangar(), data.formation());
                 case COL_CARGO_CAPACITY -> data.maximumCargoCapacity();
                 case COL_TOW_CAPACITY -> data.maximumTowCapacity();
                 case COL_SALVAGE_UNITS -> data.salvageCapableUnits();
@@ -578,7 +598,7 @@ public class SalvageFormationPicker extends JDialog {
             }
         }
 
-        private int getCrewTechCount(Hangar hangar, Formation formation) {
+        private int getCrewTechCount(mekhq.campaign.LocalHangar hangar, Formation formation) {
             int counter = 0;
             for (Unit unit : formation.getAllUnitsAsUnits(hangar, false)) {
                 for (Person crew : unit.getCrew()) {
@@ -664,7 +684,7 @@ public class SalvageFormationPicker extends JDialog {
                 checkBox.setSelected(value != null && (Boolean) value);
                 checkBox.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
 
-                String tugTooltip = data.getTugTooltip(campaign.getHangar());
+                String tugTooltip = data.getTugTooltip(campaign.getPlayerForce().getHangar());
                 checkBox.setToolTipText(!tugTooltip.isBlank() ? wordWrap(tugTooltip) : null);
                 return checkBox;
             }
@@ -680,13 +700,14 @@ public class SalvageFormationPicker extends JDialog {
             if (component instanceof JComponent jComponent) {
                 String tooltip = switch (modelColumn) {
                     case SalvageFormationTableModel.COL_FORMATION_NAME -> wordWrap(data.formation().getFullName());
-                    case SalvageFormationTableModel.COL_TOE_TECH -> wordWrap(data.getTechTooltip(campaign, data.tech()));
+                    case SalvageFormationTableModel.COL_TOE_TECH ->
+                          wordWrap(data.getTechTooltip(campaign, data.tech()));
                     case SalvageFormationTableModel.COL_CREW_TECHS ->
                           wordWrap(data.getAllCrewTechTooltip(campaign, data.formation()));
                     case SalvageFormationTableModel.COL_CARGO_CAPACITY ->
-                          wordWrap(data.getCargoCapacityTooltip(campaign.getHangar()));
+                          wordWrap(data.getCargoCapacityTooltip(campaign.getPlayerForce().getHangar()));
                     case SalvageFormationTableModel.COL_TOW_CAPACITY ->
-                          wordWrap(data.getTowCapacityTooltip(campaign.getHangar()));
+                          wordWrap(data.getTowCapacityTooltip(campaign.getPlayerForce().getHangar()));
                     case SalvageFormationTableModel.COL_SALVAGE_UNITS ->
                           wordWrap(getTextAt(RESOURCE_BUNDLE, "SalvageFormationPicker.column.picks.tooltip"));
                     default -> null;

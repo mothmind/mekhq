@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -50,6 +50,7 @@ import javax.swing.*;
 
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -59,7 +60,6 @@ import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.AmmoStorage;
 import mekhq.campaign.parts.Part;
 import mekhq.campaign.unit.Unit;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 
 /**
  * A dialog to decide how you want to pay off collateral when you default on a loan
@@ -120,7 +120,7 @@ public class PayCollateralDialog extends JDialog {
         int i = 0;
         int j = 0;
         JPanel pnlUnits = new JPanel(new GridBagLayout());
-        Collection<Unit> units = campaign.getHangar().getUnits();
+        Collection<Unit> units = campaign.getPlayerForce().getHangar().getUnits();
         for (Unit u : units) {
             j++;
             box = new JCheckBox(u.getName() + " (" + u.getSellValue().toAmountAndSymbolString() + ")");
@@ -141,7 +141,7 @@ public class PayCollateralDialog extends JDialog {
             pnlUnits.add(box, gridBagConstraints);
             i++;
         }
-        JScrollPane scrUnits = new JScrollPaneWithSpeed();
+        JScrollPane scrUnits = new FastJScrollPane();
         scrUnits.setViewportView(pnlUnits);
         scrUnits.setMinimumSize(new Dimension(400, 300));
         scrUnits.setPreferredSize(new Dimension(400, 300));
@@ -151,7 +151,7 @@ public class PayCollateralDialog extends JDialog {
         i = 0;
         j = 0;
         JSlider partSlider;
-        List<Part> spareParts = campaign.getWarehouse().getSpareParts();
+        List<Part> spareParts = campaign.getPlayerForce().getWarehouse().getSpareParts();
         for (Part p : spareParts) {
             j++;
             int quantity = p.getQuantity();
@@ -193,7 +193,7 @@ public class PayCollateralDialog extends JDialog {
                                           "</html>"), gridBagConstraints);
             i++;
         }
-        JScrollPane scrParts = new JScrollPaneWithSpeed();
+        JScrollPane scrParts = new FastJScrollPane();
         scrParts.setViewportView(pnlParts);
         scrParts.setMinimumSize(new Dimension(400, 300));
         scrParts.setPreferredSize(new Dimension(400, 300));
@@ -221,7 +221,7 @@ public class PayCollateralDialog extends JDialog {
         i = 0;
         j = 0;
         JPanel pnlAssets = new JPanel(new GridBagLayout());
-        for (Asset a : campaign.getFinances().getAssets()) {
+        for (Asset a : campaign.getPlayerForce().getFinances().getAssets()) {
             j++;
             box = new JCheckBox(a.getName() + " (" + a.getValue().toAmountAndSymbolString() + ")");
             box.setSelected(false);
@@ -233,14 +233,14 @@ public class PayCollateralDialog extends JDialog {
             gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
             gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
             gridBagConstraints.weightx = 1.0;
-            if (j == (campaign.getFinances().getAssets().size())) {
+            if (j == (campaign.getPlayerForce().getFinances().getAssets().size())) {
                 gridBagConstraints.weighty = 1.0;
             }
             gridBagConstraints.insets = new Insets(5, 5, 0, 0);
             pnlAssets.add(box, gridBagConstraints);
             i++;
         }
-        JScrollPane scrAssets = new JScrollPaneWithSpeed(pnlAssets);
+        JScrollPane scrAssets = new FastJScrollPane(pnlAssets);
         scrAssets.setMinimumSize(new Dimension(400, 300));
         scrAssets.setPreferredSize(new Dimension(400, 300));
 
@@ -299,7 +299,7 @@ public class PayCollateralDialog extends JDialog {
         for (Map.Entry<JSlider, Integer> m : partSliders.entrySet()) {
             int quantity = m.getKey().getValue();
             if (quantity > 0) {
-                amount = amount.plus(campaign.getWarehouse()
+                amount = amount.plus(campaign.getPlayerForce().getWarehouse()
                                            .getPart(m.getValue())
                                            .getActualValue()
                                            .multipliedBy(quantity));
@@ -309,7 +309,7 @@ public class PayCollateralDialog extends JDialog {
         for (int i = 0; i < assetBoxes.size(); i++) {
             JCheckBox box = assetBoxes.get(i);
             if (box.isSelected()) {
-                amount = amount.plus(campaign.getFinances().getAssets().get(i).getValue());
+                amount = amount.plus(campaign.getPlayerForce().getFinances().getAssets().get(i).getValue());
             }
         }
 
@@ -350,7 +350,7 @@ public class PayCollateralDialog extends JDialog {
         for (int i = 0; i < assetBoxes.size(); i++) {
             JCheckBox box = assetBoxes.get(i);
             if (!box.isSelected()) {
-                newAssets.add(campaign.getFinances().getAssets().get(i));
+                newAssets.add(campaign.getPlayerForce().getFinances().getAssets().get(i));
             }
         }
         return newAssets;

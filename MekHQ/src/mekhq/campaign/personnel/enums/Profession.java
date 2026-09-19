@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -185,7 +185,7 @@ public enum Profession {
             return false;
         }
 
-        final Rank rank = rankSystem.getRanks().get(0);
+        final Rank rank = rankSystem.getRanks().getFirst();
         if (!rank.indicatesAlternativeSystem(this)) {
             // Return false if the first rank doesn't indicate an alternative rank system,
             // as the
@@ -211,7 +211,7 @@ public enum Profession {
      * @return the alternative profession determined
      */
     public Profession getAlternateProfession(final RankSystem rankSystem) {
-        return getAlternateProfession(rankSystem.getRanks().get(0));
+        return getAlternateProfession(rankSystem.getRanks().getFirst());
     }
 
     /**
@@ -264,7 +264,8 @@ public enum Profession {
             case VESSEL_PILOT, VESSEL_CREW, VESSEL_GUNNER, VESSEL_NAVIGATOR -> NAVAL;
             case MEK_TECH, MECHANIC, AERO_TEK, BA_TECH, ASTECH -> TECH;
             case DOCTOR, MEDIC -> MEDICAL;
-            case ADMINISTRATOR_COMMAND, ADMINISTRATOR_LOGISTICS, ADMINISTRATOR_HR, ADMINISTRATOR_TRANSPORT ->
+            case ADMINISTRATOR, ADMINISTRATOR_COMMAND, ADMINISTRATOR_LOGISTICS, ADMINISTRATOR_HR,
+                 ADMINISTRATOR_TRANSPORT ->
                   ADMINISTRATOR;
             case MEKWARRIOR, LAM_PILOT, PROTOMEK_PILOT -> MEKWARRIOR;
             default -> CIVILIAN;

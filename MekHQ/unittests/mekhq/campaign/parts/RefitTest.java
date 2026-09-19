@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -64,12 +64,12 @@ import megamek.common.options.GameOptions;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.Entity;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Hangar;
-import mekhq.campaign.Quartermaster;
-import mekhq.campaign.Warehouse;
+import mekhq.campaign.LocalHangar;
+import mekhq.campaign.LocalWarehouse;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
-import mekhq.campaign.market.ShoppingList;
+import mekhq.campaign.market.ForceShoppingList;
 import mekhq.campaign.parts.equipment.AmmoBin;
 import mekhq.campaign.parts.equipment.EquipmentPart;
 import mekhq.campaign.parts.equipment.MissingEquipmentPart;
@@ -79,8 +79,10 @@ import mekhq.campaign.unit.UnitTestUtilities;
 import mekhq.utilities.MHQXMLUtility;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -88,10 +90,11 @@ import org.mockito.quality.Strictness;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
+import testUtilities.MHQTestUtilities;
 
 @ExtendWith(value = MockitoExtension.class)
 public class RefitTest {
-    @Mock
+    @Mock(answer = Answers.RETURNS_DEEP_STUBS)
     private Campaign mockCampaign;
 
     @Mock
@@ -107,10 +110,10 @@ public class RefitTest {
     private Board mockBoard;
 
     @Mock
-    private Quartermaster mockQuartermaster;
+    private mekhq.campaign.ForceQuartermaster mockQuartermaster;
 
     @Mock
-    private Warehouse mockWarehouse;
+    private LocalWarehouse mockWarehouse;
 
     @BeforeAll
     static void before() {
@@ -120,11 +123,18 @@ public class RefitTest {
     @BeforeEach
     public void beforeEach() {
         lenient().when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
-        lenient().when(mockCampaignOptions.getCommonPartPriceMultiplier()).thenReturn(1d);
-        lenient().when(mockCampaignOptions.getInnerSphereUnitPriceMultiplier()).thenReturn(1d);
-        lenient().when(mockCampaignOptions.getInnerSpherePartPriceMultiplier()).thenReturn(1d);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USE_ABILITIES)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USE_EDGE)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USE_IMPLANTS)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USE_INITIATIVE_BONUS)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USE_TACTICS)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.CLAN_UNIT_PRICE_MULTIPLIER)).thenReturn(0.0);
+        lenient().when(mockCampaignOptions.get(CampaignOption.ONLY_COMMANDERS_MATTER_VEHICLES)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.COMMON_PART_PRICE_MULTIPLIER)).thenReturn(1d);
+        lenient().when(mockCampaignOptions.get(CampaignOption.INNER_SPHERE_UNIT_PRICE_MULTIPLIER)).thenReturn(1d);
+        lenient().when(mockCampaignOptions.get(CampaignOption.INNER_SPHERE_PART_PRICE_MULTIPLIER)).thenReturn(1d);
         double[] usedPartMultipliers = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-        lenient().when(mockCampaignOptions.getUsedPartPriceMultipliers()).thenReturn(usedPartMultipliers);
+        lenient().when(mockCampaignOptions.get(CampaignOption.USED_PART_PRICE_MULTIPLIERS)).thenReturn(usedPartMultipliers);
 
         lenient().when(mockCampaign.getGame()).thenReturn(mockGame);
         lenient().when(mockGame.getBoard()).thenReturn(mockBoard);
@@ -137,7 +147,7 @@ public class RefitTest {
 
         lenient().when(mockCampaign.getQuartermaster()).thenReturn(mockQuartermaster);
 
-        lenient().when(mockCampaign.getWarehouse()).thenReturn(mockWarehouse);
+        lenient().when(mockCampaign.getPlayerForce().getWarehouse()).thenReturn(mockWarehouse);
     }
 
     @Test
@@ -786,10 +796,10 @@ public class RefitTest {
     @MockitoSettings(strictness = Strictness.LENIENT)
     // Allegedly unnecessary stubbing for the mockHanger & mockShoppingList
     public void heavyTrackedApcMgToStandard() throws EntityLoadingException, IOException {
-        final Hangar mockHangar = mock(Hangar.class);
-        when(mockCampaign.getHangar()).thenReturn(mockHangar);
-        final ShoppingList mockShoppingList = mock(ShoppingList.class);
-        when(mockCampaign.getShoppingList()).thenReturn(mockShoppingList);
+        final LocalHangar mockHangar = mock(LocalHangar.class);
+        when(mockCampaign.getPlayerForce().getHangar()).thenReturn(mockHangar);
+        final ForceShoppingList mockShoppingList = mock(ForceShoppingList.class);
+        when(mockCampaign.getPlayerForce().getShoppingList()).thenReturn(mockShoppingList);
 
         // Create the original entity backing the unit
         Entity oldEntity = UnitTestUtilities.getHeavyTrackedApcMg();
@@ -922,5 +932,57 @@ public class RefitTest {
 
         // We should have 0 points of standard armor on order
         assertNull(refit.getNewArmorSupplies());
+    }
+
+    @Nested
+    class InfantryRefitConstructorTest {
+        @Test
+        public void customTrueSaveFalse_nameUnchanged() {
+            Entity oldEntity = MHQTestUtilities.getEntityForUnitTesting(
+                  "Foot Platoon (DCMS) (Laser 2620+)", true);
+            assertNotNull(oldEntity);
+            Player mockPlayer = mock(Player.class);
+            when(mockPlayer.getName()).thenReturn("Test Player");
+            oldEntity.setOwner(mockPlayer);
+
+            Entity newEntity = MHQTestUtilities.getEntityForUnitTesting(
+                  "Foot Platoon (DCMS) (MG 2620+)", true);
+            assertNotNull(newEntity);
+
+            String originalChassis = newEntity.getChassis();
+            String originalModel = newEntity.getModel();
+
+            Unit oldUnit = new Unit(oldEntity, mockCampaign);
+            oldUnit.setId(UUID.randomUUID());
+            oldUnit.initializeParts(false);
+
+            Refit refit = new Refit(oldUnit, newEntity, true, false, false);
+
+            assertEquals(originalChassis, refit.getNewEntity().getChassis());
+            assertEquals(originalModel, refit.getNewEntity().getModel());
+        }
+
+        @Test
+        public void customTrueSaveTrue_nameReplacedWithAutoName() {
+            Entity oldEntity = MHQTestUtilities.getEntityForUnitTesting(
+                  "Foot Platoon (DCMS) (Laser 2620+)", true);
+            assertNotNull(oldEntity);
+            Player mockPlayer = mock(Player.class);
+            when(mockPlayer.getName()).thenReturn("Test Player");
+            oldEntity.setOwner(mockPlayer);
+
+            Entity newEntity = MHQTestUtilities.getEntityForUnitTesting(
+                  "Foot Platoon (DCMS) (MG 2620+)", true);
+            assertNotNull(newEntity);
+
+            Unit oldUnit = new Unit(oldEntity, mockCampaign);
+            oldUnit.setId(UUID.randomUUID());
+            oldUnit.initializeParts(false);
+
+            Refit refit = new Refit(oldUnit, newEntity, true, false, true);
+
+            assertEquals("Foot Platoon", refit.getNewEntity().getChassis());
+            assertEquals("(Machine Gun (Portable))", refit.getNewEntity().getModel());
+        }
     }
 }

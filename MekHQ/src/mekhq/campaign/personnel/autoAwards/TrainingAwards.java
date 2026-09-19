@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2024-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -60,7 +60,7 @@ public class TrainingAwards {
      */
     public static Map<Integer, List<Object>> TrainingAwardsProcessor(Campaign campaign, UUID person,
           List<Object> academyAttributes, List<Award> awards) {
-        Person student = campaign.getPerson(person);
+        Person student = campaign.getPlayerForce().getHumanResources().getPerson(person);
         List<Award> eligibleAwards = new ArrayList<>();
 
         int academyEducationLevel;
@@ -70,10 +70,10 @@ public class TrainingAwards {
         // We start by prepping the data we're going to be comparing against and
         // ensuring it's all valid
         try {
-            academyEducationLevel = (int) academyAttributes.get(0);
+            academyEducationLevel = (int) academyAttributes.getFirst();
         } catch (ClassCastException e) {
             LOGGER.warn("{} has invalid academyEducationLevel value '{}'. Aborting.",
-                  student.getFullName(), academyAttributes.get(0).toString());
+                  student.getFullName(), academyAttributes.getFirst().toString());
 
             return AutoAwardsController.prepareAwardData(person, eligibleAwards);
         }
@@ -126,7 +126,7 @@ public class TrainingAwards {
                 continue;
             }
 
-            if (award.canBeAwarded(campaign.getPerson(person))) {
+            if (award.canBeAwarded(campaign.getPlayerForce().getHumanResources().getPerson(person))) {
                 if ((requiredEducationLevel != 0) && (requiredEducationLevel < academyEducationLevel)) {
                     eligibleAwards.add(award);
                     continue;

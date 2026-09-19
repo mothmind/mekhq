@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -92,6 +92,16 @@ public enum BloodGroup {
     }
 
     /**
+     * BloodGroup labels are not unique (e.g., AA_POSITIVE and AO_POSITIVE are both "A+")
+     * so this returns a UI friendly version
+     * 
+     * @return a UI friendly value for showing the detail of the specific blood name and label
+     */
+    public String getDisplayLabel() {
+        return String.format("%s (%s)", getLabel(), name());
+    }
+
+    /**
      * Gets the chance value for this blood group.
      *
      * @return the chance value as an integer.
@@ -114,6 +124,7 @@ public enum BloodGroup {
      *
      * @return {@code true} if the blood group is O_NEGATIVE, {@code false} otherwise.
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isUniversalDonor() {
         return this == OO_NEGATIVE;
     }
@@ -123,6 +134,7 @@ public enum BloodGroup {
      *
      * @return {@code true} if the blood group is AB_POSITIVE, {@code false} otherwise.
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isUniversalRecipient() {
         return this == AB_POSITIVE;
     }

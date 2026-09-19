@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2016-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -49,6 +49,7 @@ import mekhq.campaign.personnel.medical.BodyLocation;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.InjuryEffect;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.InjurySubType;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Flyweight design pattern implementation. InjuryType instances should be singletons and never hold any data related to
@@ -111,6 +112,7 @@ public class InjuryType {
         register(-1, key, injType);
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static List<String> getAllKeys() {
         List<String> result = new ArrayList<>(REGISTRY.keySet());
         Collections.sort(result);
@@ -124,7 +126,7 @@ public class InjuryType {
     }
 
     /** Default injury type: reduction in hit points */
-    public static InjuryType BAD_HEALTH = new InjuryType();
+    public static final InjuryType BAD_HEALTH = new InjuryType();
 
     static {
         BAD_HEALTH.recoveryTime = 7;
@@ -186,6 +188,7 @@ public class InjuryType {
         return recoveryTime;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public int getRecoveryTime(Injury i) {
         return getRecoveryTime(i.getHits());
     }
@@ -238,6 +241,17 @@ public class InjuryType {
         int recoveryTime = InjuryUtil.genHealingTime(campaign, person, this, severity);
         if (person.getOptions().booleanOption(MUTATION_EXCEPTIONAL_IMMUNE_SYSTEM)) {
             recoveryTime = recoveryTime / 2;
+        }
+
+        // Under Alternate Advanced Medical, all healing times are scaled by the campaign's healing-time multiplier.
+        // Applying it here ensures every injury-creation path (combat, surgery, diseases, postpartum, complications,
+        // etc.) is scaled consistently. Injuries with no recovery time (e.g., permanent modifications) are left alone.
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL) && recoveryTime > 0) {
+            double healingTimeMultiplier = campaign.getCampaignOptions()
+                                                 .get(CampaignOption.ALTERNATIVE_ADVANCED_MEDICAL_HEALING_TIME_MULTIPLIER);
+            if (healingTimeMultiplier != 1.0) {
+                recoveryTime = Math.max(1, (int) Math.round(recoveryTime * healingTimeMultiplier));
+            }
         }
 
         final String fluff = getFluffText(bodyLocation, severity, person.getGender());

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 - Jay Lawson (jaylawson39 at yahoo.com). All Rights Reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,8 +34,10 @@
 package mekhq;
 
 import static megamek.MMConstants.LOCALHOST_IP;
+import static mekhq.utilities.MHQInternationalization.getFormattedText;
 import static mekhq.utilities.MHQInternationalization.getText;
 
+import java.awt.Desktop;
 import java.awt.FileDialog;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -48,6 +50,7 @@ import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.ResourceBundle;
 import java.util.stream.Collectors;
 import javax.swing.InputMap;
 import javax.swing.JOptionPane;
@@ -66,6 +69,7 @@ import megamek.client.Client;
 import megamek.client.HeadlessClient;
 import megamek.client.bot.princess.BehaviorSettings;
 import megamek.client.ui.clientGUI.GUIPreferences;
+import megamek.client.ui.dialogs.LicensingDialog;
 import megamek.client.ui.dialogs.abstractDialogs.AutoResolveChanceDialog;
 import megamek.client.ui.dialogs.abstractDialogs.AutoResolveProgressDialog;
 import megamek.client.ui.dialogs.gameConnectionDialogs.ConnectDialog;
@@ -103,19 +107,24 @@ import mekhq.campaign.CampaignController;
 import mekhq.campaign.ResolveScenarioTracker;
 import mekhq.campaign.autoResolve.MekHQSetupForces;
 import mekhq.campaign.autoResolve.StratConSetupForces;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.digitalGM.IDigitalGM;
+import mekhq.campaign.digitalGM.stratCon.gm.MaplessStratConGM;
+import mekhq.campaign.digitalGM.stratCon.gm.SinglesStratConGM;
+import mekhq.campaign.digitalGM.stratCon.gm.StratConDigitalGM;
 import mekhq.campaign.handler.PostScenarioDialogHandler;
 import mekhq.campaign.handler.XPHandler;
-import mekhq.campaign.mission.AtBDynamicScenario;
-import mekhq.campaign.mission.AtBScenario;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.mission.ScenarioTemplate;
-import mekhq.campaign.mission.ScenarioTemplate.BattlefieldControlType;
+import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
+import mekhq.campaign.mission.scenarios.AtBScenario;
+import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.scenarios.ScenarioTemplate;
+import mekhq.campaign.mission.scenarios.ScenarioTemplate.BattlefieldControlType;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.stratCon.StratConRulesManager;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 import mekhq.gui.dialog.ChooseMulFilesDialog;
+import mekhq.gui.dialog.MekHQAboutDialog;
 import mekhq.gui.dialog.ResolveScenarioWizardDialog;
 import mekhq.gui.panels.StartupScreenPanel;
 import mekhq.gui.preferences.StringPreference;
@@ -163,6 +172,10 @@ public class MekHQ implements GameListener {
     // endregion Variable Declarations
     private static final SanityInputFilter sanityInputFilter = new SanityInputFilter();
     private static final String defaultTheme = "com.formdev.flatlaf.FlatDarculaLaf";
+
+    public static ResourceBundle getDefaultResourceBundle() {
+        return ResourceBundle.getBundle("mekhq.resources.GUI", MekHQ.getMHQOptions().getLocale());
+    }
 
     public static SuitePreferences getMHQPreferences() {
         return mhqPreferences;
@@ -232,6 +245,10 @@ public class MekHQ implements GameListener {
         initEventHandlers();
         // create a start-up frame and display it
         new StartupScreenPanel(this).getFrame().setVisible(true);
+
+        // Show licensing/welcome dialog after startup screen is visible
+        LicensingDialog.showIfNeeded(null,
+              "Welcome to " + MHQConstants.PROJECT_NAME + " " + MHQConstants.VERSION);
     }
 
     /**
@@ -256,12 +273,7 @@ public class MekHQ implements GameListener {
      * restart back to the splash screen
      */
     public void restart() {
-
-        // Actually close MHQ
-        if (campaignGUI != null) {
-            campaignGUI.getFrame().dispose();
-        }
-
+        deactivateCampaign();
         new StartupScreenPanel(this).getFrame().setVisible(true);
     }
 
@@ -344,8 +356,36 @@ public class MekHQ implements GameListener {
         System.exit(0);
     }
 
-    public void showNewView() {
+    /**
+     * Activates a campaign. Ensures that previously active campaign is disposed, then creates new
+     * {@link CampaignController} and {@link CampaignGUI} and initializes wiring between all of them.
+     *
+     * @param campaign the {@link Campaign} to be activated
+     */
+    public void activateCampaign(Campaign campaign) {
+        deactivateCampaign();
+        campaignController = new CampaignController(this, campaign);
+        campaignController.setHost(campaign.getId());
         campaignGUI = new CampaignGUI(this);
+        campaign.setGUI(campaignGUI);
+        campaignController.activate();
+    }
+
+    /**
+     * Disposes all CampaignGUI components and deactivates the current campaign. Since event bus registration is linked
+     * to UI lifecycle, it also unregisters them from the event bus. Manually unsubscribes non-UI components. Logs
+     * remaining event bus listeners for debug purposes.
+     */
+    private void deactivateCampaign() {
+        if (campaignGUI != null) {
+            campaignGUI.getFrame().dispose();
+            campaignGUI = null;
+        }
+        if (campaignController != null) {
+            campaignController.deactivate();
+            campaignController = null;
+        }
+        EVENT_BUS.logActiveSubscribers();
     }
 
     /**
@@ -353,6 +393,7 @@ public class MekHQ implements GameListener {
      */
     public static void main(String... args) {
         Config.setSerialFilter(sanityInputFilter);
+        MegaMek.setOriginProject(MHQConstants.PROJECT_NAME);
 
         // Configure Sentry with defaults. Although the client defaults to enabled, the properties file is used to
         // disable it and additional configuration can be done inside the sentry.properties file. The defaults for
@@ -380,10 +421,15 @@ public class MekHQ implements GameListener {
         // Second, let's handle logging
         MegaMek.initializeLogging(MHQConstants.PROJECT_NAME);
         MegaMekLab.initializeLogging(MHQConstants.PROJECT_NAME);
-        MekHQ.initializeLogging(MHQConstants.PROJECT_NAME);
+        MekHQ.initializeLogging();
 
         // Third, let's handle suite graphical setup initialization
         MegaMek.initializeSuiteGraphicalSetups(MHQConstants.PROJECT_NAME);
+
+        // on Mac, override standard behavior of the added main menu, this is different for MML and MHQ
+        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_ABOUT)) {
+            Desktop.getDesktop().setAboutHandler(e -> new MekHQAboutDialog(null).show());
+        }
 
         // Finally, let's handle startup
         SwingUtilities.invokeLater(() -> MekHQ.getInstance().startup());
@@ -392,17 +438,15 @@ public class MekHQ implements GameListener {
         LOGGER.info(ManagementFactory.getRuntimeMXBean().getInputArguments());
     }
 
-    public static void initializeLogging(final String originProject) {
-        LOGGER.info(getUnderlyingInformation(originProject));
+    public static void initializeLogging() {
+        LOGGER.info(getUnderlyingInformation());
     }
 
     /**
-     * @param originProject the project that launched MekHQ
-     *
      * @return the underlying information for this launch of MekHQ
      */
-    public static String getUnderlyingInformation(final String originProject) {
-        return MegaMek.getUnderlyingInformation(originProject, MHQConstants.PROJECT_NAME);
+    public static String getUnderlyingInformation() {
+        return MegaMek.getUnderlyingInformation(MHQConstants.PROJECT_NAME, MHQConstants.PROJECT_NAME);
     }
 
     public Server getMyServer() {
@@ -411,10 +455,6 @@ public class MekHQ implements GameListener {
 
     public Campaign getCampaign() {
         return campaignController.getLocalCampaign();
-    }
-
-    public void setCampaign(Campaign c) {
-        campaignController = new CampaignController(c);
     }
 
     public CampaignController getCampaignController() {
@@ -431,12 +471,16 @@ public class MekHQ implements GameListener {
     /**
      * @param campaignGUI the {@link CampaignGUI} to set
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public void setCampaignGUI(CampaignGUI campaignGUI) {
         this.campaignGUI = campaignGUI;
     }
 
     public void joinGame(Scenario scenario, List<Unit> meks) {
-        ConnectDialog joinGameDialog = new ConnectDialog(campaignGUI.getFrame(), campaignGUI.getCampaign().getName());
+        // Force down any game left over from a previous scenario
+        stopHost();
+
+        ConnectDialog joinGameDialog = new ConnectDialog(campaignGUI.getFrame(), campaignGUI.getCampaign().getPlayerForce().getName());
         joinGameDialog.setVisible(true);
 
         if (!joinGameDialog.dataValidation("MegaMek.ConnectDialog.title")) {
@@ -487,7 +531,10 @@ public class MekHQ implements GameListener {
      */
     public void startHost(Scenario scenario, boolean loadSaveGame, List<Unit> meks,
           @Nullable BehaviorSettings autoResolveBehaviorSettings) {
-        HostDialog hostDialog = new HostDialog(campaignGUI.getFrame(), getCampaign().getName());
+        // Force down any game left over from a previous scenario whose hand-off never completed.
+        stopHost();
+
+        HostDialog hostDialog = new HostDialog(campaignGUI.getFrame(), getCampaign().getPlayerForce().getName());
         hostDialog.setVisible(true);
 
         if (!hostDialog.dataValidation("MegaMek.HostGameAlert.title")) {
@@ -527,10 +574,13 @@ public class MekHQ implements GameListener {
         } catch (Exception ex) {
             LOGGER.error(ex, "Failed to start up server");
             stopHost();
+            LOGGER.errorDialog(ex,
+                  getFormattedText("startHost.serverStartFailed.message", String.valueOf(port)),
+                  getText("startHost.serverStartFailed.title"));
             return;
         }
         // Refactor this into a factory
-        var useExperimentalPacarGui = getCampaign().getCampaignOptions().isAutoResolveExperimentalPacarGuiEnabled();
+        var useExperimentalPacarGui = getCampaign().getCampaignOptions().get(CampaignOption.AUTO_RESOLVE_EXPERIMENTAL_PACAR_GUI_ENABLED);
         if (autoResolveBehaviorSettings != null && useExperimentalPacarGui) {
             client = new HeadlessClient(playerName, LOCALHOST_IP, port);
         } else {
@@ -541,7 +591,7 @@ public class MekHQ implements GameListener {
         currentScenario = scenario;
 
         // Start the game thread - also refactor this into a factory
-        if (getCampaign().getCampaignOptions().isUseAtB() && (scenario instanceof AtBScenario atBScenario)) {
+        if (getCampaign().getCampaignOptions().isUseStratCon() && (scenario instanceof AtBScenario atBScenario)) {
             gameThread = new AtBGameThread(playerName,
                   password,
                   client,
@@ -559,11 +609,41 @@ public class MekHQ implements GameListener {
 
     // Stop & send the close game event to the Server
     public synchronized void stopHost() {
-        if (getMyServer() != null) {
-            getMyServer().die();
-            myServer = null;
-        }
+        // Snapshot and immediately null the fields before we start tearing anything down. Client.die() synchronously
+        // fires CloseClientListener.clientClosed(), which calls back into stopHost() (see GameThread#clientClosed); by
+        // nulling first, that re-entrant call sees a clean state and becomes a no-op instead of recursing.
+        final GameThread stoppingThread = gameThread;
+        final Client stoppingClient = client;
+        final Server stoppingServer = myServer;
+
+        gameThread = null;
+        client = null;
+        myServer = null;
         currentScenario = null;
+
+        // Stop the game thread so its run loop exits and it releases the client GUI and bot clients.
+        if (stoppingThread != null) {
+            stoppingThread.requestStop();
+        }
+
+        // Deregister ourselves as a game listener and close the client connection so no stale listeners linger.
+        if (stoppingClient != null) {
+            try {
+                stoppingClient.getGame().removeGameListener(this);
+                stoppingClient.die();
+            } catch (Exception ex) {
+                LOGGER.error(ex, "Failed to tear down the game client while stopping the host.");
+            }
+        }
+
+        // Finally, kill the server so it releases its port; a lingering server is what blocks the next launch.
+        if (stoppingServer != null) {
+            try {
+                stoppingServer.die();
+            } catch (Exception ex) {
+                LOGGER.error(ex, "Failed to shut down the game server while stopping the host.");
+            }
+        }
     }
 
     @Override
@@ -808,10 +888,10 @@ public class MekHQ implements GameListener {
         SetupForces setupForces = getSetupForces(scenario, units);
 
         PlanetaryConditions planetaryConditions = getCampaign().getCurrentPlanetaryConditions(scenario);
-        if (getCampaign().getCampaignOptions().isAutoResolveVictoryChanceEnabled()) {
+        if (getCampaign().getCampaignOptions().get(CampaignOption.AUTO_RESOLVE_VICTORY_CHANCE_ENABLED)) {
 
             var proceed = AutoResolveChanceDialog.showDialog(campaignGUI.getFrame(),
-                  getCampaign().getCampaignOptions().getAutoResolveNumberOfScenarios(),
+                  getCampaign().getCampaignOptions().get(CampaignOption.AUTO_RESOLVE_NUMBER_OF_SCENARIOS),
                   Runtime.getRuntime().availableProcessors(),
                   1,
                   setupForces,
@@ -887,7 +967,8 @@ public class MekHQ implements GameListener {
         List<Throwable> errors = new ArrayList<>();
         for (var entry : peopleStatus.entrySet()) {
             try {
-                Person person = getCampaign().getPerson(entry.getKey());
+                Campaign campaign = getCampaign();
+                Person person = campaign.getPlayerForce().getHumanResources().getPerson(entry.getKey());
                 Objects.requireNonNull(person, "getPerson() returned null for Person ID=" + entry.getKey() + ".");
                 person.setHits(person.getHitsPrior());
             } catch (Throwable ex) {
@@ -921,9 +1002,13 @@ public class MekHQ implements GameListener {
     private void initEventHandlers() {
         EVENT_BUS.register(new XPHandler());
 
-        StratConRulesManager srm = new StratConRulesManager();
-        srm.startup();
-        EVENT_BUS.register(srm);
+        // Register every digital GM. All receive the new-day event, but only the one matching the campaign's StratCon
+        // play type acts (see DigitalGM#isEnabled); the play types are mutually exclusive, so at most one runs per day.
+        for (IDigitalGM IDigitalGM : List.of(new StratConDigitalGM(),
+              new MaplessStratConGM(),
+              new SinglesStratConGM())) {
+            IDigitalGM.startup();
+        }
     }
 
     private static void setLookAndFeel(String themeName) {

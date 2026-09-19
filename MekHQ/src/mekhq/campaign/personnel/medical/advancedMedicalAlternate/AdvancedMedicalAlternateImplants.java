@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -57,18 +57,18 @@ import static mekhq.utilities.ReportingUtilities.getNegativeColor;
 import static mekhq.utilities.ReportingUtilities.getWarningColor;
 import static mekhq.utilities.ReportingUtilities.spanOpeningWithCustomColor;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import megamek.codeUtilities.ObjectUtility;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.personnel.Injury;
 import mekhq.campaign.personnel.InjuryType;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.SpecialAbility;
-import mekhq.campaign.personnel.skills.AttributeCheckUtility;
+import mekhq.campaign.personnel.skills.ActionCheckResult;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 
 public class AdvancedMedicalAlternateImplants {
@@ -171,8 +171,8 @@ public class AdvancedMedicalAlternateImplants {
         }
 
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        boolean useFatigue = campaignOptions.isUseFatigue();
-        boolean useAbilities = campaignOptions.isUseAbilities();
+        boolean useFatigue = campaignOptions.get(CampaignOption.USE_FATIGUE);
+        boolean useAbilities = campaignOptions.get(CampaignOption.USE_ABILITIES);
 
         if (!useFatigue && !useAbilities) { // We have nothing to process
             return;
@@ -208,18 +208,13 @@ public class AdvancedMedicalAlternateImplants {
         }
 
         int resistanceModifier = person.getOptions().booleanOption(UNOFFICIAL_IMPLANT_RESISTANCE) ? -2 : 0;
-        AttributeCheckUtility attributeCheckUtility = new AttributeCheckUtility(
-              getTextAt(RESOURCE_BUNDLE, "AlternateInjuries.skillCheck.degradation"),
-              person,
-              SkillAttribute.BODY,
-              SkillAttribute.WILLPOWER,
-              new ArrayList<>(),
-              resistanceModifier,
-              true,
-              false);
-        campaign.addReport(SKILL_CHECKS, attributeCheckUtility.getResultsText());
+        ActionCheckResult attributeCheckResult =
+              person.checkAttributes(SkillAttribute.BODY, SkillAttribute.WILLPOWER)
+                    .withMiscModifier(resistanceModifier)
+                    .resolve(true, getTextAt(RESOURCE_BUNDLE, "AlternateInjuries.skillCheck.degradation"));
+        campaign.addReport(SKILL_CHECKS, attributeCheckResult.getReport());
 
-        if (!attributeCheckUtility.isSuccess() && useAbilities) {
+        if (!attributeCheckResult.isSuccess() && useAbilities) {
             String flaw = getAndApplyEIDegradationFlaw(person);
             if (!flaw.isBlank()) {
                 String key = "AlternateInjuries.report." +
@@ -256,7 +251,7 @@ public class AdvancedMedicalAlternateImplants {
         int prostheticThreshold = 3;
         int eligibleProstheticsCount = 0;
 
-        for (Injury injury : person.getInjuries()) {
+        for (Injury injury : person.getProstheticInjuries()) {
             ProstheticType prostheticType = getProstheticTypeFromInjuryType(injury.getType());
 
             if (prostheticType != null) {
@@ -360,7 +355,7 @@ public class AdvancedMedicalAlternateImplants {
     }
 
     public static void checkForDermalEligibility(Person person) {
-        List<Injury> injuries = person.getInjuries();
+        List<Injury> injuries = person.getProstheticInjuries();
 
         int dermalArmorCount = 0;
         int dermalCamoCount = 0;
@@ -395,13 +390,13 @@ public class AdvancedMedicalAlternateImplants {
         Injury injury = ENHANCED_IMAGING_IMPLANT.newInjury(campaign, person, BRAIN, 0);
         person.addInjury(injury);
 
-        if (campaign.getCampaignOptions().isUseImplants()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS)) {
             for (String implant : ENHANCED_IMAGING.getAssociatedPilotOptions()) {
                 person.getOptions().acquireAbility(LVL3_ADVANTAGES, implant, true);
             }
         }
 
-        if (campaign.getCampaignOptions().isUseAbilities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_ABILITIES)) {
             for (String option : ENHANCED_IMAGING.getAssociatedPersonnelOptions()) {
                 person.getOptions().acquireAbility(LVL3_ADVANTAGES, option, true);
             }

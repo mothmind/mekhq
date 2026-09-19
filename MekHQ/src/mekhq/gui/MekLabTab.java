@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All Rights Reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -60,7 +60,9 @@ import megamek.common.loaders.EntityLoadingException;
 import megamek.common.loaders.MekFileParser;
 import megamek.common.loaders.MekSummary;
 import megamek.common.loaders.MekSummaryCache;
+import megamek.common.ui.FastJScrollPane;
 import megamek.common.units.Aero;
+import megamek.common.units.ConvInfantry;
 import megamek.common.units.Entity;
 import megamek.common.units.Infantry;
 import megamek.common.units.Jumpship;
@@ -107,7 +109,6 @@ import megameklab.util.UnitUtil;
 import mekhq.campaign.parts.Refit;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.enums.MHQTabType;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.utilities.ReportingUtilities;
 
 public class MekLabTab extends CampaignGuiTab {
@@ -122,6 +123,14 @@ public class MekLabTab extends CampaignGuiTab {
     Refit refit;
     EntityPanel labPanel;
     JPanel emptyPanel;
+
+    /**
+     * Whether the {@link Refit} constructor has already proposed a new name for the entity being edited (see
+     * {@link Refit#suggestNewName()}). The proposal must only happen once per editing session, so it cannot clobber a
+     * chassis or model name the user has typed in the lab: the refit summary is refreshed - and a fresh {@link Refit}
+     * constructed - after every edit.
+     */
+    private boolean refitNameProposed;
 
     private JPanel summaryPane;
     private JLabel lblName;
@@ -262,6 +271,7 @@ public class MekLabTab extends CampaignGuiTab {
 
     public void loadUnit(Unit u) {
         unit = u;
+        refitNameProposed = false;
         MekSummary mekSummary = MekSummaryCache.getInstance().getMek(unit.getEntity().getShortNameRaw());
         Entity entity;
         try {
@@ -301,6 +311,7 @@ public class MekLabTab extends CampaignGuiTab {
     }
 
     public void resetUnit() {
+        refitNameProposed = false;
         MekSummary mekSummary = MekSummaryCache.getInstance().getMek(unit.getEntity().getShortName());
 
         if (mekSummary == null) {
@@ -333,7 +344,18 @@ public class MekLabTab extends CampaignGuiTab {
         if (null == entity) {
             return;
         }
+        // The Refit constructor proposes a new name for customized infantry (Refit#suggestNewName, Issue #9154).
+        // Allow that only on the first construction of the session; afterwards restore the name so the proposal
+        // cannot overwrite a chassis or model the user typed in the lab.
+        String chassisBeforeRefit = entity.getChassis();
+        String modelBeforeRefit = entity.getModel();
         refit = new Refit(unit, entity, true, false, true);
+        if (refitNameProposed) {
+            entity.setChassis(chassisBeforeRefit);
+            entity.setModel(modelBeforeRefit);
+        } else {
+            refitNameProposed = true;
+        }
         testEntity = null;
         if (entity instanceof SmallCraft) {
             testEntity = new TestSmallCraft((SmallCraft) entity, entityVerifier.aeroOption, null);
@@ -349,8 +371,8 @@ public class MekLabTab extends CampaignGuiTab {
             testEntity = new TestTank((Tank) entity, entityVerifier.tankOption, null);
         } else if (entity instanceof BattleArmor) {
             testEntity = new TestBattleArmor((BattleArmor) entity, entityVerifier.baOption, null);
-        } else if (entity instanceof Infantry) {
-            testEntity = new TestInfantry((Infantry) entity, entityVerifier.tankOption, null);
+        } else if (entity instanceof ConvInfantry infantry) {
+            testEntity = new TestInfantry(infantry, entityVerifier.tankOption, null);
         } else if (entity instanceof ProtoMek) {
             testEntity = new TestProtoMek((ProtoMek) entity, entityVerifier.protomekOption, null);
         }
@@ -369,13 +391,16 @@ public class MekLabTab extends CampaignGuiTab {
         int heat = entity.getHeatCapacity();
 
         double totalHeat = calculateTotalHeat();
-        int bvDiff = entity.calculateBattleValue(true, true) - unit.getEntity().calculateBattleValue(true, true);
+        int bvDiff = entity.calculateBattleValue(true, true, true)
+                           - unit.getEntity().calculateBattleValue(true, true, true);
         double currentTonnage = testEntity.calculateWeight();
         currentTonnage += UnitUtil.getUnallocatedAmmoTonnage(entity);
         double tonnage = entity.getWeight();
-        if (entity instanceof BattleArmor) {
-            tonnage = ((BattleArmor) entity).getTrooperWeight() * ((BattleArmor) entity).getTroopers();
+        if (entity instanceof BattleArmor battleArmor) {
+            tonnage = battleArmor.getTrooperWeight() * battleArmor.getSquadSize();
         }
+
+        String refitCheckFixable = refit.checkFixable();
 
         if (tonnage < testEntity.calculateWeight()) {
             btnRefit.setEnabled(false);
@@ -391,9 +416,9 @@ public class MekLabTab extends CampaignGuiTab {
             btnRefit.setEnabled(false);
             btnRefit.setToolTipText(sb.toString());
             btnSaveForLater.setEnabled(true);
-        } else if (null != refit.checkFixable()) {
+        } else if (null != refitCheckFixable) {
             btnRefit.setEnabled(false);
-            btnRefit.setToolTipText(refit.checkFixable());
+            btnRefit.setToolTipText(refitCheckFixable);
             btnSaveForLater.setEnabled(true);
         } else if (refit.getRefitClass() == Refit.NO_CHANGE && entity.getWeight() == testEntity.calculateWeight()) {
             btnRefit.setEnabled(false);
@@ -411,15 +436,15 @@ public class MekLabTab extends CampaignGuiTab {
         lblCost.setText(refit.getCost().toAmountAndSymbolString());
         lblMove.setText("Movement: " + walk + "/" + run + "/" + jump);
         if (bvDiff > 0) {
-            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true) + " (<font color='"
+            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true, true) + " (<font color='"
                                 + ReportingUtilities.getPositiveColor() + "'>+"
                                 + bvDiff + "</font>)</html>");
         } else if (bvDiff < 0) {
-            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true) + " (<font color='"
+            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true, true) + " (<font color='"
                                 + ReportingUtilities.getNegativeColor() + "'>" + bvDiff
                                 + "</font>)</html>");
         } else {
-            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true) + " (+" + bvDiff + ")</html>");
+            lblBV.setText("<html>BV: " + entity.calculateBattleValue(true, true, true) + " (+" + bvDiff + ")</html>");
         }
 
         if (currentTonnage != tonnage) {
@@ -610,11 +635,11 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure/Armor", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Criticals", new JScrollPaneWithSpeed(buildTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure/Armor", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Criticals", new FastJScrollPane(buildTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -625,6 +650,9 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // A full refresh (e.g. an infantry Disposable Weapon or primary/secondary weapon change) must also
+            // re-evaluate the refit so the Begin Refit button reflects the change, not just the MML preview.
+            refreshRefitSummary();
         }
 
         @Override
@@ -739,12 +767,12 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure/Armor", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Criticals", new JScrollPaneWithSpeed(buildTab));
-            addTab("Transport Bays", new JScrollPaneWithSpeed(transportTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure/Armor", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Criticals", new FastJScrollPane(buildTab));
+            addTab("Transport Bays", new FastJScrollPane(transportTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -756,6 +784,8 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // Re-evaluate the refit so a weapon/equipment change enables the Begin Refit button.
+            refreshRefitSummary();
         }
 
         @Override
@@ -867,11 +897,11 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure/Armor", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Critical", new JScrollPaneWithSpeed(buildTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure/Armor", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Critical", new FastJScrollPane(buildTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -882,6 +912,9 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // A full refresh (e.g. an infantry Disposable Weapon or primary/secondary weapon change) must also
+            // re-evaluate the refit so the Begin Refit button reflects the change, not just the MML preview.
+            refreshRefitSummary();
         }
 
         @Override
@@ -991,11 +1024,11 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Build", new JScrollPaneWithSpeed(buildTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Build", new FastJScrollPane(buildTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1006,6 +1039,9 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // A full refresh (e.g. an infantry Disposable Weapon or primary/secondary weapon change) must also
+            // re-evaluate the refit so the Begin Refit button reflects the change, not just the MML preview.
+            refreshRefitSummary();
         }
 
         @Override
@@ -1121,13 +1157,13 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure", new JScrollPaneWithSpeed(structureTab));
-            addTab("Armor", new JScrollPaneWithSpeed(armorTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Build", new JScrollPaneWithSpeed(buildTab));
-            addTab("Transport", new JScrollPaneWithSpeed(transportTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure", new FastJScrollPane(structureTab));
+            addTab("Armor", new FastJScrollPane(armorTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Build", new FastJScrollPane(buildTab));
+            addTab("Transport", new FastJScrollPane(transportTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1140,6 +1176,8 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // Re-evaluate the refit so a weapon/equipment change enables the Begin Refit button.
+            refreshRefitSummary();
         }
 
         @Override
@@ -1225,6 +1263,7 @@ public class MekLabTab extends CampaignGuiTab {
         private BAStructureTab structureTab;
         private BAEquipmentTab equipmentTab;
         private BABuildTab buildTab;
+        private PreviewTab previewTab;
 
         public BattleArmorPanel(BattleArmor ba) {
             entity = ba;
@@ -1248,11 +1287,13 @@ public class MekLabTab extends CampaignGuiTab {
             equipmentTab.addRefreshedListener(this);
             buildTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
+            previewTab = new PreviewTab(this);
 
-            addTab("Structure", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Criticals", new JScrollPaneWithSpeed(buildTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
+            addTab("Structure", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Criticals", new FastJScrollPane(buildTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1261,7 +1302,11 @@ public class MekLabTab extends CampaignGuiTab {
             structureTab.refresh();
             equipmentTab.refresh();
             buildTab.refresh();
+            previewTab.refresh();
             refreshSummary();
+            // A full refresh (e.g. an infantry Disposable Weapon or primary/secondary weapon change) must also
+            // re-evaluate the refit so the Begin Refit button reflects the change, not just the MML preview.
+            refreshRefitSummary();
         }
 
         @Override
@@ -1308,7 +1353,7 @@ public class MekLabTab extends CampaignGuiTab {
 
         @Override
         public void refreshPreview() {
-            structureTab.refreshPreview();
+            previewTab.refresh();
         }
 
         @Override
@@ -1365,9 +1410,9 @@ public class MekLabTab extends CampaignGuiTab {
             FluffTab fluffTab = new FluffTab(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Build", new JScrollPaneWithSpeed(structureTab));
-            addTab("Fluff", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Build", new FastJScrollPane(structureTab));
+            addTab("Fluff", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1376,6 +1421,8 @@ public class MekLabTab extends CampaignGuiTab {
             structureTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // Re-evaluate the refit so a weapon/equipment change enables the Begin Refit button (infantry et al.).
+            refreshRefitSummary();
         }
 
         @Override
@@ -1483,11 +1530,11 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure/Armor", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Critical", new JScrollPaneWithSpeed(buildTab));
-            addTab("FluffTab", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure/Armor", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Critical", new FastJScrollPane(buildTab));
+            addTab("FluffTab", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1498,6 +1545,9 @@ public class MekLabTab extends CampaignGuiTab {
             buildTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // A full refresh (e.g. an infantry Disposable Weapon or primary/secondary weapon change) must also
+            // re-evaluate the refit so the Begin Refit button reflects the change, not just the MML preview.
+            refreshRefitSummary();
         }
 
         @Override
@@ -1613,12 +1663,12 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.addRefreshedListener(this);
             fluffTab.setRefreshedListener(this);
 
-            addTab("Structure/Armor", new JScrollPaneWithSpeed(structureTab));
-            addTab("Equipment", new JScrollPaneWithSpeed(equipmentTab));
-            addTab("Assign Criticals", new JScrollPaneWithSpeed(buildTab));
-            addTab("Transport Bays", new JScrollPaneWithSpeed(transportTab));
-            addTab("FluffTab", new JScrollPaneWithSpeed(fluffTab));
-            addTab("Preview", new JScrollPaneWithSpeed(previewTab));
+            addTab("Structure/Armor", new FastJScrollPane(structureTab));
+            addTab("Equipment", new FastJScrollPane(equipmentTab));
+            addTab("Assign Criticals", new FastJScrollPane(buildTab));
+            addTab("Transport Bays", new FastJScrollPane(transportTab));
+            addTab("FluffTab", new FastJScrollPane(fluffTab));
+            addTab("Preview", new FastJScrollPane(previewTab));
             this.repaint();
         }
 
@@ -1630,6 +1680,8 @@ public class MekLabTab extends CampaignGuiTab {
             transportTab.refresh();
             previewTab.refresh();
             refreshSummary();
+            // Re-evaluate the refit so a weapon/equipment change enables the Begin Refit button.
+            refreshRefitSummary();
         }
 
         @Override

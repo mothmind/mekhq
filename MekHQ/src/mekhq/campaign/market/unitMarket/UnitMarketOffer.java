@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -42,6 +42,7 @@ import megamek.common.loaders.MekSummaryCache;
 import megamek.common.units.Entity;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.market.enums.UnitMarketType;
@@ -139,12 +140,19 @@ public class UnitMarketOffer {
     public Money getPrice() {
         Money cost = Money.of((double) getUnit().getCost()).multipliedBy(getPercent()).dividedBy(100);
 
-        if (getEntity().isMixedTech()) {
-            cost = cost.multipliedBy(campaignOptions.getMixedTechUnitPriceMultiplier());
-        } else if (getEntity().isClan()) {
-            cost = cost.multipliedBy(campaignOptions.getClanUnitPriceMultiplier());
+        final Entity entity = getEntity();
+        if (entity == null) {
+            // The unit failed to load; skip the tech-based price multiplier rather than crashing the market display.
+            // We should be dropping it elsewhere, so this is just added security.
+            return cost;
+        }
+
+        if (entity.isMixedTech()) {
+            cost = cost.multipliedBy(campaignOptions.get(CampaignOption.MIXED_TECH_UNIT_PRICE_MULTIPLIER));
+        } else if (entity.isClan()) {
+            cost = cost.multipliedBy(campaignOptions.get(CampaignOption.CLAN_UNIT_PRICE_MULTIPLIER));
         } else { // Inner Sphere Entity
-            cost = cost.multipliedBy(campaignOptions.getInnerSphereUnitPriceMultiplier());
+            cost = cost.multipliedBy(campaignOptions.get(CampaignOption.INNER_SPHERE_UNIT_PRICE_MULTIPLIER));
         }
 
         return cost;
@@ -192,6 +200,15 @@ public class UnitMarketOffer {
             }
         } catch (Exception ex) {
             LOGGER.error("", ex);
+            return null;
+        }
+
+        // The MekSummary can be present in the cache index while the underlying file no longer parses
+        // (stale/broken custom, moved or corrupt file). Such an offer is unpurchasable, so drop it here
+        // rather than let it linger as a phantom row that crashes the market display and cannot be bought.
+        if (retVal.getEntity() == null) {
+            LOGGER.error("Failed to load entity for unit {}, removing the offer from the market.",
+                  retVal.getUnit().getName());
             return null;
         }
 

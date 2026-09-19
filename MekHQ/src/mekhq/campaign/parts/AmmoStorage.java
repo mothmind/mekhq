@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -44,6 +44,7 @@ import megamek.common.equipment.AmmoType;
 import megamek.common.rolls.TargetRoll;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.equipment.EquipmentPart;
 import mekhq.campaign.parts.equipment.MissingEquipmentPart;
@@ -88,10 +89,22 @@ public class AmmoStorage extends EquipmentPart implements IAcquisitionWork {
 
     @Override
     public double getTonnage() {
-        if (getType().getKgPerShot() > 0) {
-            return getType().getKgPerShot() * (shots / 1000.0);
+        AmmoType type = getType();
+        // Prefer the per-shot weight when a real one is available. getKgPerShot() falls back to
+        // 1000.0 / getShots() when no explicit weight is set, so for ammo with no per-ton shot capacity
+        // (notably infantry ammo, getShots() == 0) it returns Infinity - guard against that non-finite
+        // value here rather than letting it propagate.
+        double kgPerShot = type.getKgPerShot();
+        if (Double.isFinite(kgPerShot) && kgPerShot > 0) {
+            return kgPerShot * (shots / 1000.0);
         }
-        return ((double) shots / getType().getShots());
+        // Fall back to shots-per-ton, but only when there is a per-ton capacity to divide by. Otherwise a
+        // non-finite tonnage would poison cargo/warehouse totals and crash the Command Center when handed to
+        // BigDecimal (see MekHQ issue #9616). Treat such ammo as weightless.
+        if (type.getShots() > 0) {
+            return (double) shots / type.getShots();
+        }
+        return 0.0;
     }
 
     @Override
@@ -134,12 +147,17 @@ public class AmmoStorage extends EquipmentPart implements IAcquisitionWork {
     }
 
     @Override
+    public int getBaseQuantityForPartsInUse() {
+        return this.getShots();
+    }
+
+    @Override
     public int getQuantityForPartsInUse() {
         if (isPartUsedOrReserved()) {
             return 0;
         }
 
-        return this.getShots();
+        return getBaseQuantityForPartsInUse();
     }
 
     @Override
@@ -289,7 +307,8 @@ public class AmmoStorage extends EquipmentPart implements IAcquisitionWork {
     public String find(int transitDays, double valueMultiplier) {
         AmmoStorage newPart = getNewPart();
         newPart.setBrandNew(true);
-        if (campaign.getQuartermaster().buyPart(newPart, valueMultiplier, transitDays)) {
+        // Deliver to this order's own warehouse (a base warehouse for a base order, else the campaign warehouse).
+        if (campaign.getQuartermaster().buyPart(newPart, valueMultiplier, transitDays, getWarehouse())) {
             return "<font color='" + ReportingUtilities.getPositiveColor()
                          + "'><b> part found</b>.</font> It will be delivered in " + transitDays + " days.";
         } else {
@@ -316,7 +335,7 @@ public class AmmoStorage extends EquipmentPart implements IAcquisitionWork {
         toReturn += ">";
         toReturn += "<b>" + getAcquisitionDisplayName() + "</b> " + getAcquisitionBonus() + "<br/>";
         toReturn += getAcquisitionExtraDesc() + "<br/>";
-        PartInventory inventories = getCampaign().getPartInventory(getAcquisitionPart());
+        PartInventory inventories = getPartInventory(getAcquisitionPart());
         toReturn += inventories.getTransitOrderedDetails() + "<br/>";
         toReturn += getActualValue().toAmountAndSymbolString() + "<br/>";
         toReturn += "</font></html>";
@@ -356,10 +375,10 @@ public class AmmoStorage extends EquipmentPart implements IAcquisitionWork {
     public TargetRoll getAllAcquisitionMods() {
         TargetRoll target = new TargetRoll();
         // Faction and Tech mod
-        if (isClanTechBase() && (campaign.getCampaignOptions().getClanAcquisitionPenalty() > 0)) {
-            target.addModifier(campaign.getCampaignOptions().getClanAcquisitionPenalty(), "clan-tech");
-        } else if (campaign.getCampaignOptions().getIsAcquisitionPenalty() > 0) {
-            target.addModifier(campaign.getCampaignOptions().getIsAcquisitionPenalty(), "Inner Sphere tech");
+        if (isClanTechBase() && (campaign.getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY) > 0)) {
+            target.addModifier(campaign.getCampaignOptions().get(CampaignOption.CLAN_ACQUISITION_PENALTY), "clan-tech");
+        } else if (campaign.getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY) > 0) {
+            target.addModifier(campaign.getCampaignOptions().get(CampaignOption.IS_ACQUISITION_PENALTY), "Inner Sphere tech");
         }
         // availability mod
         AvailabilityValue avail = getAvailability();

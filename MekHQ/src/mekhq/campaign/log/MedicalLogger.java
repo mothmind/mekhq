@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2018-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,12 +32,15 @@
  */
 package mekhq.campaign.log;
 
+import static mekhq.campaign.enums.DailyReportType.MEDICAL;
+
 import java.text.MessageFormat;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.ResourceBundle;
 
 import mekhq.MekHQ;
+import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Injury;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.GenderDescriptors;
@@ -227,6 +230,12 @@ public class MedicalLogger {
               logEntriesResourceMap.getString("dismissedFromInfirmary.text")));
     }
 
+    public static void dismissedFromInfirmary(Person person, Campaign campaign) {
+        String message = person.getHyperlinkedName() + " " +
+                               logEntriesResourceMap.getString("dismissedFromInfirmary.text").toLowerCase();
+        campaign.addReport(MEDICAL, message);
+    }
+
     public static void deliveredBaby(Person patient, Person baby, LocalDate date) {
         String message = logEntriesResourceMap.getString("deliveredBaby.text");
         MedicalLogEntry medicalLogEntry = new MedicalLogEntry(date,
@@ -244,13 +253,13 @@ public class MedicalLogger {
         patient.addMedicalLogEntry(new MedicalLogEntry(date, message));
     }
 
-    public static void unsuccessfullyTreatedAltAdvancedMedical(Person patient, LocalDate date, String injuryName) {
-        String message = logEntriesResourceMap.getString("unsuccessfullyTreatedAltAdvancedMedical.text");
+    public static void permanentInjuryAltAdvancedMedical(Person patient, LocalDate date, String injuryName) {
+        String message = logEntriesResourceMap.getString("permanentInjuryAltAdvancedMedical.text");
         patient.addMedicalLogEntry(new MedicalLogEntry(date, MessageFormat.format(message, injuryName)));
     }
 
-    public static void permanentInjuryAltAdvancedMedical(Person patient, LocalDate date, String injuryName) {
-        String message = logEntriesResourceMap.getString("permanentInjuryAltAdvancedMedical.text");
+    public static void medicalComplicationAltAdvancedMedical(Person patient, LocalDate date, String injuryName) {
+        String message = logEntriesResourceMap.getString("medicalComplicationAltAdvancedMedical.text");
         patient.addMedicalLogEntry(new MedicalLogEntry(date, MessageFormat.format(message, injuryName)));
     }
 }

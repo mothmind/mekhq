@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -260,12 +260,12 @@ public class EnginePart extends Part {
             if (unit.getEntity() instanceof ProtoMek) {
                 ((ProtoMek) unit.getEntity()).setEngineHit(true);
             }
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -437,11 +437,27 @@ public class EnginePart extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        if (getEngine().hasFlag(Engine.TANK_ENGINE)) {
-            return skillType.equals(SkillType.S_TECH_MECHANIC);
-        } else {
-            return skillType.equals(SkillType.S_TECH_MEK) || skillType.equals(SkillType.S_TECH_AERO);
-        }
+        return skillType.equals(isNuclearEngineType(getEngine().getEngineType()) ?
+                                      SkillType.S_TECH_NUCLEAR :
+                                      SkillType.S_TECH_MECHANICAL);
+    }
+
+    /**
+     * Classifies an {@link Engine} type constant as a nuclear (fusion or fission) power plant, as opposed to a
+     * non-nuclear engine such as an internal-combustion engine, fuel cell, battery, or solar plant.
+     *
+     * @param engineType an {@link Engine} type constant (e.g. {@link Engine#NORMAL_ENGINE})
+     *
+     * @return {@code true} if the engine is a fusion or fission plant; {@code false} otherwise
+     *
+     * @since 0.51.01
+     */
+    public static boolean isNuclearEngineType(int engineType) {
+        return switch (engineType) {
+            case Engine.NORMAL_ENGINE, Engine.XL_ENGINE, Engine.XXL_ENGINE, Engine.LIGHT_ENGINE, Engine.COMPACT_ENGINE,
+                 Engine.FISSION -> true;
+            default -> false;
+        };
     }
 
     @Override

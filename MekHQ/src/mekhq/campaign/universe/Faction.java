@@ -34,6 +34,8 @@
 package mekhq.campaign.universe;
 
 import static megamek.common.compute.Compute.randomInt;
+import static mekhq.MHQConstants.FORTRESS_REPUBLIC_START;
+import static mekhq.MHQConstants.FORTRESS_REPUBLIC_TERRA_ONLY_END;
 
 import java.awt.Color;
 import java.nio.file.Path;
@@ -48,6 +50,7 @@ import megamek.common.universe.Faction2;
 import megamek.common.universe.FactionLeaderData;
 import megamek.common.universe.FactionTag;
 import megamek.common.universe.HonorRating;
+import mekhq.MHQConstants;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.ranks.RankSystem;
@@ -61,8 +64,17 @@ public class Faction {
     // region Variable Declarations
     public static final String DEFAULT_CODE = "???";
     public static final String MERCENARY_FACTION_CODE = "MERC";
+    public static final String REBEL_FACTION_CODE = "REB";
     public static final String PIRATE_FACTION_CODE = "PIR";
+    public static final String BANDIT_CASTE_FACTION_CODE = "BAN";
     public static final String COMSTAR_FACTION_CODE = "CS";
+    public static final String WORD_OF_BLAKE_FACTION_CODE = "WOB";
+    public static final String TORTUGA_DOMINIONS_FACTION_CODE = "TD";
+    public static final String INDEPENDENT_FACTION_CODE = "IND";
+    public static final String CLAN_FACTION_CODE = "CLAN";
+    public static final String REPUBLIC_OF_THE_SPHERE_FACTION_CODE = "ROS";
+    public static final String DISPUTED_FACTION_CODE = "DIS";
+    public static final String ABANDONED_FACTION_CODE = "ABN";
 
     private Faction2 faction2;
 
@@ -141,8 +153,8 @@ public class Faction {
         }
         List<FactionRecord.DateRange> active = faction2.getYearsActive();
         if (!active.isEmpty()) {
-            start = Objects.requireNonNullElse(active.get(0).start, 0);
-            end = Objects.requireNonNullElse(active.get(active.size() - 1).end, 9999);
+            start = Objects.requireNonNullElse(active.getFirst().start, 0);
+            end = Objects.requireNonNullElse(active.getLast().end, 9999);
         }
         HonorRating preInvasion = faction2.getPreInvasionHonorRating();
         HonorRating postInvasion = faction2.getPostInvasionHonorRating();
@@ -173,6 +185,65 @@ public class Faction {
         return alternativeFactionCodes;
     }
 
+    /**
+     * Tests whether this faction is institutionally compatible with another faction via the {@code fallBackFactions}
+     * successor/predecessor data already populated in the YAML faction files.
+     *
+     * <p>Used by faction-restricted academy access (and any future eligibility check) for non-FedCom
+     * faction successions: Clan Ghost Bear / Free Rasalhague Republic into Rasalhague Dominion, ComStar into Word of
+     * Blake, and similar mergers/splits. The check is bidirectional — either side's {@code fallBackFactions} can carry
+     * the relationship — because the YAMLs only declare the successor's predecessors (e.g.
+     * {@code RD.fallBackFactions = [CGB, FRR]}), never the inverse.
+     *
+     * <p>Meta-faction codes are excluded as compatibility <em>targets</em>: a real faction is never
+     * considered "compatible" with the abstract meta-faction {@code IS} (or {@code CLAN.IS}, or any {@code Periphery.*}
+     * / {@code CLAN.*} code) just because the real faction's {@code fallBackFactions} list includes that meta code as a
+     * generic data-lookup fallback. Most playable Inner Sphere factions list {@code IS} as a fallback for the
+     * {@link mekhq.campaign.universe.RandomFactionGenerator} machinery, so without this exclusion any of them would
+     * erroneously test compatible with the abstract IS umbrella.
+     *
+     * <p>The exclusion does <em>not</em> change comparisons between two real factions: LA and FS, for
+     * example, are correctly considered incompatible by this method because neither lists the other's short code in its
+     * fallbacks, regardless of any shared meta entries.
+     *
+     * <p>FedCom-specific era rules (LA seceding 3057, Yvonne reverting to Federated Suns 3067) are
+     * handled separately at the call site; this method intentionally does not look at the date.
+     *
+     * @param other the other faction to test compatibility against
+     *
+     * @return {@code true} if this and {@code other} are the same faction, or if either lists the other in its
+     *       {@code fallBackFactions} (after meta-code exclusion); {@code false} otherwise
+     */
+    public boolean isLineageCompatible(final @Nullable Faction other) {
+        if (other == null) {
+            return false;
+        }
+        if (this.equals(other)) {
+            return true;
+        }
+        if (containsNonMetaCode(this.alternativeFactionCodes, other.shortName)) {
+            return true;
+        }
+        return containsNonMetaCode(other.alternativeFactionCodes, this.shortName);
+    }
+
+    private static boolean containsNonMetaCode(@Nullable String[] codes, String target) {
+        if (codes == null || isMetaFactionCode(target)) {
+            return false;
+        }
+        for (String code : codes) {
+            if (target.equals(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isMetaFactionCode(String code) {
+        return "IS".equals(code) || "CLAN.IS".equals(code)
+                     || code.startsWith("Periphery.") || code.startsWith("CLAN.");
+    }
+
     public Color getColor() {
         return color;
     }
@@ -192,6 +263,15 @@ public class Faction {
 
     public Optional<String> getCamosFolder(int year) {
         return Optional.ofNullable(faction2 != null ? faction2.getCamosFolder(year) : null);
+    }
+
+    /**
+     * @param year the year to check
+     *
+     * @return {@code true} if this faction observed the Ares Conventions in the given year; {@code false} by default
+     */
+    public boolean isAresConventionsSignatory(int year) {
+        return faction2 != null && faction2.isAresConventionsSignatory(year);
     }
 
     public int getEraMod(int year) {
@@ -286,7 +366,8 @@ public class Faction {
         return layeredFormationIconBackgroundFilename;
     }
 
-    public void setLayeredFormationIconBackgroundFilename(final @Nullable String layeredFormationIconBackgroundFilename) {
+    public void setLayeredFormationIconBackgroundFilename(
+          final @Nullable String layeredFormationIconBackgroundFilename) {
         this.layeredFormationIconBackgroundFilename = layeredFormationIconBackgroundFilename;
     }
 
@@ -309,6 +390,20 @@ public class Faction {
     // region Checks
     public boolean isPlayable() {
         return is(FactionTag.PLAYABLE);
+    }
+
+    /**
+     * Returns whether this is a subordinate formation declared inside another command's file - an individual regiment
+     * of the Davion Brigade of Guards, say - rather than a command in its own right.
+     *
+     * <p>Subunits are loaded as full factions so that they stay selectable and generatable, which means they arrive in
+     * {@link Factions#getFactions()} alongside everything else. Anywhere the player is offered a choice of factions
+     * should leave them out, or a single faction's list grows by every regiment of every command it owns.</p>
+     *
+     * @return {@code true} when this faction came from another command's subunit declaration
+     */
+    public boolean isSubunit() {
+        return (faction2 != null) && faction2.isSubunit();
     }
 
     public boolean isMercenary() {
@@ -396,17 +491,52 @@ public class Faction {
         return isRebel() || isPirate();
     }
 
+    /**
+     * Determines whether the given faction/date/location falls within the Fortress Republic period.
+     *
+     * <p>If {@code factionShortName} is non-{@code null}, only the Republic of the Sphere qualifies. A
+     * {@code null} faction short name is treated as faction-agnostic, and only the date/location rules are
+     * applied.</p>
+     *
+     * <p>Terra remains affected during the Terra-only Fortress Republic window. All other locations are affected
+     * until the general Fortress Republic end date.</p>
+     *
+     * @param factionShortName the faction short name to check, or {@code null} to ignore faction
+     * @param currentDate      the date to check
+     * @param planetName       the planet name to check, or {@code null} if no planet is specified
+     *
+     * @return {@code true} if the supplied values are during the applicable Fortress Republic period; {@code false}
+     *       otherwise
+     */
+    public static boolean isDuringFortressRepublic(@Nullable String factionShortName, LocalDate currentDate,
+          @Nullable String planetName) {
+        if (factionShortName != null && !factionShortName.equals(REPUBLIC_OF_THE_SPHERE_FACTION_CODE)) {
+            return false;
+        }
+
+        if (currentDate.isBefore(FORTRESS_REPUBLIC_START)) {
+            return false;
+        }
+
+        boolean isTerra = planetName != null && planetName.equals("Terra");
+        if (isTerra && currentDate.isBefore(FORTRESS_REPUBLIC_TERRA_ONLY_END)) {
+            return true;
+        }
+
+        return currentDate.isBefore(MHQConstants.FORTRESS_REPUBLIC_END);
+    }
+
     public boolean isGovernment() {
         return !isClan() && (isComStar() || isISMajorOrSuperPower() || isMinorPower()
                                    || isPlanetaryGovt() || isIndependent());
     }
 
     public boolean isComStar() {
-        return "CS".equals(getShortName());
+        return COMSTAR_FACTION_CODE.equals(getShortName());
     }
 
     public boolean isWoB() {
-        return "WOB".equals(getShortName());
+        return WORD_OF_BLAKE_FACTION_CODE.equals(getShortName());
     }
 
     public boolean isComStarOrWoB() {
@@ -655,5 +785,33 @@ public class Faction {
      */
     public @Nullable FactionLeaderData getLeaderForYear(final int year) {
         return faction2 != null ? faction2.getFactionLeaderForYear(year) : null;
+    }
+
+    /**
+     * Determines whether this faction is a Homeworld Clan.
+     *
+     * <p>A faction qualifies as a Homeworld Clan if it is a Clan faction and one of its alternative faction codes
+     * matches {@code "Clan.HW"} (case-insensitive).
+     *
+     * @return {@code true} if this faction is a Clan and has {@code "Clan.HW"} among its alternative faction codes;
+     *       {@code false} otherwise
+     *
+     * @author Illiani
+     * @since 0.51.0
+     */
+    public boolean isHomeworldClan() {
+        if (isClan()) {
+            for (String factionCode : alternativeFactionCodes) {
+                if (factionCode.equalsIgnoreCase("Clan.HW")) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public boolean isUsesMercenaries(int year) {
+        return faction2 == null || faction2.isUsesMercenaries(year);
     }
 }

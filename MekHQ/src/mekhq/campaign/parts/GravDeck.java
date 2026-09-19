@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -45,6 +45,7 @@ import megamek.common.units.Entity;
 import megamek.common.units.Jumpship;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingGravDeck;
 import mekhq.campaign.parts.missing.MissingPart;
@@ -75,6 +76,7 @@ public class GravDeck extends Part {
     public static final int GRAV_DECK_TYPE_LARGE = 1;
     public static final int GRAV_DECK_TYPE_HUGE = 2;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public GravDeck() {
         this(0, 0, null, GRAV_DECK_TYPE_STANDARD);
     }
@@ -116,7 +118,7 @@ public class GravDeck extends Part {
 
             if (checkForDestruction
                       && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }
@@ -158,12 +160,12 @@ public class GravDeck extends Part {
         if (unit.getEntity() instanceof Jumpship) {
             ((Jumpship) unit.getEntity()).setGravDeckDamageFlag(deckNumber, 1);
 
-            Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+            Part spare = getWarehouse().checkForExistingSparePart(this);
             if (!salvage) {
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             } else if (null != spare) {
                 spare.changeQuantity(1);
-                campaign.getWarehouse().removePart(this);
+                getWarehouse().removePart(this);
             }
             unit.removePart(this);
             Part missing = getMissingPart();
@@ -247,7 +249,7 @@ public class GravDeck extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_VESSEL);
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
     }
 
     @Override

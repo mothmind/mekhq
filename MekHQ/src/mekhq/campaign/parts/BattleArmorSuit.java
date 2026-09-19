@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -63,6 +63,7 @@ import mekhq.campaign.unit.Unit;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * Battle Armor suits are crazy - you can't crit the equipment in them, so if we remove the suit we should remove all
@@ -320,6 +321,7 @@ public class BattleArmorSuit extends Part {
         return clan;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isQuad() {
         return quad;
     }
@@ -328,6 +330,7 @@ public class BattleArmorSuit extends Part {
         return weightClass;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public int getGroundMP() {
         return groundMP;
     }
@@ -449,7 +452,7 @@ public class BattleArmorSuit extends Part {
             if (unit.getEntity().getInternal(trooper) > 0) {
                 // then there is a trooper here, so remove a crewmember
                 if (!unit.getCrew().isEmpty()) {
-                    trooperToRemove = unit.getCrew().get(unit.getCrew().size() - 1);
+                    trooperToRemove = unit.getCrew().getLast();
                     // don't remove yet - we need to first set the internal to
                     // destroyed so, this slot gets skipped over when we reset the pilot
                 }
@@ -486,12 +489,12 @@ public class BattleArmorSuit extends Part {
         for (Part p : trooperParts) {
             p.remove(salvage);
         }
-        Part spare = campaign.getWarehouse().checkForExistingSparePart(this);
+        Part spare = getWarehouse().checkForExistingSparePart(this);
         if (!salvage) {
-            campaign.getWarehouse().removePart(this);
+            getWarehouse().removePart(this);
         } else if (null != spare) {
             spare.changeQuantity(1);
-            campaign.getWarehouse().removePart(this);
+            getWarehouse().removePart(this);
         }
         setUnit(null);
         updateConditionFromEntity(false);
@@ -509,7 +512,7 @@ public class BattleArmorSuit extends Part {
                 if (!checkForDestruction) {
                     remove(false);
                 } else {
-                    if (Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                    if (Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                         remove(false);
                     } else {
                         // it seems a little weird to change the entity here, but no other

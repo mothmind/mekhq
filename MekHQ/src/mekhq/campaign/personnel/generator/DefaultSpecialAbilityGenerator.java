@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -40,16 +40,18 @@ import mekhq.Utilities;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.Phenotype;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 public class DefaultSpecialAbilityGenerator extends AbstractSpecialAbilityGenerator {
     @Override
     public boolean generateSpecialAbilities(final Campaign campaign, final Person person, final int expLvl) {
-        if (campaign.getCampaignOptions().isUseAbilities()) {
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_ABILITIES)) {
             SingleSpecialAbilityGenerator singleSpecialAbilityGenerator = new SingleSpecialAbilityGenerator();
             singleSpecialAbilityGenerator.setSkillPreferences(getSkillPreferences());
 
             // base number of special abilities is based on a random roll
-            int numAbilities = Utilities.rollSpecialAbilities(getSkillPreferences().getSpecialAbilityBonus(expLvl));
+            int spaBonus = getSkillPreferences().getSpecialAbilityBonus(expLvl);
+            int numAbilities = Utilities.rollSpecialAbilities(spaBonus);
 
             // Then we generate up to that number, stopping if there are no potential
             // abilities to generate

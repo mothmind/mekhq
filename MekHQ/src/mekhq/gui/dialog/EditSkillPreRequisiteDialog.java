@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2014-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2014-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,6 +33,8 @@
  */
 package mekhq.gui.dialog;
 
+import static mekhq.utilities.MHQInternationalization.getText;
+
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.GridLayout;
@@ -49,11 +51,11 @@ import javax.swing.WindowConstants;
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.common.enums.SkillLevel;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.personnel.SkillPrerequisite;
 import mekhq.campaign.personnel.skills.SkillType;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 
 /**
  * @author Taharqa
@@ -109,21 +111,21 @@ public class EditSkillPreRequisiteDialog extends JDialog {
             panMain.add(choiceLvl);
         }
 
-        JPanel panButtons = new JPanel(new GridLayout(0, 2));
-        btnOK.setText("Done");
+        JPanel panButtons = new JPanel();
+        btnOK.setText(getText("Ok.text"));
         btnOK.addActionListener(evt -> done());
 
-        btnClose.setText("Cancel");
+        btnClose.setText(getText("Cancel.text"));
         btnClose.addActionListener(evt -> cancel());
 
         panButtons.add(btnOK);
         panButtons.add(btnClose);
 
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-        setTitle("Select Abilities");
+        setTitle(getText("EditSkillPreRequisiteDialog.title"));
         getContentPane().setLayout(new BorderLayout());
 
-        getContentPane().add(new JScrollPaneWithSpeed(panMain), BorderLayout.CENTER);
+        getContentPane().add(new FastJScrollPane(panMain), BorderLayout.CENTER);
         getContentPane().add(panButtons, BorderLayout.SOUTH);
 
         this.setPreferredSize(new Dimension(400, 700));

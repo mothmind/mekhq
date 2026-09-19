@@ -83,6 +83,8 @@ public final class InjuryTypes {
     public static final InjuryType PUNCTURED_LUNG = new PuncturedLung();
     public static final InjuryType CTE = new Cte();
     public static final InjuryType BROKEN_BACK = new BrokenBack();
+    public static final InjuryType AMPUTATION_RECOVERY = new AmputationRecovery();
+
     // New injury types go here (or extend the class)
     public static final InjuryType SEVERED_SPINE = new SeveredSpine();
     public static final InjuryType TRANSIT_DISORIENTATION_SYNDROME = new TransitDisorientationSyndrome();
@@ -92,11 +94,11 @@ public final class InjuryTypes {
     public static final InjuryType CATATONIA = new Catatonia();
 
     // Replacement Limbs
-    public static int REPLACEMENT_LIMB_MINIMUM_SKILL_REQUIRED_TYPES_3_4_5 = 5;
-    public static Money REPLACEMENT_LIMB_COST_ARM_TYPE_5 = Money.of(200000);
-    public static Money REPLACEMENT_LIMB_COST_HAND_TYPE_5 = Money.of(100000);
-    public static Money REPLACEMENT_LIMB_COST_LEG_TYPE_5 = Money.of(125000);
-    public static Money REPLACEMENT_LIMB_COST_FOOT_TYPE_5 = Money.of(50000);
+    public static final int REPLACEMENT_LIMB_MINIMUM_SKILL_REQUIRED_TYPES_3_4_5 = 5;
+    public static final Money REPLACEMENT_LIMB_COST_ARM_TYPE_5 = Money.of(200000);
+    public static final Money REPLACEMENT_LIMB_COST_HAND_TYPE_5 = Money.of(100000);
+    public static final Money REPLACEMENT_LIMB_COST_LEG_TYPE_5 = Money.of(125000);
+    public static final Money REPLACEMENT_LIMB_COST_FOOT_TYPE_5 = Money.of(50000);
 
     private static boolean registered = false;
 
@@ -373,6 +375,9 @@ public final class InjuryTypes {
             InjuryType.register(242, "alt:BIRTH_DEFECT", AlternateInjuries.BIRTH_DEFECT);
             InjuryType.register(243, "alt:TERRIBLE_BRUISES", AlternateInjuries.TERRIBLE_BRUISES);
             InjuryType.register(244, "alt:OLD_WOUND", AlternateInjuries.OLD_WOUND);
+            InjuryType.register(245, "alt:AMPUTATION_RECOVERY", AlternateInjuries.AMPUTATION_RECOVERY);
+            InjuryType.register(246, "alt:MEDICAL_COMPLICATION", AlternateInjuries.MEDICAL_COMPLICATION);
+
 
             InjuryType.register("am:severed_spine", SEVERED_SPINE);
             InjuryType.register("am:replacement_limb_recovery", REPLACEMENT_LIMB_RECOVERY);
@@ -382,6 +387,7 @@ public final class InjuryTypes {
             InjuryType.register("am:Crippling_Flashbacks", CRIPPLING_FLASHBACKS);
             InjuryType.register("am:Childlike_Regression", CHILDLIKE_REGRESSION);
             InjuryType.register("am:Catatonia", CATATONIA);
+            InjuryType.register("am:amputation_recovery", AMPUTATION_RECOVERY);
             registered = true;
         }
     }
@@ -607,6 +613,34 @@ public final class InjuryTypes {
                 default -> Collections.emptyList();
             };
         }
+    }
+
+    public static final class AmputationRecovery extends AMInjuryType {
+        public AmputationRecovery() {
+            recoveryTime = 10;
+            permanent = false;
+            simpleName = "amputation recovery";
+            level = InjuryLevel.MINOR;
+        }
+
+        @Override
+        public boolean isValidInLocation(BodyLocation loc) {
+            return loc.isLimb();
+        }
+
+        @Override
+        public String getName(BodyLocation loc, int severity) {
+            return String.format("%s Amputation Recovery", loc.locationName());
+        }
+
+        @Override
+        public String getFluffText(BodyLocation loc, int severity, Gender gender) {
+            return "Amputation recovery for " +
+                         GenderDescriptors.HIS_HER_THEIR.getDescriptor(gender) +
+                         ' ' +
+                         loc.locationName();
+        }
+
     }
 
     public static final class ReplacementLimbRecovery extends AMInjuryType {

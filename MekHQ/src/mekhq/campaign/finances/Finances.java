@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 - Jay Lawson (jaylawson39 at yahoo.com). All Rights Reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -35,6 +35,7 @@ package mekhq.campaign.finances;
 
 import static mekhq.campaign.enums.DailyReportType.FINANCES;
 import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
+import static mekhq.campaign.finances.WeeklyNetWorth.parseWeeklyNetWorthFromXML;
 import static mekhq.utilities.ReportingUtilities.getNegativeColor;
 import static mekhq.utilities.ReportingUtilities.messageSurroundedBySpanWithColor;
 
@@ -43,6 +44,7 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.Period;
 import java.time.temporal.ChronoUnit;
@@ -57,13 +59,13 @@ import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.loans.LoanDefaultedEvent;
 import mekhq.campaign.events.transactions.TransactionCreditEvent;
 import mekhq.campaign.events.transactions.TransactionDebitEvent;
 import mekhq.campaign.finances.enums.TransactionType;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.Contract;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.personnel.Person;
 import mekhq.io.FileType;
 import mekhq.utilities.MHQXMLUtility;
@@ -89,6 +91,8 @@ public class Finances {
     private int failedCollateral;
     private LocalDate wentIntoDebt;
 
+    private List<WeeklyNetWorth> netWorthOverTime;
+
     private Money balance;
     private int transactionSize = -1;
 
@@ -99,6 +103,7 @@ public class Finances {
         loanDefaults = 0;
         failedCollateral = 0;
         wentIntoDebt = null;
+        netWorthOverTime = new ArrayList<>();
     }
 
     public List<Transaction> getTransactions() {
@@ -149,6 +154,21 @@ public class Finances {
         this.wentIntoDebt = wentIntoDebt;
     }
 
+    public List<WeeklyNetWorth> getNetWorthOverTime() {
+        return netWorthOverTime;
+    }
+
+    public void setNetWorthOverTime(List<WeeklyNetWorth> netWorthOverTime) {
+        this.netWorthOverTime = netWorthOverTime;
+    }
+
+    public void addWeeklyNetWorth(LocalDate date, Money amount) {
+        if (netWorthOverTime.size() == (52 * 10)) { //keep about 10 years max TODO add option to select number of years
+            netWorthOverTime.removeFirst();
+        }
+        this.netWorthOverTime.add(new WeeklyNetWorth(date, amount));
+    }
+
     /**
      * Current campaign balance. Will calculate the current campaign balance based on the campaign's transactions.
      * Cached using the current transaction count.
@@ -192,7 +212,12 @@ public class Finances {
         return balance.plus(loans.stream().map(Loan::determineRemainingValue).collect(Collectors.toList()));
     }
 
-    public boolean isInDebt() {
+    /**
+     * Checks whether the company currently has any active loans.
+     *
+     * @return {@code true} if the loan balance is positive, {@code false} otherwise
+     */
+    public boolean hasActiveLoans() {
         return getLoanBalance().isPositive();
     }
 
@@ -232,7 +257,7 @@ public class Finances {
         }
         Transaction t = new Transaction(type, date, amount.multipliedBy(-1), reason);
         transactions.add(t);
-        if ((wentIntoDebt != null) && !isInDebt()) {
+        if ((wentIntoDebt != null) && !hasActiveLoans()) {
             wentIntoDebt = null;
         }
         MekHQ.triggerEvent(new TransactionDebitEvent(t));
@@ -279,7 +304,7 @@ public class Finances {
     public void credit(final TransactionType type, final LocalDate date, final Money amount, final String reason) {
         Transaction t = new Transaction(type, date, amount, reason);
         transactions.add(t);
-        if ((wentIntoDebt == null) && isInDebt()) {
+        if ((wentIntoDebt == null) && hasActiveLoans()) {
             wentIntoDebt = date;
         }
         MekHQ.triggerEvent(new TransactionCreditEvent(t));
@@ -290,11 +315,11 @@ public class Finances {
      * at the beginning of each new financial term
      */
     public void newFiscalYear(final Campaign campaign) {
-        if (campaign.getCampaignOptions().isNewFinancialYearFinancesToCSVExport()) {
-            final String exportFileName = campaign.getName() +
+        if (campaign.getCampaignOptions().get(CampaignOption.NEW_FINANCIAL_YEAR_FINANCES_TO_CSV_EXPORT)) {
+            final String exportFileName = campaign.getPlayerForce().getName() +
                                                 " Finances for " +
                                                 campaign.getCampaignOptions()
-                                                      .getFinancialYearDuration()
+                                                      .get(CampaignOption.FINANCIAL_YEAR_DURATION)
                                                       .getExportFilenameDateString(campaign.getLocalDate()) +
                                                 '.' +
                                                 FileType.CSV.getRecommendedExtension();
@@ -325,8 +350,9 @@ public class Finances {
     public void newDay(final Campaign campaign, final LocalDate yesterday, final LocalDate today) {
         // Getting frequently used variables to simplify later statements
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        boolean isNewYear = campaignOptions.getFinancialYearDuration().isEndOfFinancialYear(today);
+        boolean isNewYear = campaignOptions.get(CampaignOption.FINANCIAL_YEAR_DURATION).isEndOfFinancialYear(today);
         boolean isNewMonth = (today.getDayOfMonth() == 1);
+        boolean isMonday = today.getDayOfWeek() == DayOfWeek.MONDAY;
         Accountant accountant = campaign.getAccountant();
         // check for a new fiscal year
         if (isNewYear) {
@@ -339,14 +365,14 @@ public class Finances {
             newFiscalYear(campaign);
 
             // pay taxes
-            if ((campaignOptions.isUseTaxes()) && (!profits.isZero())) {
+            if ((campaignOptions.get(CampaignOption.USE_TAXES)) && (!profits.isZero())) {
                 payTaxes(campaign, profits);
             }
         }
 
         // Handle contract payments
         if (isNewMonth) {
-            for (Contract contract : campaign.getActiveContracts()) {
+            for (AbstractContract contract : campaign.getActiveContracts()) {
                 credit(TransactionType.CONTRACT_PAYMENT,
                       today,
                       contract.getMonthlyPayOut(),
@@ -364,8 +390,8 @@ public class Finances {
 
         // Handle peacetime operating expenses, payroll, and loan payments
         if (isNewMonth) {
-            if (campaignOptions.isUsePeacetimeCost()) {
-                if (!campaignOptions.isShowPeacetimeCost()) {
+            if (campaignOptions.get(CampaignOption.USE_PEACETIME_COST)) {
+                if (!campaignOptions.get(CampaignOption.SHOW_PEACETIME_COST)) {
                     // Do not include salaries as that will be tracked below
                     Money peacetimeCost = accountant.getPeacetimeCost(false);
 
@@ -416,7 +442,7 @@ public class Finances {
                 }
             }
 
-            if (campaignOptions.isPayForSalaries()) {
+            if (campaignOptions.get(CampaignOption.PAY_FOR_SALARIES)) {
 
                 Money payRollCost = accountant.getPayRoll();
 
@@ -425,15 +451,15 @@ public class Finances {
                       payRollCost,
                       resourceMap.getString("Salaries.title"),
                       accountant.getPayRollSummary(),
-                      campaignOptions.isTrackTotalEarnings())) {
+                      campaignOptions.get(CampaignOption.TRACK_TOTAL_EARNINGS))) {
                     campaign.addReport(FINANCES, String.format(resourceMap.getString("Salaries.text"),
                           payRollCost.toAmountAndSymbolString()));
 
                 } else {
                     addReportInsufficientFunds(campaign, resourceMap.getString("Payroll.text"));
 
-                    if (campaignOptions.isUseLoyaltyModifiers()) {
-                        for (Person person : campaign.getPersonnel()) {
+                    if (campaignOptions.get(CampaignOption.USE_LOYALTY_MODIFIERS)) {
+                        for (Person person : campaign.getPlayerForce().getHumanResources().getPersonnel()) {
                             if (person.getStatus().isDepartedUnit()) {
                                 continue;
                             }
@@ -457,7 +483,7 @@ public class Finances {
             }
 
             // Handle overhead expenses
-            if (campaignOptions.isPayForOverhead()) {
+            if (campaignOptions.get(CampaignOption.PAY_FOR_OVERHEAD)) {
                 Money overheadCost = accountant.getOverheadExpenses();
 
                 if (debit(TransactionType.OVERHEAD, today, overheadCost, resourceMap.getString("Overhead.title"))) {
@@ -512,11 +538,21 @@ public class Finances {
             }
         }
 
-        if ((getWentIntoDebt() != null) && !isInDebt()) {
+        if ((getWentIntoDebt() != null) && !hasActiveLoans()) {
             setWentIntoDebt(null);
         }
 
         loans = newLoans;
+
+        //Create a starting datapoint when there are none so far, then add one each monday
+        if (netWorthOverTime.isEmpty() || isMonday) {
+            boolean alreadyRecordedToday = !netWorthOverTime.isEmpty() &&
+                                                 netWorthOverTime.getLast().getDate().equals(campaign.getLocalDate());
+            if (!alreadyRecordedToday) {
+                FinancialReport financialReport = FinancialReport.calculate(campaign);
+                addWeeklyNetWorth(campaign.getLocalDate(), financialReport.getNetWorth());
+            }
+        }
     }
 
     /**
@@ -541,6 +577,54 @@ public class Finances {
         }
     }
 
+    private void payoutShares(Campaign campaign, AbstractContract contract, LocalDate date) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_SHARE_SYSTEM)) {
+            return;
+        }
+
+        Money shares = contract.getMonthlyPayOut().multipliedBy(contract.getSharesPercent()).dividedBy(100);
+        if (!shares.isGreaterThan(Money.zero())) {
+            return;
+        }
+
+        if (debit(TransactionType.SALARIES, date, shares,
+              String.format(resourceMap.getString("ContractSharePayment.text"), contract.getName()))) {
+            campaign.addReport(FINANCES, resourceMap.getString("DistributedShares.text"),
+                  shares.toAmountAndSymbolString());
+
+            payOutSharesToPersonnel(campaign, shares);
+        } else {
+            campaign.addReport(FINANCES, messageSurroundedBySpanWithColor(getNegativeColor(),
+                  String.format(resourceMap.getString("InsufficientFunds.text"),
+                        resourceMap.getString("Shares.text"))));
+            LOGGER.error("Attempted to payout share amount larger than the payment of the contract");
+        }
+    }
+
+    /**
+     * Distributes an already-debited share pot across the personnel holding shares, in proportion to how many each
+     * holds.
+     *
+     * @param campaign where to pull personnel from
+     * @param shares   total value of the shares to pay out
+     */
+    public void payOutSharesToPersonnel(Campaign campaign, Money shares) {
+        boolean sharesForAll = campaign.getCampaignOptions().get(CampaignOption.SHARES_FOR_ALL);
+        List<Person> shareholders = campaign.getPlayerForce().getHumanResources().getActivePersonnel(false, true);
+
+        int numberOfShares = shareholders.stream()
+                                   .mapToInt(person -> person.getNumShares(campaign, sharesForAll))
+                                   .sum();
+        if (numberOfShares <= 0) {
+            return;
+        }
+
+        Money singleShare = shares.dividedBy(numberOfShares);
+        for (Person person : shareholders) {
+            person.payPersonShares(campaign, singleShare, sharesForAll);
+        }
+    }
+
     /**
      * Calculates and pays the taxes for the given campaign based on the profits.
      *
@@ -548,62 +632,9 @@ public class Finances {
      * @param profits  The profits made by the campaign.
      */
     private void payTaxes(Campaign campaign, Money profits) {
-        Money taxAmount = profits.multipliedBy((double) campaign.getCampaignOptions().getTaxesPercentage() / 100)
-                                .round();
-
+        Money taxAmount = profits.multipliedBy(campaign.getCampaignOptions().get(CampaignOption.TAXES_PERCENTAGE) *
+                                                     0.01);
         debit(TransactionType.TAXES, campaign.getLocalDate(), taxAmount, resourceMap.getString("Taxes.finances"));
-    }
-
-    private void payoutShares(Campaign campaign, Contract contract, LocalDate date) {
-        if (campaign.getCampaignOptions().isUseAtB() &&
-                  campaign.getCampaignOptions().isUseShareSystem() &&
-                  (contract instanceof AtBContract)) {
-            Money shares = contract.getMonthlyPayOut().multipliedBy(contract.getSharesPercent()).dividedBy(100);
-            if (shares.isGreaterThan(Money.zero())) {
-                if (debit(TransactionType.SALARIES,
-                      date,
-                      shares,
-                      String.format(resourceMap.getString("ContractSharePayment.text"), contract.getName()))) {
-                    campaign.addReport(FINANCES, resourceMap.getString("DistributedShares.text"),
-                          shares.toAmountAndSymbolString());
-
-                    payOutSharesToPersonnel(campaign, shares);
-                } else {
-                    /*
-                     * This should not happen, as the shares payment should be less than the
-                     * contract payment that has just been made.
-                     */
-                    campaign.addReport(FINANCES, messageSurroundedBySpanWithColor(getNegativeColor(),
-                          String.format(resourceMap.getString("InsufficientFunds.text"), resourceMap.getString(
-                                "Shares.text"))));
-                    LOGGER.error("Attempted to payout share amount larger than the payment of the contract");
-                }
-            }
-        }
-    }
-
-    /**
-     * Shares calculate the amount debited without iterating through all the personnel, so it's not more efficient to
-     * provide that information to debit. Pay out shares manually for now.
-     *
-     * @param campaign where to pull personnel from
-     * @param shares   total value of the shares to pay out
-     */
-    public void payOutSharesToPersonnel(Campaign campaign, Money shares) {
-        if (campaign.getCampaignOptions().isTrackTotalEarnings()) {
-            boolean sharesForAll = campaign.getCampaignOptions().isSharesForAll();
-
-            int numberOfShares = campaign.getActivePersonnel(false, true)
-                                       .stream()
-                                       .mapToInt(person -> person.getNumShares(campaign, sharesForAll))
-                                       .sum();
-
-            Money singleShare = shares.dividedBy(numberOfShares);
-
-            for (Person person : campaign.getActivePersonnel(false, true)) {
-                person.payPersonShares(campaign, singleShare, sharesForAll);
-            }
-        }
     }
 
     public Money checkOverdueLoanPayments(Campaign campaign) {
@@ -630,7 +661,7 @@ public class Finances {
             }
         }
         loans = newLoans;
-        if ((wentIntoDebt != null) && !isInDebt()) {
+        if ((wentIntoDebt != null) && !hasActiveLoans()) {
             wentIntoDebt = null;
         }
         return overdueAmount;
@@ -638,7 +669,7 @@ public class Finances {
 
     public void removeLoan(Loan loan) {
         loans.remove(loan);
-        if ((wentIntoDebt != null) && !isInDebt()) {
+        if ((wentIntoDebt != null) && !hasActiveLoans()) {
             wentIntoDebt = null;
         }
     }
@@ -728,6 +759,13 @@ public class Finances {
         if (getWentIntoDebt() != null) {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "wentIntoDebt", getWentIntoDebt());
         }
+        if (!getNetWorthOverTime().isEmpty()) {
+            MHQXMLUtility.writeSimpleXMLOpenTag(pw, indent++, "netWorthOverTime");
+            for (final WeeklyNetWorth weeklyNetWorth : getNetWorthOverTime()) {
+                weeklyNetWorth.writeToXML(pw, indent);
+            }
+            MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "netWorthOverTime");
+        }
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "finances");
     }
 
@@ -755,6 +793,9 @@ public class Finances {
                         break;
                     case "wentIntoDebt":
                         retVal.setWentIntoDebt(MHQXMLUtility.parseDate(wn2.getTextContent().trim()));
+                        break;
+                    case "netWorthOverTime":
+                        retVal.setNetWorthOverTime(parseWeeklyNetWorthFromXML(wn2));
                         break;
                     default:
                         break;
@@ -805,6 +846,7 @@ public class Finances {
                      .map(Asset::generateInstanceFromXML)
                      .collect(Collectors.toList());
     }
+
     // endregion XML
     // endregion File I/O
 }

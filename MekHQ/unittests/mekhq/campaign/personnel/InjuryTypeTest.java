@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,15 +34,25 @@ package mekhq.campaign.personnel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
 import java.util.EnumSet;
 
-import org.junit.jupiter.api.Test;
-
+import megamek.common.enums.Gender;
+import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.personnel.enums.InjuryLevel;
 import mekhq.campaign.personnel.medical.BodyLocation;
+import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
+import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 /**
  * Test class for {@link InjuryType} register method
@@ -101,9 +111,9 @@ class InjuryTypeTest {
     @Test
     void testRegisterThrowsOnNullInjuryType() {
         // Attempting to register null injury type should throw NullPointerException
-        assertThrows(NullPointerException.class, () -> {
-            InjuryType.register(888888, "test:null_injury", null);
-        }, "Register should throw NullPointerException when injury type is null");
+        assertThrows(NullPointerException.class,
+              () -> InjuryType.register(888888, "test:null_injury", null),
+              "Register should throw NullPointerException when injury type is null");
     }
 
     @Test
@@ -112,9 +122,9 @@ class InjuryTypeTest {
         InjuryType testInjury = new TestInjuryType("testNullKey");
 
         // Attempting to register with null key should throw NullPointerException
-        assertThrows(NullPointerException.class, () -> {
-            InjuryType.register(777777, null, testInjury);
-        }, "Register should throw NullPointerException when key is null");
+        assertThrows(NullPointerException.class,
+              () -> InjuryType.register(777777, null, testInjury),
+              "Register should throw NullPointerException when key is null");
     }
 
     @Test
@@ -123,9 +133,9 @@ class InjuryTypeTest {
         InjuryType testInjury = new TestInjuryType("testEmptyKey");
 
         // Attempting to register with empty key should throw IllegalArgumentException
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            InjuryType.register(666666, "", testInjury);
-        }, "Register should throw IllegalArgumentException when key is empty");
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+              () -> InjuryType.register(666666, "", testInjury),
+              "Register should throw IllegalArgumentException when key is empty");
 
         assertEquals("Injury type key can't be an empty string.", exception.getMessage());
     }
@@ -143,9 +153,9 @@ class InjuryTypeTest {
         InjuryType.register(duplicateId, firstKey, firstInjury);
 
         // Attempting to register second injury type with same ID should throw IllegalArgumentException
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            InjuryType.register(duplicateId, secondKey, secondInjury);
-        }, "Register should throw IllegalArgumentException when ID is already registered");
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+              () -> InjuryType.register(duplicateId, secondKey, secondInjury),
+              "Register should throw IllegalArgumentException when ID is already registered");
 
         assertEquals("Injury type ID " + duplicateId + " is already registered.", exception.getMessage());
     }
@@ -161,9 +171,9 @@ class InjuryTypeTest {
         InjuryType.register(444444, duplicateKey, firstInjury);
 
         // Attempting to register second injury type with same key should throw IllegalArgumentException
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            InjuryType.register(444443, duplicateKey, secondInjury);
-        }, "Register should throw IllegalArgumentException when key is already registered");
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+              () -> InjuryType.register(444443, duplicateKey, secondInjury),
+              "Register should throw IllegalArgumentException when key is already registered");
 
         assertEquals("Injury type key \"" + duplicateKey + "\" is already registered.", exception.getMessage());
     }
@@ -179,9 +189,9 @@ class InjuryTypeTest {
         InjuryType.register(333333, firstKey, testInjury);
 
         // Attempting to register the same injury type instance again should throw IllegalArgumentException
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            InjuryType.register(333332, secondKey, testInjury);
-        }, "Register should throw IllegalArgumentException when injury type instance is already registered");
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+              () -> InjuryType.register(333332, secondKey, testInjury),
+              "Register should throw IllegalArgumentException when injury type instance is already registered");
 
         assertEquals("Injury type " + testInjury.getSimpleName() + " is already registered", exception.getMessage());
     }
@@ -205,14 +215,87 @@ class InjuryTypeTest {
     void testByKeyReturnsNullForUnregisteredKey() {
         // Attempting to retrieve an injury type with a non-existent key should return null
         InjuryType result = InjuryType.byKey("test:nonexistent_key_" + System.nanoTime());
-        assertEquals(null, result, "byKey should return null for unregistered keys");
+        assertNull(result, "byKey should return null for unregistered keys");
     }
 
     @Test
     void testByIdReturnsNullForUnregisteredId() {
         // Attempting to retrieve an injury type with a non-existent ID should return null
         InjuryType result = InjuryType.byId(999998);
-        assertEquals(null, result, "byId should return null for unregistered IDs");
+        assertNull(result, "byId should return null for unregistered IDs");
+    }
+
+    /**
+     * Builds a person whose options never trigger the exceptional-immune-system halving, paired with a campaign whose
+     * Alternate Advanced Medical settings are controlled by the test.
+     */
+    private static Person mockPatient() {
+        Person person = mock(Person.class);
+        PersonnelOptions options = mock(PersonnelOptions.class);
+        when(person.getOptions()).thenReturn(options);
+        when(options.booleanOption(PersonnelOptions.MUTATION_EXCEPTIONAL_IMMUNE_SYSTEM)).thenReturn(false);
+        when(person.getGender()).thenReturn(Gender.MALE);
+        return person;
+    }
+
+    private static Campaign mockCampaign(boolean useAlternateAdvancedMedical, double healingTimeMultiplier) {
+        Campaign campaign = mock(Campaign.class);
+        CampaignOptions campaignOptions = mock(CampaignOptions.class);
+        when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
+        when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
+        when(campaignOptions.get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL)).thenReturn(useAlternateAdvancedMedical);
+        when(campaignOptions.get(CampaignOption.ALTERNATIVE_ADVANCED_MEDICAL_HEALING_TIME_MULTIPLIER)).thenReturn(healingTimeMultiplier);
+        return campaign;
+    }
+
+    @Test
+    void testNewInjuryAppliesHealingTimeMultiplierWhenAlternateAdvancedMedicalEnabled() {
+        InjuryType testInjury = new TestInjuryType("testMultiplierApplied");
+        Person person = mockPatient();
+        Campaign campaign = mockCampaign(true, 2.0);
+
+        try (MockedStatic<InjuryUtil> injuryUtil = mockStatic(InjuryUtil.class)) {
+            injuryUtil.when(() -> InjuryUtil.genHealingTime(campaign, person, testInjury, 1)).thenReturn(10);
+
+            Injury injury = testInjury.newInjury(campaign, person, BodyLocation.GENERIC, 1);
+
+            assertNotNull(injury);
+            assertEquals(20, injury.getOriginalTime(), "Recovery time should be scaled by the 2.0 multiplier");
+            assertEquals(20, injury.getTime(), "Current time should match the scaled recovery time");
+        }
+    }
+
+    @Test
+    void testNewInjuryHealingTimeMultiplierFloorsAtOneDay() {
+        InjuryType testInjury = new TestInjuryType("testMultiplierFloor");
+        Person person = mockPatient();
+        Campaign campaign = mockCampaign(true, 0.1);
+
+        try (MockedStatic<InjuryUtil> injuryUtil = mockStatic(InjuryUtil.class)) {
+            injuryUtil.when(() -> InjuryUtil.genHealingTime(campaign, person, testInjury, 1)).thenReturn(5);
+
+            Injury injury = testInjury.newInjury(campaign, person, BodyLocation.GENERIC, 1);
+
+            assertNotNull(injury);
+            assertEquals(1, injury.getOriginalTime(), "Scaled recovery time should never drop below one day");
+        }
+    }
+
+    @Test
+    void testNewInjuryIgnoresHealingTimeMultiplierWhenAlternateAdvancedMedicalDisabled() {
+        InjuryType testInjury = new TestInjuryType("testMultiplierDisabled");
+        Person person = mockPatient();
+        Campaign campaign = mockCampaign(false, 2.0);
+
+        try (MockedStatic<InjuryUtil> injuryUtil = mockStatic(InjuryUtil.class)) {
+            injuryUtil.when(() -> InjuryUtil.genHealingTime(campaign, person, testInjury, 1)).thenReturn(10);
+
+            Injury injury = testInjury.newInjury(campaign, person, BodyLocation.GENERIC, 1);
+
+            assertNotNull(injury);
+            assertEquals(10, injury.getOriginalTime(),
+                  "Recovery time should be untouched when Alternate Advanced Medical is off");
+        }
     }
 
     @Test

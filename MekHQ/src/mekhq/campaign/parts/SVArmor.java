@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2019-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -37,6 +37,7 @@ import static megamek.common.equipment.EquipmentType.T_ARMOR_SV_BAR_2;
 import java.io.PrintWriter;
 import java.util.Objects;
 
+import jakarta.annotation.Nonnull;
 import megamek.common.TechAdvancement;
 import megamek.common.enums.TechRating;
 import megamek.common.equipment.ArmorType;
@@ -79,7 +80,11 @@ public class SVArmor extends Armor {
         super(0, EquipmentType.T_ARMOR_STANDARD, points, loc, false, false, campaign);
         this.bar = bar;
         this.techRating = techRating;
-        this.name = String.format("BAR %d armor (%s)", bar, techRating.getName());
+    }
+
+    @Override
+    public String getName() {
+        return String.format("BAR %d armor (%s)", bar, techRating.getName());
     }
 
     public int getBAR() {
@@ -87,7 +92,7 @@ public class SVArmor extends Armor {
     }
 
     @Override
-    public TechRating getTechRating() {
+    public @Nonnull TechRating getTechRating() {
         return techRating;
     }
 
@@ -168,7 +173,7 @@ public class SVArmor extends Armor {
 
     @Override
     public int getAmountAvailable() {
-        return campaign.getWarehouse()
+        return getWarehouse()
                      .streamSpareParts()
                      .filter(this::isSameSVArmorPart)
                      .mapToInt(part -> ((SVArmor) part).getAmount())
@@ -177,7 +182,7 @@ public class SVArmor extends Armor {
 
     @Override
     protected int changeAmountAvailableSingle(int amount) {
-        SVArmor armor = (SVArmor) campaign.getWarehouse()
+        SVArmor armor = (SVArmor) getWarehouse()
                                         .findSparePart(part -> isSamePartType(part) &&
                                                                      part.isPresent() &&
                                                                      Objects.equals(getRefitUnit(),
@@ -187,7 +192,7 @@ public class SVArmor extends Armor {
             int amountRemaining = armor.getAmount() + amount;
             armor.setAmount(amountRemaining);
             if (armor.getAmount() <= 0) {
-                campaign.getWarehouse().removePart(armor);
+                getWarehouse().removePart(armor);
                 return Math.min(0, amountRemaining);
             }
         } else if (amount > 0) {

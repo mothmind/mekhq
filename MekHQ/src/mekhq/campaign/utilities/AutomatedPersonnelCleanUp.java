@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -53,6 +53,7 @@ import mekhq.campaign.personnel.familyTree.Genealogy;
  */
 public class AutomatedPersonnelCleanUp {
     private final LocalDate today;
+    private final mekhq.campaign.ForceHumanResources humanResources;
     private final boolean isUseRemovalExemptRetirees;
     private final boolean isUseRemovalExemptCemetery;
     private final Collection<Person> personnelToProcess;
@@ -62,14 +63,16 @@ public class AutomatedPersonnelCleanUp {
      * Constructs an automated personnel cleanup process.
      *
      * @param today                      the current date used as a reference for evaluating time-based conditions
-     * @param personnelToProcess         the list of personnel to be examined for potential cleanup
      * @param isUseRemovalExemptRetirees whether retired personnel should be exempt from removal
      * @param isUseRemovalExemptCemetery whether deceased personnel should be exempt from removal
+     * @param humanResources             the container for all personnel, used to check whether a character is
+     *                                   genealogically
      */
-    public AutomatedPersonnelCleanUp(LocalDate today, Collection<Person> personnelToProcess,
-          boolean isUseRemovalExemptRetirees, boolean isUseRemovalExemptCemetery) {
+    public AutomatedPersonnelCleanUp(mekhq.campaign.ForceHumanResources humanResources, LocalDate today,
+            boolean isUseRemovalExemptRetirees, boolean isUseRemovalExemptCemetery) {
+        this.humanResources = humanResources;
         this.today = today;
-        this.personnelToProcess = personnelToProcess;
+        this.personnelToProcess = humanResources.getPersonnel();
         this.isUseRemovalExemptRetirees = isUseRemovalExemptRetirees;
         this.isUseRemovalExemptCemetery = isUseRemovalExemptCemetery;
 
@@ -131,8 +134,7 @@ public class AutomatedPersonnelCleanUp {
 
         // Do not remove if the character has an active genealogy
         Genealogy genealogy = person.getGenealogy();
-
-        if (genealogy.isActive()) {
+        if (genealogy.isActive(humanResources)) {
             return false;
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2018-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,6 +32,8 @@
  */
 package mekhq.gui.dialog;
 
+import static mekhq.utilities.MHQInternationalization.getText;
+
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -53,6 +55,7 @@ import javax.swing.event.ListSelectionListener;
 
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -60,7 +63,6 @@ import mekhq.campaign.events.units.UnitChangedEvent;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.adapter.UnitTableMouseAdapter;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.utilities.ReportingUtilities;
 
 /**
@@ -77,6 +79,7 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
     private final Map<Integer, JLabel> timeLabelsByUnitType = new HashMap<>();
     private final Campaign campaign;
     private boolean activating;
+    private JCheckBox clearDesignationsCheckbox;
 
     private final JPanel contentPanel = new JPanel();
     // endregion Variable Declarations
@@ -126,9 +129,12 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
         }
 
         gbc.gridy++;
+        addClearDesignationsCheckBox(gbc);
+
+        gbc.gridy++;
         addExecuteButton(activating, gbc);
 
-        JScrollPane scrollPane = new JScrollPaneWithSpeed();
+        JScrollPane scrollPane = new FastJScrollPane();
         scrollPane.setViewportView(contentPanel);
         scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setMaximumSize(new Dimension(600, 600));
@@ -198,8 +204,13 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
         JList<Person> techList = new JList<>();
         DefaultListModel<Person> listModel = new DefaultListModel<>();
 
-        for (Person tech : campaign.getTechs()) {
-            if (tech.canTech(unitsByType.get(unitType).get(0).getEntity())) {
+        for (Person tech : campaign.getPlayerForce()
+                                 .getHumanResources()
+                                 .getTechs(campaign.getPlayerForce().getHangar().getUnits(),
+                                       campaign.getCampaignOptions(),
+                                       campaign.getPlayerForce().isClanForce(),
+                                       campaign.getLocalDate())) {
+            if (tech.canTech(unitsByType.get(unitType).getFirst().getEntity())) {
                 listModel.addElement(tech);
             }
         }
@@ -209,7 +220,7 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
         techList.setBorder(new LineBorder(Color.GRAY, 1));
         techList.setCellRenderer(new TechListCellRenderer());
 
-        JScrollPane techListPane = new JScrollPaneWithSpeed();
+        JScrollPane techListPane = new FastJScrollPane();
         techListPane.setViewportView(techList);
         techListPane.setMaximumSize(new Dimension(200, 400));
         techListPane.setMinimumSize(new Dimension(200, 150));
@@ -246,6 +257,24 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
                                              UnitTableMouseAdapter.COMMAND_MOTHBALL);
         buttonExecute.addActionListener(this);
         contentPanel.add(buttonExecute, gbc);
+    }
+
+    /**
+     * Renders a checkbox to remove designations/assignments to the content pane
+     *
+     * @param gbc       the input gridBagConstraints to use
+     */
+
+    private void addClearDesignationsCheckBox(GridBagConstraints gbc) {
+        if (!activating) {
+            gbc.gridx = 1;
+            gbc.weightx = 0.8;
+            gbc.weighty = 0.1;
+            gbc.anchor = GridBagConstraints.CENTER;
+            clearDesignationsCheckbox = new JCheckBox();
+            clearDesignationsCheckbox.setText(getText("mothballUnit.clearDesignationsDialog.text"));
+            contentPanel.add(clearDesignationsCheckbox, gbc);
+        }
     }
 
     /**
@@ -302,8 +331,13 @@ public class MassMothballDialog extends JDialog implements ActionListener, ListS
             // to approximately # units / # techs in mothball/reactivation tasks
             for (Unit unit : unitsByType.get(unitType)) {
                 UUID id = selectedTechs.get(techIndex).getId();
-                Person tech = campaign.getPerson(id);
+                Person tech = campaign.getPlayerForce().getHumanResources().getPerson(id);
                 if (isMothballing) {
+                    if (clearDesignationsCheckbox != null && clearDesignationsCheckbox.isSelected()) {
+                        unit.clearCrew();
+                        Campaign campaign1 = unit.getCampaign();
+                        campaign1.getPlayerForce().removeUnitFromFormation(unit, campaign1);
+                    }
                     unit.startMothballing(tech);
                 } else {
                     unit.startActivating(tech);

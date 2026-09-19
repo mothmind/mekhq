@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MegaMek.
  *
@@ -41,6 +41,7 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.ArrayList;
 import java.util.List;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -48,6 +49,7 @@ import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 
 import mekhq.campaign.Campaign;
+import mekhq.campaign.personnel.skills.QuickTrain;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogCore;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
 
@@ -64,6 +66,8 @@ import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogWidth;
 public class QuickTrainDialog extends ImmersiveDialogCore {
     private static final String RESOURCE_BUNDLE = "mekhq.resources.QuickTrainDialog";
 
+    private final SupplementalControls supplementalControls;
+
     /**
      * Returns {@code true} if the user has chosen to cancel the dialog.
      *
@@ -75,6 +79,10 @@ public class QuickTrainDialog extends ImmersiveDialogCore {
     public boolean isCancel() {
         final int cancelIndex = 0;
         return getDialogChoice() == cancelIndex;
+    }
+
+    public QuickTrain.QuickTrainOptions getSelectedOptions() {
+        return supplementalControls.getSelectedOptions();
     }
 
     /**
@@ -101,18 +109,26 @@ public class QuickTrainDialog extends ImmersiveDialogCore {
      * @author Illiani
      * @since 0.50.10
      */
-    public QuickTrainDialog(Campaign campaign, boolean isNobodySelected) {
+    public QuickTrainDialog(Campaign campaign, boolean isNobodySelected, QuickTrain.QuickTrainOptions trainingOptions) {
+        this(campaign, isNobodySelected, createSupplementalControls(trainingOptions));
+    }
+
+    private QuickTrainDialog(Campaign campaign, boolean isNobodySelected, SupplementalControls supplementalControls) {
         super(campaign,
-              campaign.getSeniorAdminPerson(Campaign.AdministratorSpecialization.HR),
+              campaign.getPlayerForce().getHumanResources()
+                    .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                          campaign.getPlayerForce().isClanForce(),
+                          campaign.getLocalDate()),
               null,
               getCenterMessage(campaign.getCommanderAddress(), isNobodySelected),
               getButtons(isNobodySelected),
               getOutOfCharacterMessage(),
-              ImmersiveDialogWidth.SMALL.getWidth(),
+              ImmersiveDialogWidth.MEDIUM.getWidth(),
               true,
-              getSupplementalPanel(),
+              isNobodySelected ? null : supplementalControls.panel(),
               null,
               true);
+        this.supplementalControls = supplementalControls;
     }
 
     /**
@@ -177,17 +193,56 @@ public class QuickTrainDialog extends ImmersiveDialogCore {
      * @author Illiani
      * @since 0.50.10
      */
-    private static JPanel getSupplementalPanel() {
+    private static SupplementalControls createSupplementalControls(QuickTrain.QuickTrainOptions trainingOptions) {
+        JCheckBox chkLevelArtillery = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelArtillery"));
+        JCheckBox chkLevelScoutingSkills = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelScoutingSkills"));
+        JCheckBox chkLevelEscapeSkills = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelEscapeSkills"));
+        JCheckBox chkLevelLeadership = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelLeadership"));
+        JCheckBox chkLevelTraining = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelTraining"));
+        JCheckBox chkLevelOtherCommandSkills = new JCheckBox(getTextAt(RESOURCE_BUNDLE,
+              "QuickTrainDialog.chkLevelOtherCommandSkills"));
+
         JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints constraints = createBaseConstraints();
 
+        int y = 0;
+
+        chkLevelArtillery.setEnabled(trainingOptions.isLevelArtillery());
+        addComponent(panel, chkLevelArtillery, constraints, 0, y, GridBagConstraints.HORIZONTAL);
+
+        chkLevelScoutingSkills.setEnabled(trainingOptions.isLevelScoutingSkills());
+        addComponent(panel, chkLevelScoutingSkills, constraints, 1, y++, GridBagConstraints.HORIZONTAL);
+
+        chkLevelEscapeSkills.setEnabled(trainingOptions.isLevelEscapeSkills());
+        addComponent(panel, chkLevelEscapeSkills, constraints, 0, y, GridBagConstraints.HORIZONTAL);
+
+        chkLevelLeadership.setEnabled(trainingOptions.isLevelLeadership());
+        addComponent(panel, chkLevelLeadership, constraints, 1, y++, GridBagConstraints.HORIZONTAL);
+
+        chkLevelTraining.setEnabled(trainingOptions.isLevelTraining());
+        addComponent(panel, chkLevelTraining, constraints, 0, y, GridBagConstraints.HORIZONTAL);
+
+        chkLevelOtherCommandSkills.setEnabled(trainingOptions.isLevelOtherCommandSkills());
+        addComponent(panel, chkLevelOtherCommandSkills, constraints, 1, y++, GridBagConstraints.HORIZONTAL);
+
         JLabel lblTargetMilestone = new JLabel(getFormattedTextAt(RESOURCE_BUNDLE, "QuickTrainDialog.spinner"));
-        addComponent(panel, lblTargetMilestone, constraints, 0, GridBagConstraints.NONE);
+        addComponent(panel, lblTargetMilestone, constraints, 0, y, GridBagConstraints.NONE);
 
         JSpinner spnAttributes = new JSpinner(new SpinnerNumberModel(5, 1, 10, 1));
-        addComponent(panel, spnAttributes, constraints, 1, GridBagConstraints.HORIZONTAL);
+        addComponent(panel, spnAttributes, constraints, 1, y, GridBagConstraints.HORIZONTAL);
 
-        return panel;
+        return new SupplementalControls(panel,
+              chkLevelArtillery,
+              chkLevelScoutingSkills,
+              chkLevelEscapeSkills,
+              chkLevelLeadership,
+              chkLevelTraining,
+              chkLevelOtherCommandSkills);
     }
 
     /**
@@ -213,17 +268,37 @@ public class QuickTrainDialog extends ImmersiveDialogCore {
      * @param component   the component to add
      * @param constraints base constraints to use (modified in-place)
      * @param gridX       the column (x) position in the grid
+     * @param gridY       the column (y) position in the grid
      * @param fill        the fill mode from {@link GridBagConstraints}
      *
      * @author Illiani
      * @since 0.50.10
      */
     private static void addComponent(JPanel panel, JComponent component, GridBagConstraints constraints, int gridX,
-          int fill) {
+          int gridY, int fill) {
         constraints.gridx = gridX;
-        constraints.gridy = 0;
+        constraints.gridy = gridY;
         constraints.gridwidth = 1;
         constraints.fill = fill;
         panel.add(component, constraints);
+    }
+
+    private record SupplementalControls(
+          JPanel panel,
+          JCheckBox chkLevelArtillery,
+          JCheckBox chkLevelScoutingSkills,
+          JCheckBox chkLevelEscapeSkills,
+          JCheckBox chkLevelLeadership,
+          JCheckBox chkLevelTraining,
+          JCheckBox chkLevelOtherCommandSkills
+    ) {
+        private QuickTrain.QuickTrainOptions getSelectedOptions() {
+            return new QuickTrain.QuickTrainOptions(chkLevelArtillery.isSelected(),
+                  chkLevelScoutingSkills.isSelected(),
+                  chkLevelEscapeSkills.isSelected(),
+                  chkLevelLeadership.isSelected(),
+                  chkLevelTraining.isSelected(),
+                  chkLevelOtherCommandSkills.isSelected());
+        }
     }
 }

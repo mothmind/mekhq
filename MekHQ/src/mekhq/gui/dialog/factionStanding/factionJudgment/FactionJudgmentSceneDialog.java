@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -46,8 +46,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 import megamek.common.annotations.Nullable;
+import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.CurrentLocation;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.factionStanding.FactionJudgmentSceneType;
@@ -87,8 +87,8 @@ public class FactionJudgmentSceneDialog {
           FactionJudgmentSceneType sceneType, Faction judgingFaction) {
         LocalDate today = campaign.getLocalDate();
         String factionName = judgingFaction.getFullName(today.getYear());
-        String campaignName = campaign.getName();
-        CurrentLocation location = campaign.getLocation();
+        String campaignName = campaign.getPlayerForce().getName();
+        AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         boolean isPlanetside = location.isOnPlanet();
         String locationName = isPlanetside
                                     ? location.getPlanet().getName(today)

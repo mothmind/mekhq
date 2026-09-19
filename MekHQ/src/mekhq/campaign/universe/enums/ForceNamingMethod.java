@@ -68,18 +68,22 @@ public enum ForceNamingMethod {
     //endregion Getters
 
     //region Boolean Comparison Methods
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isCCB1943() {
         return this == CCB_1943;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isICAO1956() {
         return this == ICAO_1956;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isEnglishAlphabet() {
         return this == ENGLISH_ALPHABET;
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public boolean isGreekAlphabet() {
         return this == GREEK_ALPHABET;
     }
@@ -92,6 +96,15 @@ public enum ForceNamingMethod {
             case GREEK_ALPHABET -> alphabet.getGreek();
             default -> alphabet.getCCB1943();
         };
+    }
+
+    /**
+     * Returns a short preview of the first few names this method will produce. Used by dropdowns to
+     * surface the format inline rather than burying it in a tooltip — e.g. {@code "Able, Baker, Charlie"}
+     * for {@link #CCB_1943} or {@code "Alpha, Beta, Gamma"} for {@link #GREEK_ALPHABET}.
+     */
+    public String getExample() {
+        return getValue(Alphabet.A) + ", " + getValue(Alphabet.B) + ", " + getValue(Alphabet.C);
     }
 
     @Override

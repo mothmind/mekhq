@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2016-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,6 +33,8 @@
 package mekhq.campaign.personnel.medical.advancedMedical;
 
 import static java.lang.Math.ceil;
+import static java.lang.Math.max;
+import static java.lang.Math.round;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -52,6 +54,7 @@ import megamek.common.units.Entity;
 import megamek.common.units.Mek;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.GameEffect;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.log.MedicalLogger;
 import mekhq.campaign.log.PatientLogger;
 import mekhq.campaign.personnel.Injury;
@@ -62,6 +65,7 @@ import mekhq.campaign.personnel.enums.GenderDescriptors;
 import mekhq.campaign.personnel.enums.PersonnelStatus;
 import mekhq.campaign.personnel.medical.BodyLocation;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AdvancedMedicalAlternate;
+import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AlternateInjuries;
 import mekhq.campaign.personnel.skills.Skill;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.campaign.unit.Unit;
@@ -86,7 +90,7 @@ public final class InjuryUtil {
 
     /** Run a daily healing check */
     public static void resolveDailyHealing(Campaign campaign, Person person) {
-        Person doctor = campaign.getPerson(person.getDoctorId());
+        Person doctor = campaign.getPlayerForce().getHumanResources().getPerson(person.getDoctorId());
         if (null != doctor && doctor.isDoctor()) {
             if (person.getDaysToWaitForHealing() <= 0) {
                 genMedicalTreatment(campaign, person, doctor).forEach(GameEffect::apply);
@@ -122,9 +126,8 @@ public final class InjuryUtil {
      * @param hits     the number of TW-scale Hits taken
      */
     public static void resolveCombatDamage(Campaign campaign, Person person, int hits) {
-        if (campaign.getCampaignOptions().isUseAlternativeAdvancedMedical()) {
-            resolveCombatDamageUsingAlternateModel(campaign, person, hits,
-                  campaign.getCampaignOptions().isUseKinderAlternativeAdvancedMedical(), campaign.getLocalDate());
+        if (campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL)) {
+            resolveCombatDamageUsingAlternateModel(campaign, person, hits, campaign.getLocalDate());
         } else {
             resolveCombatDamageUsingStandardModel(campaign, person, hits);
         }
@@ -161,25 +164,17 @@ public final class InjuryUtil {
      * <p>Injuries may be automatically removed during processing if the body location they affect has been severed
      * by another injury.</p>
      *
-     * @param campaign        the current campaign
-     * @param person          the person who suffered combat damage
-     * @param hits            the number of TW-scale Hits taken
-     * @param isUseKinderMode {@code true} to halve all recovery times
+     * @param campaign the current campaign
+     * @param person   the person who suffered combat damage
+     * @param hits     the number of TW-scale Hits taken
      *
      * @author Illiani
      * @since 0.50.10
      */
     private static void resolveCombatDamageUsingAlternateModel(Campaign campaign, Person person, int hits,
-          boolean isUseKinderMode, LocalDate today) {
+          LocalDate today) {
         Collection<Injury> newInjuries = AdvancedMedicalAlternate.generateInjuriesFromHits(campaign, person, hits);
         for (Injury injury : newInjuries) {
-            if (isUseKinderMode) {
-                int originalRecoveryTime = injury.getOriginalTime();
-                int newRecoveryTime = (int) ceil(originalRecoveryTime / 2.0);
-                injury.setOriginalTime(newRecoveryTime);
-                injury.setTime(newRecoveryTime);
-            }
-
             person.addInjury(injury);
         }
 
@@ -188,8 +183,18 @@ public final class InjuryUtil {
 
         // We double-check the injury has been added, as it might have been removed by purgeIllogicalInjuries
         boolean hasNewInjuries = false;
+        boolean hasMissingLimbHandled = false;
+        Injury injuryToRemove = null;
+        // Prepare an amputation recovery injury in case we need it later.
+        Injury amputationRecovery = AlternateInjuries.AMPUTATION_RECOVERY.newInjury(campaign, person,
+              BodyLocation.RIGHT_HAND, 1);
+
         List<Injury> currentInjuries = person.getInjuries();
         for (Injury injury : newInjuries) {
+            if (!injury.getType().impliesMissingLocation() && null == injuryToRemove) {
+                injuryToRemove = injury;
+            }
+
             if (!hasNewInjuries && currentInjuries.contains(injury)) {
                 hasNewInjuries = true;
             }
@@ -197,6 +202,21 @@ public final class InjuryUtil {
             if (injury.getType().impliesDead(injury.getLocation())) {
                 person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.MEDICAL_COMPLICATIONS);
             }
+            // For missing limbs, we add an amputation recovery so they always show up in the infirmary
+            if (!hasMissingLimbHandled && injury.getType().impliesMissingLocation() && injury.getLocation().isLimb()) {
+                hasMissingLimbHandled = true;
+                amputationRecovery.setLocation(injury.getLocation());
+                person.addInjury(amputationRecovery);
+            }
+        }
+
+        // We do not want to end up with six injuries on a person due to the amputation recovery being added
+        if (hasNewInjuries && hasMissingLimbHandled) {
+            if (newInjuries.size() == 5) {
+                person.removeInjury(injuryToRemove, campaign.getLocalDate());
+                newInjuries.remove(injuryToRemove);
+            }
+            newInjuries.add(amputationRecovery);
         }
 
         if (hasNewInjuries) {
@@ -239,6 +259,27 @@ public final class InjuryUtil {
         List<Injury> newInjuries = new ArrayList<>();
         for (Entry<BodyLocation, Integer> accEntry : hitAccumulator.entrySet()) {
             newInjuries.addAll(genInjuries(campaign, person, accEntry.getKey(), accEntry.getValue()));
+        }
+
+        Injury injuryToRemove = null;
+        // For missing limbs, we add an amputation recovery so they always show up in the infirmary
+        Injury amputationRecovery = null;
+        for (Injury injury : newInjuries) {
+            if (!injury.getType().impliesMissingLocation() && null == injuryToRemove) {
+                injuryToRemove = injury;
+            }
+            if (injury.getType().impliesMissingLocation()) {
+                amputationRecovery = InjuryTypes.AMPUTATION_RECOVERY.newInjury(campaign, person,
+                      injury.getLocation(), 1);
+                break;
+            }
+        }
+        // We do not want to end up with six injuries on a person due to the amputation recovery being added
+        if (null != amputationRecovery) {
+            if (newInjuries.size() == 5) {
+                newInjuries.remove(injuryToRemove);
+            }
+            newInjuries.add(amputationRecovery);
         }
         return newInjuries;
     }
@@ -350,6 +391,7 @@ public final class InjuryUtil {
      *
      * @return calculated healing time in days (minimum 1)
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static int genHealingTime(Campaign campaign, Person person, Injury injury) {
         return genHealingTime(campaign, person, injury.getType(), injury.getHits());
     }
@@ -387,9 +429,9 @@ public final class InjuryUtil {
         int variationPercent = 80 + Compute.randomInt(41); // 80 to 120
 
         // Apply both random variation and person's ability modifier
-        int time = (int) Math.round((baseTime * variationPercent * person.getAbilityTimeModifier(campaign)) / 10000.0);
+        int time = (int) round((baseTime * variationPercent * person.getAbilityTimeModifier(campaign)) / 10000.0);
 
-        return Math.max(1, time);
+        return max(1, time);
     }
 
     /** Generate the effects of a doctor dealing with injuries (frequency depends on campaign settings) */
@@ -397,7 +439,7 @@ public final class InjuryUtil {
         Objects.requireNonNull(campaign);
         Objects.requireNonNull(person);
         Skill skill = doctor.getSkill(SkillType.S_SURGERY);
-        int level = skill.getLevel();
+        int level = (skill == null) ? 0 : skill.getLevel();
         final int fumbleLimit = FUMBLE_LIMITS[(level >= 0) && (level <= 10) ? level : 0];
         final int critLimit = CRIT_LIMITS[(level >= 0) && (level <= 10) ? level : 0];
         int xpGained = 0;
@@ -412,16 +454,16 @@ public final class InjuryUtil {
             if (!injury.isWorkedOn()) {
                 int roll = Compute.randomInt(100);
                 // Determine XP, if any
-                if (roll < Math.max(1, fumbleLimit / 10)) {
-                    mistakeXP += campaign.getCampaignOptions().getMistakeXP();
+                if (roll < max(1, fumbleLimit / 10)) {
+                    mistakeXP += campaign.getCampaignOptions().get(CampaignOption.MISTAKE_XP);
                     xpGained += mistakeXP;
-                } else if (roll > Math.min(98, 99 - (int) Math.round((99 - critLimit) / 10.0))) {
-                    successXP += campaign.getCampaignOptions().getSuccessXP();
+                } else if (roll > Math.min(98, 99 - (int) round((99 - critLimit) / 10.0))) {
+                    successXP += campaign.getCampaignOptions().get(CampaignOption.SUCCESS_XP);
                     xpGained += successXP;
                 }
                 final int critTimeReduction = injury.getTime() - (int) Math.floor(injury.getTime() * 0.9);
                 // Reroll fumbled treatment check with Edge if applicable
-                if (campaign.getCampaignOptions().isUseSupportEdge() &&
+                if (campaign.getCampaignOptions().get(CampaignOption.USE_EDGE) &&
                           (roll < fumbleLimit) &&
                           doctor.getOptions().booleanOption(PersonnelOptions.EDGE_MEDICAL) &&
                           (doctor.getCurrentEdge() > 0)) {
@@ -429,7 +471,7 @@ public final class InjuryUtil {
                           "%s made a mistake in the treatment of %s, but used Edge to reroll.",
                           doctor.getHyperlinkedFullTitle(),
                           person.getHyperlinkedName())));
-                    doctor.changeCurrentEdge(-1);
+                    doctor.spendEdge();
                     roll = Compute.randomInt(100);
                 }
 
@@ -441,7 +483,7 @@ public final class InjuryUtil {
                           GenderDescriptors.HIS_HER_THEIR.getDescriptor(person.getGender()),
                           injury.getName()), rnd -> {
                         int time = injury.getTime();
-                        injury.setTime((int) Math.max(ceil(time * 1.2), time + 5));
+                        injury.setTime((int) max(ceil(time * 1.2), time + 5));
                         MedicalLogger.docMadeAMistake(doctor, person, injury, campaign.getLocalDate());
 
                         // TODO: Add in special handling of the critical
@@ -466,14 +508,14 @@ public final class InjuryUtil {
                               critTimeReduction);
                     }));
                 } else {
-                    final int xpChance = (int) Math.round(100.0 / campaign.getCampaignOptions().getNTasksXP());
+                    final int xpChance = (int) round(100.0 / campaign.getCampaignOptions().get(CampaignOption.N_TASKS_XP));
                     result.add(new GameEffect(String.format("%s successfully treated %s [%d%% chance of gaining %d XP]",
                           doctor.getHyperlinkedFullTitle(),
                           person.getHyperlinkedName(),
                           xpChance,
-                          campaign.getCampaignOptions().getTaskXP()), rnd -> {
-                        int taskXP = campaign.getCampaignOptions().getTaskXP();
-                        if ((taskXP > 0) && (doctor.getNTasks() >= campaign.getCampaignOptions().getNTasksXP())) {
+                          campaign.getCampaignOptions().get(CampaignOption.TASKS_XP)), rnd -> {
+                        int taskXP = campaign.getCampaignOptions().get(CampaignOption.TASKS_XP);
+                        if ((taskXP > 0) && (doctor.getNTasks() >= campaign.getCampaignOptions().get(CampaignOption.N_TASKS_XP))) {
                             doctor.awardXP(campaign, taskXP);
                             doctor.setNTasks(0);
                         } else {
@@ -508,7 +550,7 @@ public final class InjuryUtil {
             final int injuries = numTreated;
             final String treatmentSummary = (xpGained > 0) ?
                                                   String.format("%s successfully treated %s for %d injuries " +
-                                                                      "(%d XP gained, %d for mistakes, %d for critical successes, and %d for tasks).",
+                                                                "(%d XP gained, %d for mistakes, %d for critical successes, and %d for tasks).",
                                                         doctor.getHyperlinkedFullTitle(),
                                                         person.getHyperlinkedName(),
                                                         numTreated,
@@ -526,7 +568,7 @@ public final class InjuryUtil {
                     doctor.awardXP(campaign, xp);
                 }
                 PatientLogger.successfullyTreated(doctor, person, campaign.getLocalDate(), injuries);
-                person.setDaysToWaitForHealing(campaign.getCampaignOptions().getHealingWaitingPeriod());
+                person.setDaysToWaitForHealing(campaign.getCampaignOptions().get(CampaignOption.HEAL_WAITING_PERIOD));
             }));
         }
         if (numResting > 0) {
@@ -573,7 +615,7 @@ public final class InjuryUtil {
                 }
             } else if (injury.getTime() > 1) {
                 result.add(new GameEffect(String.format("%s continues healing", injury.getName()),
-                      rnd -> injury.setTime(Math.max(injury.getTime() - 1, 0))));
+                      rnd -> injury.setTime(max(injury.getTime() - 1, 0))));
             } else if ((injury.getTime() == 1) && injury.isPermanent()) {
                 result.add(new GameEffect(String.format("%s becomes permanent", injury.getName()), rnd -> {
                     injury.setTime(0);
@@ -597,10 +639,14 @@ public final class InjuryUtil {
                 } else if (!person.needsFixing()) {
                     dismissed = true;
                     MedicalLogger.dismissedFromInfirmary(person, campaign.getLocalDate());
+                    //employed only; prisoners would probably be too much needless spam
+                    if (person.getPrisonerStatus().isFreeOrBondsman()) {
+                        MedicalLogger.dismissedFromInfirmary(person, campaign);
+                    }
                 }
 
                 if (dismissed) {
-                    person.setDoctorId(null, campaign.getCampaignOptions().getHealingWaitingPeriod());
+                    person.setDoctorId(null, campaign.getCampaignOptions().get(CampaignOption.HEAL_WAITING_PERIOD));
                 }
             }));
         }

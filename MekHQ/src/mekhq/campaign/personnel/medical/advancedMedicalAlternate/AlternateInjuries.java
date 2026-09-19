@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -78,6 +78,8 @@ public class AlternateInjuries {
     private static final int DISEMBOWELED_HEALING_DAYS = 21; // Internet says 6-8 weeks
     private static final int BONE_BRUISE_HEALING_DAYS = 21; // Internet says 6 weeks
     private static final int BLOOD_LOSS_HEALING_DAYS = 14; // Internet says 4-6 weeks
+    // Copied from Blood Loss as ATOW has this always be blood loss
+    private static final int MEDICAL_COMPLICATION_HEALING_DAYS = 14;
     private static final int SEVER_HEALING_DAYS = 180; // We need to have something here for Advanced Medical
     private static final int CLONED_LIMB_HEALING_DAYS = 21; // ATOW pg 316
     private static final int REPLACEMENT_LIMB_HEALING_DAYS = 42; // ATOW pg 316
@@ -91,6 +93,7 @@ public class AlternateInjuries {
     private static final int TRANSIT_DISORIENTATION_SYNDROME_HEALING_DAYS = 1;
     private static final int CHILDUS_FEVER_RECOVERY_TIME = 365;
     private static final int OLD_WOUND_HEALING_DAYS = 7;
+    private static final int AMPUTATION_RECOVERY_HEALING_DAYS = 10; // 3-4 weeks for initial healing
 
     private static final InjuryLevel SEVER_INJURY_LEVEL = CHRONIC;
     private static final InjuryLevel FRACTURE_INJURY_LEVEL = MAJOR;
@@ -147,12 +150,14 @@ public class AlternateInjuries {
     public static final InjuryType BLOOD_LOSS = new BloodLoss();
     public static final InjuryType DISCONTINUATION_SYNDROME = new DiscontinuationSyndrome();
     public static final InjuryType POSTPARTUM_RECOVERY = new PostpartumRecovery();
+    @Deprecated(since = "0.51.01", forRemoval = true)
     public static final InjuryType TRANSIT_DISORIENTATION_SYNDROME = new TransitDisorientationSyndrome();
     public static final InjuryType CRIPPLING_FLASHBACKS = new CripplingFlashbacks();
     public static final InjuryType CHILDLIKE_REGRESSION = new ChildlikeRegression();
     public static final InjuryType CATATONIA = new ChronicDisassociation();
     public static final InjuryType TERRIBLE_BRUISES = new TerribleBruises();
     public static final InjuryType OLD_WOUND = new OldWound();
+    public static final InjuryType MEDICAL_COMPLICATION = new MedicalComplication();
     // Diseases
     public static final InjuryType GROWTHS_DISCOMFORT = new GrowthsDiscomfort();
     public static final InjuryType GROWTHS_SLIGHT = new GrowthsSlight();
@@ -295,6 +300,7 @@ public class AlternateInjuries {
     public static final InjuryType REPLACEMENT_ORGAN_RECOVERY = new ReplacementOrganRecovery();
     public static final InjuryType COSMETIC_SURGERY_RECOVERY = new CosmeticSurgeryRecovery();
     public static final InjuryType FAILED_SURGERY_RECOVERY = new FailedSurgeryRecovery();
+    public static final InjuryType AMPUTATION_RECOVERY = new AmputationRecovery();
     public static final InjuryType ELECTIVE_MYOMER_ARM = new ElectiveMyomerArm();
     public static final InjuryType ELECTIVE_MYOMER_HAND = new ElectiveMyomerHand();
     public static final InjuryType ELECTIVE_MYOMER_LEG = new ElectiveMyomerLeg();
@@ -1903,7 +1909,7 @@ public class AlternateInjuries {
         WoodenFoot() {
             super();
             this.simpleName = getTextAt(RESOURCE_BUNDLE, "AlternateInjuries.WOODEN_LIMB.simpleName");
-            this.allowedLocations = Set.of(LEFT_LEG, RIGHT_LEG);
+            this.allowedLocations = Set.of(LEFT_FOOT, RIGHT_FOOT);
             this.injuryEffect = TYPE_1_LIMB_REPLACEMENT;
         }
 
@@ -2817,6 +2823,18 @@ public class AlternateInjuries {
         }
     }
 
+    public static final class AmputationRecovery extends BaseInjury {
+        AmputationRecovery() {
+            super(AMPUTATION_RECOVERY_HEALING_DAYS,
+                  false,
+                  MINOR,
+                  InjuryEffect.BLOOD_LOSS,
+                  Set.of(LEFT_HAND, RIGHT_HAND, LEFT_ARM, RIGHT_ARM, LEFT_FOOT, RIGHT_FOOT, LEFT_LEG, RIGHT_LEG));
+            this.simpleName = getTextAt(RESOURCE_BUNDLE,
+                  "AlternateInjuries.AMPUTATION_RECOVERY.simpleName");
+        }
+    }
+
     public static final class DiscontinuationSyndrome extends BaseInjury {
         DiscontinuationSyndrome() {
             super(DISCONTINUATION_SYNDROME_HEALING_DAYS,
@@ -2841,7 +2859,9 @@ public class AlternateInjuries {
         }
     }
 
+    @Deprecated(since = "0.51.01", forRemoval = true)
     public static final class TransitDisorientationSyndrome extends BaseInjury {
+        @Deprecated(since = "0.51.01", forRemoval = true)
         TransitDisorientationSyndrome() {
             super(TRANSIT_DISORIENTATION_SYNDROME_HEALING_DAYS,
                   false,
@@ -2914,6 +2934,17 @@ public class AlternateInjuries {
                   NONE,
                   Set.of(GENERIC));
             this.simpleName = getTextAt(RESOURCE_BUNDLE, "AlternateInjuries.OLD_WOUND.simpleName");
+        }
+    }
+
+    public static final class MedicalComplication extends BaseInjury {
+        // In ATOW the medical complications result from healing checks is always flavored as 'blood loss'. We've
+        // given it the more generic title of 'medical complication'.
+        MedicalComplication() {
+            super(MEDICAL_COMPLICATION_HEALING_DAYS, false, MINOR,
+                  NONE, Set.of(GENERIC));
+            this.simpleName = getTextAt(RESOURCE_BUNDLE, "AlternateInjuries.MEDICAL_COMPLICATION.simpleName");
+            this.fluffText = simpleName;
         }
     }
 }

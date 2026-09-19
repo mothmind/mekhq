@@ -32,19 +32,17 @@
  */
 package mekhq.campaign.randomEvents.prisoners;
 
+import static java.lang.Math.floor;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static java.time.temporal.IsoFields.WEEK_OF_WEEK_BASED_YEAR;
-import static mekhq.campaign.Campaign.AdministratorSpecialization.TRANSPORT;
 import static mekhq.campaign.enums.DailyReportType.GENERAL;
 import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
 import static mekhq.campaign.enums.DailyReportType.POLITICS;
 import static mekhq.campaign.force.FormationType.SECURITY;
-import static mekhq.campaign.randomEvents.personalities.PersonalityController.getPersonalityValue;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 import static mekhq.utilities.ReportingUtilities.CLOSING_SPAN_TAG;
-import static mekhq.utilities.ReportingUtilities.getNegativeColor;
 import static mekhq.utilities.ReportingUtilities.spanOpeningWithCustomColor;
 
 import java.time.DayOfWeek;
@@ -59,22 +57,25 @@ import megamek.codeUtilities.ObjectUtility;
 import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.units.Entity;
+import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.force.Formation;
-import mekhq.campaign.mission.AtBContract;
-import mekhq.campaign.mission.enums.AtBMoraleLevel;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
 import mekhq.campaign.mission.rentals.ContractRentalType;
 import mekhq.campaign.mission.rentals.FacilityRentals;
 import mekhq.campaign.personnel.Person;
-import mekhq.campaign.randomEvents.prisoners.enums.PrisonerCaptureStyle;
-import mekhq.campaign.randomEvents.prisoners.enums.PrisonerEvent;
-import mekhq.campaign.randomEvents.prisoners.enums.ResponseQuality;
-import mekhq.campaign.randomEvents.prisoners.records.PrisonerEventData;
+import mekhq.campaign.randomEvents.prisoners.prisonerEvents.PrisonEscapeScenario;
+import mekhq.campaign.randomEvents.randomEventsSystem.RandomEventData;
+import mekhq.campaign.randomEvents.randomEventsSystem.RandomEventEffectsManager;
+import mekhq.campaign.reputation.chaosReputation.ChaosReputation;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.factionStanding.FactionStandings;
-import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogNotification;
-import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
+import mekhq.gui.dialog.PrisonerIntelBreachDialog;
+import mekhq.gui.dialog.PrisonerWarningDialog;
+import mekhq.gui.dialog.RandomEventDialog;
 import mekhq.utilities.ReportingUtilities;
 
 /**
@@ -89,6 +90,7 @@ import mekhq.utilities.ReportingUtilities;
  * interactions with the player via dialogs, providing options to resolve prisoner-related issues.</p>
  */
 public class PrisonerEventManager {
+    private static final MMLogger LOGGER = MMLogger.create(PrisonerEventManager.class);
     private static final String RESOURCE_BUNDLE = "mekhq.resources.PrisonerEvents";
 
     private final Campaign campaign;
@@ -98,8 +100,8 @@ public class PrisonerEventManager {
     // However, that lacks nuance, so we've changed it to -1 per prisoner to a maximum of -50.
     public static final int MAX_CRIME_PENALTY = 50;
     static final int RANSOM_EVENT_CHANCE = 10;
+    static final int PRISONER_EVENT_CHANCE = 50;
     private final int MINIMUM_PRISONER_COUNT = 25;
-    private final int RESPONSE_TARGET_NUMBER = 7;
 
     public static final int DEFAULT_TEMPORARY_CAPACITY = 100;
     // The temporary prisoner capacity should never go below 0.
@@ -149,15 +151,15 @@ public class PrisonerEventManager {
             degradeTemporaryCapacity();
         }
 
-        if (campaign.getCurrentPrisoners().isEmpty()) {
+        if (campaign.getPlayerForce().getHumanResources().getCurrentPrisoners().isEmpty()) {
             return;
         }
 
-        if (!campaign.getCampaignOptions().getPrisonerCaptureStyle().isMekHQ()) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE).isMekHQ()) {
             return;
         }
 
-        if (campaign.getActiveMissions(false).isEmpty()) {
+        if (campaign.getActiveContracts().isEmpty()) {
             return;
         }
 
@@ -168,7 +170,7 @@ public class PrisonerEventManager {
 
         // Fortnightly events
         if (isMonday && isFortnight) {
-            int totalPrisoners = campaign.getCurrentPrisoners().size();
+            int totalPrisoners = campaign.getPlayerForce().getHumanResources().getCurrentPrisoners().size();
             int prisonerCapacityUsage = calculatePrisonerCapacityUsage(campaign);
             int prisonerCapacity = calculatePrisonerCapacity(campaign);
 
@@ -177,65 +179,105 @@ public class PrisonerEventManager {
     }
 
     /**
-     * Adjusts the temporary prisoner capacity for the given campaign by degrading it.
+     * Handles ad-hoc executions and applies their effects on the campaign state.
      *
-     * <p>This method modifies the campaign's temporary prisoner capacity based on a percentage of
-     * the current value. It ensures that the capacity moves closer to a default value, either increasing or decreasing
-     * depending on the current capacity modifier's position relative to the default.</p>
+     * <p>This method can affect the campaign's temporary prisoner capacity and crime rating, and
+     * it generates reports based on whether the executions were noticed or backfired.</p>
      *
-     * @return The updated temporary capacity modifier after the adjustment has been applied.
+     * @param campaign The current campaign instance.
+     * @param victims  The number of victims executed.
      */
-    int degradeTemporaryCapacity() {
-        int temporaryCapacityModifier = campaign.getTemporaryPrisonerCapacity();
-        int newCapacity = 0;
+    public static void processAdHocExecution(Campaign campaign, int victims) {
+        // Did the execution backfire?
+        int backfireRoll = Compute.d6(1);
+        boolean hasBackfired = backfireRoll == 1;
 
-        if (temporaryCapacityModifier != DEFAULT_TEMPORARY_CAPACITY) {
-            int degreeOfChange = TEMPORARY_CAPACITY_DEGRADE_RATE;
+        if (hasBackfired) {
+            int delta = -(victims * 2);
+            campaign.getPlayerForce().changeTemporaryPrisonerCapacity(delta);
+        } else {
+            campaign.getPlayerForce().changeTemporaryPrisonerCapacity(victims * 2);
+        }
 
-            if (temporaryCapacityModifier < DEFAULT_TEMPORARY_CAPACITY) {
-                temporaryCapacityModifier += degreeOfChange;
-                newCapacity = min(DEFAULT_TEMPORARY_CAPACITY, temporaryCapacityModifier);
+        // Was the crime noticed?
+        int crimeNoticeRoll = Compute.randomInt(100);
+        boolean crimeNoticed = crimeNoticeRoll < victims;
 
-                campaign.setTemporaryPrisonerCapacity(newCapacity);
-            } else {
-                temporaryCapacityModifier -= degreeOfChange;
-                newCapacity = max(DEFAULT_TEMPORARY_CAPACITY, temporaryCapacityModifier);
-
-                campaign.setTemporaryPrisonerCapacity(newCapacity);
+        int penalty;
+        CampaignOptions campaignOptions = campaign.getCampaignOptions();
+        boolean isUseChaosReputation = campaignOptions.get(CampaignOption.USE_CHAOS_REPUTATION);
+        boolean isUseCampaignReputationTracking = campaignOptions.get(CampaignOption.CAMPAIGN_LEVEL_CHAOS_REPUTATION);
+        if (isUseChaosReputation) {
+            penalty = ChaosReputation.getPrisonerExecutionPenalty(campaign.getPlayerForce(),
+                  victims,
+                  crimeNoticed,
+                  isUseCampaignReputationTracking);
+        } else {
+            penalty = min(MAX_CRIME_PENALTY, victims * 2);
+            if (crimeNoticed) {
+                int change = -penalty;
+                campaign.getPlayerForce().changeCrimeRating(change);
+                LocalDate dateOfLastCrime = campaign.getLocalDate();
+                campaign.getPlayerForce().setCampOpsDateOfLastCrime(dateOfLastCrime);
             }
         }
 
-        // This return is predominantly for unit testing
-        return newCapacity;
+        // Build the report
+        String key = hasBackfired ? "execute.backfired" : "execute.successful";
+
+        String messageColor = hasBackfired ?
+                                    spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()) :
+                                    spanOpeningWithCustomColor(ReportingUtilities.getPositiveColor());
+
+        String crimeColor = crimeNoticed ?
+                                  spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()) :
+                                  spanOpeningWithCustomColor(ReportingUtilities.getPositiveColor());
+
+        String crimeMessage = crimeNoticed ?
+                                    getFormattedTextAt(RESOURCE_BUNDLE,
+                                          "execute.crimeNoticed",
+                                          crimeColor,
+                                          CLOSING_SPAN_TAG,
+                                          penalty) :
+                                    getFormattedTextAt(RESOURCE_BUNDLE,
+                                          "execute.crimeUnnoticed",
+                                          crimeColor,
+                                          CLOSING_SPAN_TAG);
+
+        // Add the report
+        campaign.addReport(GENERAL, getFormattedTextAt(RESOURCE_BUNDLE, key, messageColor, CLOSING_SPAN_TAG,
+              crimeMessage));
     }
 
     /**
-     * Checks for ransom-related events in the given campaign. This method determines if a ransom event is triggered and
-     * whether friendly prisoners of war (POWs) are involved.
+     * Calculates the total capacity usage for holding prisoners in the campaign.
      *
-     * @return A list of two boolean values where the first element indicates if an event was triggered, and the second
-     *       element specifies if the event involves friendly POWs.
+     * <p>Includes adjustments for capture styles and considers the needs of injured prisoners.
+     * This value represents the total number of prisoners consuming capacity resources.</p>
+     *
+     * @param campaign The current campaign instance.
+     *
+     * @return The total prisoner capacity usage.
      */
-    List<Boolean> checkForRansomEvents() {
-        boolean eventTriggered = false;
-        boolean isFriendlyPOWs = false;
+    public static int calculatePrisonerCapacityUsage(Campaign campaign) {
+        PrisonerCaptureStyle captureStyle = campaign.getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE);
+        boolean isMekHQCaptureStyle = captureStyle.isMekHQ();
 
-        // Check for ransom events
-        if (campaign.hasActiveContract()) {
-            int roll = d6(2);
-            if (roll >= RANSOM_EVENT_CHANCE) {
-                if (!campaign.getFriendlyPrisoners().isEmpty()) {
-                    // We use randomInt here as it allows us better control over the return values
-                    // when testing.
-                    isFriendlyPOWs = randomInt(6) == 1;
+        int prisonerCapacityUsage = 0;
+
+        for (Person prisoner : campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()) {
+            if (prisoner.needsFixing() && isMekHQCaptureStyle) {
+                if (prisoner.getDoctorId() == null) {
+                    // Injured prisoners without doctors increase prisoner unhappiness, increasing
+                    // capacity usage.
+                    prisonerCapacityUsage++;
                 }
-
-                eventTriggered = true;
-                new PrisonerRansomEvent(campaign, isFriendlyPOWs);
             }
+
+            prisonerCapacityUsage++;
         }
 
-        return List.of(eventTriggered, isFriendlyPOWs);
+        return prisonerCapacityUsage;
     }
 
     /**
@@ -274,7 +316,9 @@ public class PrisonerEventManager {
     List<Boolean> checkForPrisonerEvents(boolean isHeadless, int totalPrisoners, int prisonerCapacityUsage,
           int prisonerCapacity) {
         // Calculate overflow as the percentage over prisonerCapacity
-        double overflowPercentage = ((double) (prisonerCapacityUsage - prisonerCapacity) / prisonerCapacity) * 100;
+        double overflow = prisonerCapacityUsage - prisonerCapacity;
+        int effectiveCapacity = max(1, prisonerCapacity);
+        int overflowPercentage = (int) round((overflow / effectiveCapacity) * 100);
 
         // If no overflow and total prisoners are below the minimum count, no risk of event
         if (overflowPercentage <= 0 && totalPrisoners < MINIMUM_PRISONER_COUNT) {
@@ -282,7 +326,7 @@ public class PrisonerEventManager {
         }
 
         // Generate an event roll
-        int eventRoll = randomInt(50);
+        int eventRoll = randomInt(PRISONER_EVENT_CHANCE);
 
         // Minor event occurs if the random roll is less than the overflow percentage
         boolean minorEvent = eventRoll < overflowPercentage;
@@ -302,7 +346,7 @@ public class PrisonerEventManager {
         // something about the situation.
         if (!minorEvent) {
             if (overflowPercentage > 0 && !isHeadless) {
-                processWarning((int) round(totalPrisoners * overflowPercentage));
+                processWarning((int) floor(overflow));
             }
 
             return List.of(false, false);
@@ -310,7 +354,8 @@ public class PrisonerEventManager {
 
         // Random Event
         if (!isHeadless) {
-            processRandomEvent(majorEvent);
+            RandomEventData eventData = pickEvent(majorEvent);
+            processRandomEvent(eventData, majorEvent);
         }
         return List.of(true, majorEvent);
     }
@@ -322,422 +367,47 @@ public class PrisonerEventManager {
      * allowing them to decide how to respond. Based on the outcome, the event's effects are applied, which may include
      * generating escapee scenarios or other consequences.</p>
      *
-     * @param majorEvent {@code true} if the event is classified as a major event, {@code false} for a minor event.
+     * @param eventData  the event to process
+     * @param majorEvent {@code true} if the event is a major event, {@code false} otherwise.
      */
-    private void processRandomEvent(boolean majorEvent) {
-        PrisonerEventData eventData;
-        if (majorEvent) {
-            eventData = pickEvent(true);
-        } else {
-            eventData = pickEvent(false);
-        }
-        PrisonerEvent event = eventData.prisonerEvent();
+    private void processRandomEvent(RandomEventData eventData, boolean majorEvent) {
+        RandomEventDialog dialog = new RandomEventDialog(campaign, speaker, null, eventData);
+        int choiceIndex = dialog.getDialogChoice();
+        boolean isSuccessful = dialog.wasSuccessful();
 
-        int choiceIndex = getChoiceIndex(event);
+        RandomEventEffectsManager effectsManager = new RandomEventEffectsManager(campaign,
+              eventData,
+              choiceIndex,
+              isSuccessful);
+        String eventReport = effectsManager.getMechanicalEffectsReport();
 
-        boolean isSuccessful = makeEventCheck(eventData, choiceIndex);
+        dialog.showResolutionDialog(eventData, eventReport);
 
-        EventEffectsManager effectsManager = new EventEffectsManager(campaign, eventData, choiceIndex, isSuccessful);
-        String eventReport = effectsManager.getEventReport();
-
-        showDialog(isSuccessful, choiceIndex, event, eventReport);
-
-        Set<Person> escapees = effectsManager.getEscapees();
+        Set<Person> escapees = effectsManager.getPersonHashSet();
 
         if (!escapees.isEmpty() && campaign.hasActiveAtBContract()) {
             if (randomInt(100) < escapees.size()) {
-                List<AtBContract> contracts = campaign.getActiveAtBContracts();
+                List<AbstractContract> contracts = campaign.getActiveContracts();
                 Collections.shuffle(contracts);
 
-                new PrisonEscapeScenario(campaign, contracts.get(0), escapees);
-            }
-        }
-    }
-
-    /**
-     * Displays a dialog to the player presenting the outcome of their response to a prisoner event.
-     *
-     * <p>
-     * Generates an in-character message based on whether the player's action was successful or a failure, using
-     * localized resources and the specific response choice. The dialog presents this message along with an optional
-     * event report to provide context or details about the event's resolution.
-     * </p>
-     *
-     * @param isSuccessful {@code true} if the player's response to the event was successful, {@code false} otherwise
-     * @param choiceIndex  the index of the response option chosen by the player
-     * @param event        the {@link PrisonerEvent} associated with the dialog
-     * @param eventReport  additional report or commentary to display in the dialog (maybe {@code null})
-     *
-     * @author Illiani
-     * @since 0.50.06
-     */
-    private void showDialog(boolean isSuccessful, int choiceIndex, PrisonerEvent event, String eventReport) {
-        String commanderAddress = campaign.getCommanderAddress();
-        String suffix = isSuccessful ? ".success" : ".failure";
-        String inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE,
-              "response." + choiceIndex + '.' + event.name() + suffix,
-              commanderAddress);
-
-        new ImmersiveDialogSimple(campaign, speaker, null, inCharacterMessage, null, eventReport, null, false);
-    }
-
-    /**
-     * Presents an immersive dialog to the player to select a response option for the given prisoner event.
-     *
-     * <p>Constructs a message and a set of response buttons from localized resources based on the specific event.
-     * Displays a dialog to the player (using the campaign context and speaker), allowing them to choose a course of
-     * action. Returns the index of the player's selected option.</p>
-     *
-     * @param event the {@link PrisonerEvent} for which a response choice is required
-     *
-     * @return the index of the selected response option as chosen by the player in the dialog
-     *
-     * @author Illiani
-     * @since 0.50.06
-     */
-    private int getChoiceIndex(PrisonerEvent event) {
-        String commanderAddress = campaign.getCommanderAddress();
-        String inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE,
-              "event." + event.name() + ".message",
-              commanderAddress);
-        List<String> options = List.of(getFormattedTextAt(RESOURCE_BUNDLE, "response.0." + event.name() + ".button"),
-              getFormattedTextAt(RESOURCE_BUNDLE, "response.1." + event.name() + ".button"),
-              getFormattedTextAt(RESOURCE_BUNDLE, "response.2." + event.name() + ".button"));
-        ImmersiveDialogSimple eventDialog = new ImmersiveDialogSimple(campaign,
-              speaker,
-              null,
-              inCharacterMessage,
-              options,
-              getFormattedTextAt(RESOURCE_BUNDLE, "result.ooc"),
-              null,
-              true);
-
-        return eventDialog.getDialogChoice();
-    }
-
-    /**
-     * Processes a warning event when the prisoner overflow exceeds acceptable limits.
-     *
-     * <p>Presents a dialog to the player, allowing them to take corrective actions by choosing to
-     * either release or execute prisoners to address the overflow. Results in the removal or execution of prisoners
-     * based on the player's choice.</p>
-     *
-     * @param overflow The calculated overflow value indicating prisoners exceeding capacity.
-     */
-    private void processWarning(int overflow) {
-        List<Person> prisoners = campaign.getCurrentPrisoners();
-        Collections.shuffle(prisoners);
-
-        int setFree = max(1, (int) round(overflow * 1.1));
-        setFree = min(setFree, prisoners.size());
-        int executions = max(1, (int) round(prisoners.size() * 0.1));
-        executions = min(executions, prisoners.size());
-
-        String commanderAddress = campaign.getCommanderAddress();
-        String inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE, "warning.message", commanderAddress);
-
-        int choice = getChoiceIndex(setFree, executions, inCharacterMessage);
-
-        String outOfCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE, "result.ooc");
-        if (choice == CHOICE_FREE) {
-            for (int i = 0; i < setFree; i++) {
-                Person prisoner = prisoners.get(i);
-                campaign.addReport(PERSONNEL, getFormattedTextAt(RESOURCE_BUNDLE, "free.report",
-                      prisoner.getFullName()));
-                campaign.removePerson(prisoner, false);
-            }
-
-            String resourceKey = "freeEvent" + randomInt(50) + ".message";
-            inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE, resourceKey, commanderAddress);
-
-            new ImmersiveDialogSimple(campaign,
-                  speaker,
-                  null,
-                  inCharacterMessage,
-                  null,
-                  outOfCharacterMessage, null, false);
-
-            checkForIntelBreachEvent(campaign, setFree);
-
-            return;
-        }
-
-        if (choice == CHOICE_EXECUTE) {
-            processExecutions(executions, prisoners);
-
-            String resourceKey = "executeEvent" + randomInt(50) + ".message";
-            inCharacterMessage = getFormattedTextAt(RESOURCE_BUNDLE, resourceKey, commanderAddress);
-
-            new ImmersiveDialogSimple(campaign,
-                  speaker,
-                  null,
-                  inCharacterMessage,
-                  null,
-                  outOfCharacterMessage,
-                  null,
-                  false);
-        }
-    }
-
-    /**
-     * Evaluates whether freeing prisoners during a scenario triggers one or more Intel Breach events, and applies the
-     * resulting morale penalties to a relevant active {@link AtBContract}.
-     *
-     * <p>The chance of an Intel Breach scales with the number of prisoners freed. The method divides the freed
-     * prisoners into groups of up to 50 and performs one breach roll per group. Each roll compares a uniform random
-     * value from {@code 0} (inclusive) to {@code baseChance} (exclusive) against the number of remaining prisoners in
-     * the current group; higher freed prisoner counts result in higher breach probability.</p>
-     *
-     * <p>If at least one breach occurs, the selected contract’s morale level is improved by the number of breaches,
-     * and a corresponding {@link ImmersiveDialogNotification} is displayed to the user. Contracts at
-     * {@link AtBMoraleLevel#OVERWHELMING} or {@link AtBMoraleLevel#ROUTED} morale are excluded from selection.</p>
-     *
-     * @param campaign           the {@link Campaign} context in which the event occurs
-     * @param freedPrisonerCount the total number of prisoners freed by the player
-     *
-     * @author Illiani
-     * @since 0.50.10
-     */
-    public static void checkForIntelBreachEvent(Campaign campaign, int freedPrisonerCount) {
-        if (!campaign.getCampaignOptions().getPrisonerCaptureStyle().isMekHQ()) {
-            return;
-        }
-
-        List<AtBContract> activeContracts = campaign.getActiveAtBContracts();
-        activeContracts.removeIf(contract -> contract.getMoraleLevel().isOverwhelming() ||
-                                                   contract.getMoraleLevel().isRouted());
-        if (activeContracts.isEmpty()) {
-            return; // No risk of event
-        }
-
-        // Did a intel breach occur?
-        int baseChance = 50;
-        boolean hadIntelBreach = freedPrisonerCount > 0 && Compute.randomInt(baseChance) < freedPrisonerCount;
-
-        if (hadIntelBreach) {
-            AtBContract relevantContract = ObjectUtility.getRandomItem(activeContracts);
-            AtBMoraleLevel oldMorale = relevantContract.getMoraleLevel();
-            AtBMoraleLevel newMorale = relevantContract.changeMoraleLevel(1);
-
-            String centerMessage = getFormattedTextAt(RESOURCE_BUNDLE, "intelBreach.ic",
-                  spanOpeningWithCustomColor(getNegativeColor()), CLOSING_SPAN_TAG);
-            String bottomMessage = getFormattedTextAt(RESOURCE_BUNDLE,
-                  "intelBreach.occ",
-                  relevantContract.getName(),
-                  oldMorale.toString(),
-                  spanOpeningWithCustomColor(getNegativeColor()),
-                  newMorale.toString(),
-                  CLOSING_SPAN_TAG);
-
-            new ImmersiveDialogNotification(campaign, centerMessage, bottomMessage, true);
-        }
-    }
-
-    /**
-     * Displays a warning dialog to the player for resolving prisoner overflow by freeing or executing a specified
-     * number of prisoners.
-     *
-     * <p>
-     * Presents an in-character message with options to do nothing, release, or execute prisoners. The number of
-     * prisoners to release or execute is included in the respective button labels. Returns the index of the option
-     * chosen by the player.
-     * </p>
-     *
-     * @param setFree            the number of prisoners to release if that option is selected
-     * @param executions         the number of prisoners to execute if that option is selected
-     * @param inCharacterMessage the message to display in the dialog
-     *
-     * @return the index of the selected option (e.g., 0 for do nothing, 1 for release, 2 for execute)
-     *
-     * @author Illiani
-     * @since 0.50.06
-     */
-    private int getChoiceIndex(int setFree, int executions, String inCharacterMessage) {
-        List<String> options = List.of(getFormattedTextAt(RESOURCE_BUNDLE, "btnDoNothing.button"),
-              getFormattedTextAt(RESOURCE_BUNDLE, "free.button", setFree),
-              getFormattedTextAt(RESOURCE_BUNDLE, "execute.button", executions));
-
-        ImmersiveDialogSimple warningDialog = new ImmersiveDialogSimple(campaign,
-              speaker,
-              null,
-              inCharacterMessage,
-              options,
-              getFormattedTextAt(RESOURCE_BUNDLE, "warning.ooc"),
-              null,
-              true);
-
-        return warningDialog.getDialogChoice();
-    }
-
-    /**
-     * Selects a random event from the available prisoner events.
-     *
-     * @param isMajor {@code true} to select a major event, {@code false} to select a minor event.
-     *
-     * @return A randomly selected {@link PrisonerEventData} object representing the event.
-     */
-    private PrisonerEventData pickEvent(boolean isMajor) {
-        List<PrisonerEventData> allMajorEvents = campaign.getRandomEventLibraries().getPrisonerEvents(isMajor);
-        Collections.shuffle(allMajorEvents);
-        return ObjectUtility.getRandomItem(allMajorEvents);
-    }
-
-    /**
-     * Performs a check to determine if the player's response to an event is successful.
-     *
-     * <p>The success of the check depends on the attributes of the event, the chosen response
-     * option, and modifiers such as the speaker's personality.</p>
-     *
-     * @param eventData   The data for the prisoner event being processed.
-     * @param choiceIndex The index of the choice made by the player in the event dialog.
-     *
-     * @return {@code true} if the player's response is deemed successful, {@code false} otherwise.
-     */
-    private boolean makeEventCheck(PrisonerEventData eventData, int choiceIndex) {
-        int responseModifier = 0;
-        if (speaker != null) {
-            responseModifier = getPersonalityValue(campaign.getCampaignOptions().isUseRandomPersonalities(),
-                  speaker.getAggression(),
-                  speaker.getAmbition(),
-                  speaker.getGreed(),
-                  speaker.getSocial());
-        }
-
-        if (speaker == null) {
-            responseModifier = -12; // this deliberately renders the check impossible
-        }
-
-        ResponseQuality responseQuality = eventData.responseEntries().get(choiceIndex).quality();
-        switch (responseQuality) {
-            case RESPONSE_NEUTRAL -> {
-            } // No modifier
-            case RESPONSE_POSITIVE -> responseModifier += 3;
-            case RESPONSE_NEGATIVE -> responseModifier -= 3;
-        }
-
-        int responseCheck = d6(2) + responseModifier;
-
-        return responseCheck >= RESPONSE_TARGET_NUMBER;
-    }
-
-    /**
-     * Processes the execution of a given number of prisoners.
-     *
-     * <p>Removes prisoners from the campaign while generating appropriate reports of their
-     * execution. Triggers additional logic to handle campaign state updates, such as potential backfires or penalties
-     * from the executions.</p>
-     *
-     * @param executions The number of prisoners to be executed.
-     * @param prisoners  The list of prisoners involved in the execution.
-     */
-    private void processExecutions(int executions, List<Person> prisoners) {
-        CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        if (campaignOptions.isTrackFactionStanding()) {
-            FactionStandings factionStandings = campaign.getFactionStandings();
-            List<String> reports = factionStandings.executePrisonersOfWar(campaign.getFaction().getShortName(),
-                  prisoners, campaign.getGameYear(), campaignOptions.getRegardMultiplier());
-
-            for (String report : reports) {
-                campaign.addReport(POLITICS, report);
+                new PrisonEscapeScenario(campaign, contracts.getFirst(), escapees);
             }
         }
 
-        for (int i = 0; i < executions; i++) {
-            Person prisoner = prisoners.get(i);
-            campaign.addReport(PERSONNEL,
-                  getFormattedTextAt(RESOURCE_BUNDLE, "execute.report", prisoner.getFullName()));
-            campaign.removePerson(prisoner, false);
-        }
-
-        processAdHocExecution(campaign, executions);
+        processFollowOnEvent(majorEvent, dialog, choiceIndex);
     }
 
-    /**
-     * Handles ad-hoc executions and applies their effects on the campaign state.
-     *
-     * <p>This method can affect the campaign's temporary prisoner capacity and crime rating, and
-     * it generates reports based on whether the executions were noticed or backfired.</p>
-     *
-     * @param campaign The current campaign instance.
-     * @param victims  The number of victims executed.
-     */
-    public static void processAdHocExecution(Campaign campaign, int victims) {
-        // Did the execution backfire?
-        int backfireRoll = Compute.d6(1);
-        boolean hasBackfired = backfireRoll == 1;
-
-        if (hasBackfired) {
-            campaign.changeTemporaryPrisonerCapacity(-(victims * 2));
-        } else {
-            campaign.changeTemporaryPrisonerCapacity(victims * 2);
-        }
-
-        // Was the crime noticed?
-        int crimeNoticeRoll = Compute.randomInt(100);
-        boolean crimeNoticed = crimeNoticeRoll < victims;
-
-        int penalty = min(MAX_CRIME_PENALTY, victims * 2);
-        if (crimeNoticed) {
-            campaign.changeCrimeRating(-penalty);
-            campaign.setDateOfLastCrime(campaign.getLocalDate());
-        }
-
-        // Build the report
-        String key = hasBackfired ? "execute.backfired" : "execute.successful";
-
-        String messageColor = hasBackfired ?
-                                    spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()) :
-                                    spanOpeningWithCustomColor(ReportingUtilities.getPositiveColor());
-
-        String crimeColor = crimeNoticed ?
-                                  spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()) :
-                                  spanOpeningWithCustomColor(ReportingUtilities.getPositiveColor());
-
-        String crimeMessage = crimeNoticed ?
-                                    getFormattedTextAt(RESOURCE_BUNDLE,
-                                          "execute.crimeNoticed",
-                                          crimeColor,
-                                          CLOSING_SPAN_TAG,
-                                          penalty) :
-                                    getFormattedTextAt(RESOURCE_BUNDLE,
-                                          "execute.crimeUnnoticed",
-                                          crimeColor,
-                                          CLOSING_SPAN_TAG);
-
-        // Add the report
-        campaign.addReport(GENERAL, getFormattedTextAt(RESOURCE_BUNDLE, key), messageColor, CLOSING_SPAN_TAG,
-              crimeMessage);
-    }
-
-    /**
-     * Calculates the total capacity usage for holding prisoners in the campaign.
-     *
-     * <p>Includes adjustments for capture styles and considers the needs of injured prisoners.
-     * This value represents the total number of prisoners consuming capacity resources.</p>
-     *
-     * @param campaign The current campaign instance.
-     *
-     * @return The total prisoner capacity usage.
-     */
-    public static int calculatePrisonerCapacityUsage(Campaign campaign) {
-        PrisonerCaptureStyle captureStyle = campaign.getCampaignOptions().getPrisonerCaptureStyle();
-        boolean isMekHQCaptureStyle = captureStyle.isMekHQ();
-
-        int prisonerCapacityUsage = 0;
-
-        for (Person prisoner : campaign.getCurrentPrisoners()) {
-            if (prisoner.needsFixing() && isMekHQCaptureStyle) {
-                if (prisoner.getDoctorId() == null) {
-                    // Injured prisoners without doctors increase prisoner unhappiness, increasing
-                    // capacity usage.
-                    prisonerCapacityUsage++;
-                }
+    private void processFollowOnEvent(boolean majorEvent, RandomEventDialog dialog, int choiceIndex) {
+        String followOnEvent = dialog.getFollowOnEvent(choiceIndex);
+        if (followOnEvent != null) {
+            RandomEventData followOnEventData = campaign.getRandomEventLibraries().getPrisonerEvent(followOnEvent,
+                  majorEvent);
+            if (followOnEventData != null) {
+                processRandomEvent(followOnEventData, majorEvent);
+            } else {
+                LOGGER.warn("Could not find follow-on event: {}. Skipping", followOnEvent);
             }
-
-            prisonerCapacityUsage++;
         }
-
-        return prisonerCapacityUsage;
     }
 
     /**
@@ -752,12 +422,12 @@ public class PrisonerEventManager {
      */
     public static int calculatePrisonerCapacity(Campaign campaign) {
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        PrisonerCaptureStyle captureStyle = campaignOptions.getPrisonerCaptureStyle();
+        PrisonerCaptureStyle captureStyle = campaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE);
         boolean isMekHQCaptureStyle = captureStyle.isMekHQ();
 
         int prisonerCapacity = 0;
         double otherUnitMultiplier = 1.0;
-        for (Formation formation : campaign.getAllFormations()) {
+        for (Formation formation : campaign.getPlayerForce().getAllFormations()) {
             if (!formation.isFormationType(SECURITY)) {
                 continue;
             }
@@ -787,6 +457,11 @@ public class PrisonerEventManager {
                         }
                     }
 
+                    prisonerCapacity += unit.getTotalTempCrew() * (isMekHQCaptureStyle ?
+                                                                         PRISONER_CAPACITY_BATTLE_ARMOR :
+                                                                         PRISONER_CAPACITY_BATTLE_ARMOR *
+                                                                               PRISONER_CAPACITY_CAM_OPS_MULTIPLIER);
+
                     continue;
                 }
 
@@ -799,6 +474,12 @@ public class PrisonerEventManager {
                                                             PRISONER_CAPACITY_CAM_OPS_MULTIPLIER;
                         }
                     }
+
+                    prisonerCapacity += unit.getTotalTempCrew() * (isMekHQCaptureStyle ?
+                                                                         PRISONER_CAPACITY_CONVENTIONAL_INFANTRY :
+                                                                         PRISONER_CAPACITY_CONVENTIONAL_INFANTRY *
+                                                                               PRISONER_CAPACITY_CAM_OPS_MULTIPLIER);
+
                     continue;
                 }
 
@@ -809,7 +490,7 @@ public class PrisonerEventManager {
         }
 
         otherUnitMultiplier = min(otherUnitMultiplier, PRISONER_CAPACITY_OTHER_UNIT_MAX_MULTIPLIER);
-        double modifier = (double) campaign.getTemporaryPrisonerCapacity() / 100;
+        double modifier = (double) campaign.getPlayerForce().getTemporaryPrisonerCapacity() / 100;
 
         int rentedCapacity = FacilityRentals.getCapacityIncreaseFromRentals(campaign.getActiveContracts(),
               ContractRentalType.HOLDING_CELLS);
@@ -820,6 +501,215 @@ public class PrisonerEventManager {
         } else {
             return max(0, prisonerCapacity + rentedCapacity);
         }
+    }
+
+    /**
+     * Evaluates whether freeing prisoners during a scenario triggers one or more Intel Breach events, and applies the
+     * resulting morale penalties to a relevant active {@link AbstractContract}.
+     *
+     * <p>The chance of an Intel Breach scales with the number of prisoners freed. The method divides the freed
+     * prisoners into groups of up to 50 and performs one breach roll per group. Each roll compares a uniform random
+     * value from {@code 0} (inclusive) to {@code baseChance} (exclusive) against the number of remaining prisoners in
+     * the current group; higher freed prisoner counts result in higher breach probability.</p>
+     *
+     * <p>If at least one breach occurs, the selected contract’s morale level is improved by the number of breaches,
+     * and a corresponding {@link PrisonerIntelBreachDialog} is displayed to the user. Contracts at
+     * {@link ContractMoraleLevel#OVERWHELMING} or {@link ContractMoraleLevel#ROUTED} morale are excluded from
+     * selection.</p>
+     *
+     * @param campaign           the {@link Campaign} context in which the event occurs
+     * @param freedPrisonerCount the total number of prisoners freed by the player
+     *
+     * @author Illiani
+     * @since 0.50.10
+     */
+    public static void checkForIntelBreachEvent(Campaign campaign, int freedPrisonerCount) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE).isMekHQ()) {
+            return;
+        }
+
+        List<AbstractContract> activeContracts = campaign.getActiveContracts();
+        activeContracts.removeIf(contract -> contract.getMoraleLevel().isOverwhelming() ||
+                                                   contract.getMoraleLevel().isRouted());
+        if (activeContracts.isEmpty()) {
+            return; // No risk of event
+        }
+
+        // Did a intel breach occur?
+        int baseChance = 50;
+        boolean hadIntelBreach = freedPrisonerCount > 0 && Compute.randomInt(baseChance) < freedPrisonerCount;
+
+        if (hadIntelBreach) {
+            AbstractContract relevantContract = ObjectUtility.getRandomItem(activeContracts);
+            ContractMoraleLevel oldMorale = relevantContract.getMoraleLevel();
+            ContractMoraleLevel newMorale = relevantContract.changeMorale(1);
+
+            new PrisonerIntelBreachDialog(campaign, relevantContract, oldMorale, newMorale);
+        }
+    }
+
+    /**
+     * Selects a random event from the available prisoner events.
+     *
+     * @param isMajor {@code true} to select a major event, {@code false} to select a minor event.
+     *
+     * @return A randomly selected {@link RandomEventData} object representing the event.
+     */
+    private RandomEventData pickEvent(boolean isMajor) {
+        List<RandomEventData> allMajorEvents = campaign.getRandomEventLibraries().getPrisonerEvents(isMajor);
+        return ObjectUtility.getRandomItem(allMajorEvents);
+    }
+
+    /**
+     * Adjusts the temporary prisoner capacity for the given campaign by degrading it.
+     *
+     * <p>This method modifies the campaign's temporary prisoner capacity based on a percentage of
+     * the current value. It ensures that the capacity moves closer to a default value, either increasing or decreasing
+     * depending on the current capacity modifier's position relative to the default.</p>
+     *
+     * @return The updated temporary capacity modifier after the adjustment has been applied.
+     */
+    int degradeTemporaryCapacity() {
+        int temporaryCapacityModifier = campaign.getPlayerForce().getTemporaryPrisonerCapacity();
+        int newCapacity = 0;
+
+        if (temporaryCapacityModifier != DEFAULT_TEMPORARY_CAPACITY) {
+            int degreeOfChange = TEMPORARY_CAPACITY_DEGRADE_RATE;
+
+            if (temporaryCapacityModifier < DEFAULT_TEMPORARY_CAPACITY) {
+                temporaryCapacityModifier += degreeOfChange;
+                newCapacity = min(DEFAULT_TEMPORARY_CAPACITY, temporaryCapacityModifier);
+
+                campaign.getPlayerForce().setTemporaryPrisonerCapacity(newCapacity);
+            } else {
+                temporaryCapacityModifier -= degreeOfChange;
+                newCapacity = max(DEFAULT_TEMPORARY_CAPACITY, temporaryCapacityModifier);
+
+                campaign.getPlayerForce().setTemporaryPrisonerCapacity(newCapacity);
+            }
+        }
+
+        // This return is predominantly for unit testing
+        return newCapacity;
+    }
+
+    /**
+     * Checks for ransom-related events in the given campaign. This method determines if a ransom event is triggered and
+     * whether friendly prisoners of war (POWs) are involved.
+     *
+     * @return A list of two boolean values where the first element indicates if an event was triggered, and the second
+     *       element specifies if the event involves friendly POWs.
+     */
+    List<Boolean> checkForRansomEvents() {
+        boolean eventTriggered = false;
+        boolean isFriendlyPOWs = false;
+
+        // Check for ransom events
+        if (campaign.hasActiveContract()) {
+            int roll = d6(2);
+            if (roll >= RANSOM_EVENT_CHANCE) {
+                if (!campaign.getPlayerForce().getHumanResources().getFriendlyPrisoners().isEmpty()) {
+                    // We use randomInt here as it allows us better control over the return values
+                    // when testing.
+                    isFriendlyPOWs = randomInt(6) == 1;
+                }
+
+                eventTriggered = true;
+                triggerRansomEvent(isFriendlyPOWs);
+            }
+        }
+
+        return List.of(eventTriggered, isFriendlyPOWs);
+    }
+
+    /**
+     * Launches the ransom event, which prompts the player through a modal dialog.
+     *
+     * <p>This method exists to assist testing. As it allows us to suppress the dialog without
+     * launching an actual popup.</p>
+     *
+     * @param isFriendlyPOWs {@code true} if the ransom event is for friendly POWs, {@code false} if it's for enemy
+     *                       prisoners.
+     */
+    protected void triggerRansomEvent(boolean isFriendlyPOWs) {
+        new PrisonerRansomEvent(campaign, isFriendlyPOWs);
+    }
+
+    /**
+     * Processes a warning event when the prisoner overflow exceeds acceptable limits.
+     *
+     * <p>Presents a dialog to the player, allowing them to take corrective actions by choosing to
+     * either release or execute prisoners to address the overflow. Results in the removal or execution of prisoners
+     * based on the player's choice.</p>
+     *
+     * @param overflow The calculated overflow value indicating prisoners exceeding capacity.
+     */
+    private void processWarning(int overflow) {
+        List<Person> prisoners = campaign.getPlayerForce().getHumanResources().getCurrentPrisoners();
+        Collections.shuffle(prisoners);
+
+        int setFree = max(1, (int) round(overflow * 1.1));
+        setFree = min(setFree, prisoners.size());
+        int executions = max(1, (int) round(prisoners.size() * 0.1));
+        executions = min(executions, prisoners.size());
+
+        PrisonerWarningDialog warningDialog = new PrisonerWarningDialog(campaign, speaker, setFree, executions);
+        int choice = warningDialog.getDialogChoice();
+
+        if (choice == CHOICE_FREE) {
+            for (int i = 0; i < setFree; i++) {
+                Person prisoner = prisoners.get(i);
+                campaign.addReport(PERSONNEL, getFormattedTextAt(RESOURCE_BUNDLE, "free.report",
+                      prisoner.getFullName()));
+                campaign.getPlayerForce().getHumanResources().removePerson(campaign, prisoner, false);
+            }
+
+            warningDialog.showResolutionDialog(false);
+
+            checkForIntelBreachEvent(campaign, setFree);
+
+            return;
+        }
+
+        if (choice == CHOICE_EXECUTE) {
+            processExecutions(executions, prisoners);
+
+            warningDialog.showResolutionDialog(true);
+        }
+    }
+
+    /**
+     * Processes the execution of a given number of prisoners.
+     *
+     * <p>Removes prisoners from the campaign while generating appropriate reports of their
+     * execution. Triggers additional logic to handle campaign state updates, such as potential backfires or penalties
+     * from the executions.</p>
+     *
+     * @param executions The number of prisoners to be executed.
+     * @param prisoners  The list of prisoners involved in the execution.
+     */
+    private void processExecutions(int executions, List<Person> prisoners) {
+        CampaignOptions campaignOptions = campaign.getCampaignOptions();
+        if (campaignOptions.get(CampaignOption.TRACK_FACTION_STANDING)) {
+            FactionStandings factionStandings = campaign.getPlayerForce().getFactionStandings();
+            List<String> reports = factionStandings.executePrisonersOfWar(campaign.getPlayerForce()
+                                                                                .getFaction()
+                                                                                .getShortName(),
+                  prisoners, campaign.getGameYear(), campaignOptions.get(CampaignOption.REGARD_MULTIPLIER));
+
+            for (String report : reports) {
+                campaign.addReport(POLITICS, report);
+            }
+        }
+
+        for (int i = 0; i < executions; i++) {
+            Person prisoner = prisoners.get(i);
+            campaign.addReport(PERSONNEL,
+                  getFormattedTextAt(RESOURCE_BUNDLE, "execute.report", prisoner.getFullName()));
+            campaign.getPlayerForce().getHumanResources().removePerson(campaign, prisoner, false);
+        }
+
+        processAdHocExecution(campaign, executions);
     }
 
     /**
@@ -851,7 +741,7 @@ public class PrisonerEventManager {
     private @Nullable Person getSpeaker() {
         List<Formation> securityFormations = new ArrayList<>();
 
-        for (Formation formation : campaign.getAllFormations()) {
+        for (Formation formation : campaign.getPlayerForce().getAllFormations()) {
             if (formation.isFormationType(SECURITY)) {
                 securityFormations.add(formation);
             }
@@ -861,15 +751,18 @@ public class PrisonerEventManager {
 
         if (!securityFormations.isEmpty()) {
             Collections.shuffle(securityFormations);
-            Formation designatedFormation = securityFormations.get(0);
+            Formation designatedFormation = securityFormations.getFirst();
             UUID speakerId = designatedFormation.getFormationCommanderID();
             if (speakerId != null) {
-                speaker = campaign.getPerson(speakerId);
+                speaker = campaign.getPlayerForce().getHumanResources().getPerson(speakerId);
             }
         }
 
         if (speaker == null) {
-            return campaign.getSeniorAdminPerson(TRANSPORT);
+            return campaign.getPlayerForce().getHumanResources()
+                         .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                               campaign.getPlayerForce().isClanForce(),
+                               campaign.getLocalDate());
         } else {
             return speaker;
         }

@@ -37,18 +37,28 @@ import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 import javax.swing.JFrame;
 
-import mekhq.CampaignPreset;
 import mekhq.MHQConstants;
 import mekhq.MekHQ;
+import mekhq.Utilities;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.mission.ScenarioTemplate;
+import mekhq.campaign.digitalGM.stratCon.StratConContractDefinition;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConFacility;
+import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.scenarios.ScenarioTemplate;
+import mekhq.campaign.mission.scenarios.atb.AtBScenarioModifier;
+import mekhq.gui.utilities.ObservableString;
 import mekhq.io.FileType;
+import mekhq.utilities.MHQInternationalization;
 
 /**
  * Utility class with methods to show the various open/save file dialogs
  */
 public class FileDialogs {
+
+    private static final String RESOURCE_BUNDLE = "mekhq.resources.FileDialogs";
+    private static final DateTimeFormatter DATE_TIME_FORMATTER =
+          DateTimeFormatter.ofPattern(MHQConstants.FILENAME_DATE_FORMAT)
+                .withLocale(MekHQ.getMHQOptions().getDateLocale());
 
     private FileDialogs() {
         // no instances
@@ -79,9 +89,8 @@ public class FileDialogs {
 
         String fileName = String.format(
               "%s%s_ExportedPersonnel.prsx",
-              campaign.getName(),
-              campaign.getLocalDate().format(DateTimeFormatter.ofPattern(MHQConstants.FILENAME_DATE_FORMAT)
-                                                   .withLocale(MekHQ.getMHQOptions().getDateLocale())));
+              campaign.getPlayerForce().getName(),
+              campaign.getLocalDate().format(DATE_TIME_FORMATTER));
 
         Optional<File> value = GUI.fileDialogSave(
               frame,
@@ -157,16 +166,6 @@ public class FileDialogs {
     }
 
     /**
-     * Displays a dialog window from which the user can select a <code>.mul</code> file to save to.
-     *
-     * @return the file selected, if any
-     */
-    public static Optional<File> saveCampaignPreset(final JFrame frame, final CampaignPreset preset) {
-        return GUI.fileDialogSave(frame, "Save Campaign Preset", FileType.XML,
-              MHQConstants.USER_CAMPAIGN_PRESET_DIRECTORY, preset + " Preset.xml");
-    }
-
-    /**
      * Displays a dialog window from which the user can select a <code>.parts</code> file to open.
      *
      * @return the file selected, if any
@@ -190,9 +189,8 @@ public class FileDialogs {
     public static Optional<File> saveParts(JFrame frame, Campaign campaign) {
         String fileName = String.format(
               "%s%s_ExportedParts.parts",
-              campaign.getName(),
-              campaign.getLocalDate().format(DateTimeFormatter.ofPattern(MHQConstants.FILENAME_DATE_FORMAT)
-                                                   .withLocale(MekHQ.getMHQOptions().getDateLocale())));
+              campaign.getPlayerForce().getName(),
+              campaign.getLocalDate().format(DATE_TIME_FORMATTER));
 
         Optional<File> value = GUI.fileDialogSave(
               frame,
@@ -277,9 +275,8 @@ public class FileDialogs {
      * @return the file selected, if any
      */
     public static Optional<File> saveCampaign(JFrame frame, Campaign campaign) {
-        String fileName = String.format("%s%s.%s", campaign.getName(),
-              campaign.getLocalDate().format(DateTimeFormatter.ofPattern(MHQConstants.FILENAME_DATE_FORMAT)
-                                                   .withLocale(MekHQ.getMHQOptions().getDateLocale())),
+        String fileName = String.format("%s%s.%s", campaign.getPlayerForce().getName(),
+              campaign.getLocalDate().format(DATE_TIME_FORMATTER),
               MekHQ.getMHQOptions().getPreferGzippedOutput() ? "cpnx.gz" : "cpnx");
 
         Optional<File> value = GUI.fileDialogSave(frame, "Save Campaign", FileType.CPNX,
@@ -298,11 +295,26 @@ public class FileDialogs {
         Optional<File> value = GUI.fileDialogOpen(
               frame,
               "Load Scenario Template",
-              FileType.XML,
-              MekHQ.getScenarioTemplatesDirectory().getValue());
+              FileType.SCENARIO_TEMPLATE,
+              scenarioTemplateStartDirectory());
 
         value.ifPresent(x -> MekHQ.getScenarioTemplatesDirectory().setValue(x.getParent()));
         return value;
+    }
+
+    /**
+     * The directory the scenario template file dialogs open at: the user's remembered location once they have picked
+     * one, otherwise the canonical {@code mm-data/data/scenariotemplates} tree (falling back to {@code ./data} in a
+     * packaged release). Mirrors how the other StratCon/scenario Developer Tools default to the authoritative data.
+     *
+     * @return the starting directory path
+     */
+    private static String scenarioTemplateStartDirectory() {
+        String remembered = MekHQ.getScenarioTemplatesDirectory().getValue();
+        if ((remembered == null) || remembered.isBlank() || remembered.equals(".")) {
+            return developerDataDirectory("scenariotemplates");
+        }
+        return remembered;
     }
 
     /**
@@ -312,18 +324,113 @@ public class FileDialogs {
      */
     public static Optional<File> saveScenarioTemplate(JFrame frame, ScenarioTemplate template) {
         String fileName = String.format(
-              "%s.xml",
+              "%s.json",
               template.name);
 
         Optional<File> value = GUI.fileDialogSave(
               frame,
               "Save Scenario Template",
-              FileType.XML,
-              MekHQ.getScenarioTemplatesDirectory().getValue(),
+              FileType.SCENARIO_TEMPLATE,
+              scenarioTemplateStartDirectory(),
               fileName);
 
         value.ifPresent(x -> MekHQ.getScenarioTemplatesDirectory().setValue(x.getParent()));
         return value;
+    }
+
+    private static final String SCENARIO_MODIFIER_DIRECTORY = developerDataDirectory("scenariomodifiers");
+    private static final String CONTRACT_DEFINITION_DIRECTORY = developerDataDirectory("stratconcontractdefinitions");
+    private static final String STRAT_CON_FACILITY_DIRECTORY = developerDataDirectory("stratconfacilities");
+
+    /**
+     * Resolves a data subdirectory for the StratCon/scenario Developer Tools editors. In a source checkout the
+     * canonical {@code mm-data/data} tree sits two levels above the MekHQ working directory; editing there keeps the
+     * authoritative files in sync rather than the disposable staged {@code ./data} copy (which a build overwrites from
+     * mm-data). Packaged releases have no sibling {@code mm-data}, so this falls back to the runtime {@code ./data}
+     * tree.
+     *
+     * @param subdirectory the data subdirectory name (e.g. {@code "scenariomodifiers"})
+     *
+     * @return the canonical mm-data path when it exists, otherwise the {@code ./data} path
+     */
+    private static String developerDataDirectory(String subdirectory) {
+        File canonical = new File("../../mm-data/data/" + subdirectory);
+        if (canonical.isDirectory()) {
+            return canonical.getPath();
+        }
+        return "./data/" + subdirectory;
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a scenario modifier file to open.
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> openScenarioModifier(JFrame frame) {
+        return GUI.fileDialogOpen(frame, "Load Scenario Modifier", FileType.JSON, SCENARIO_MODIFIER_DIRECTORY);
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a scenario modifier file to save to.
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> saveScenarioModifier(JFrame frame, AtBScenarioModifier modifier) {
+        String fileName = (modifier.getModifierName() == null ? "modifier" : modifier.getModifierName()) + ".json";
+        return GUI.fileDialogSave(frame,
+              "Save Scenario Modifier",
+              FileType.JSON,
+              SCENARIO_MODIFIER_DIRECTORY,
+              fileName);
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a contract definition file to open.
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> openContractDefinition(JFrame frame) {
+        return GUI.fileDialogOpen(frame, "Load Contract Definition", FileType.JSON, CONTRACT_DEFINITION_DIRECTORY);
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a contract definition file to save to.
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> saveContractDefinition(JFrame frame, StratConContractDefinition definition) {
+        String name = definition.getContractTypeName();
+        String fileName = ((name == null) || name.isBlank() ? "contract" : name) + ".json";
+        return GUI.fileDialogSave(frame, "Save Contract Definition", FileType.JSON, CONTRACT_DEFINITION_DIRECTORY,
+              fileName);
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a StratCon facility file to open.
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> openStratConFacility(JFrame frame) {
+        return GUI.fileDialogOpen(frame, "Load StratCon Facility", FileType.JSON, STRAT_CON_FACILITY_DIRECTORY);
+    }
+
+    /**
+     * Displays a dialog window from which the user can select a StratCon facility file to save to. The suggested file
+     * name follows the shipped convention of an owner prefix plus the display name (e.g. {@code AlliedAirBase.json}).
+     *
+     * @return the file selected, if any
+     */
+    public static Optional<File> saveStratConFacility(JFrame frame, StratConFacility facility) {
+        String display = facility.getDisplayableName();
+        String fileName;
+        if ((display == null) || display.isBlank()) {
+            fileName = "facility";
+        } else {
+            String prefix = facility.isOwnerAlliedToPlayer() ? "Allied" : "Hostile";
+            fileName = prefix + display.replaceAll("[^A-Za-z0-9]", "");
+        }
+        return GUI.fileDialogSave(frame, "Save StratCon Facility", FileType.JSON, STRAT_CON_FACILITY_DIRECTORY,
+              fileName + ".json");
     }
 
     /**
@@ -331,6 +438,7 @@ public class FileDialogs {
      *
      * @return the file selected, if any
      */
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public static Optional<File> openPlanetsTsv(JFrame frame) {
         Optional<File> value = GUI.fileDialogOpen(
               frame,
@@ -360,29 +468,91 @@ public class FileDialogs {
     }
 
     /**
-     * Displays a dialog window from which the user can select an <code>.xml</code> file to open.
-     *
-     * @return the file selected, if any
+     * Displays a dialog window from which the user can select a <code>.csv</code> file to save personnel to. Uses
+     * <code>[Campaign Name]</code><code>[Date]</code>_ExportPersonnel.csv as default filename.
      */
-    public static Optional<File> openCompanyGenerationOptions(final JFrame frame) {
-        Optional<File> value = GUI.fileDialogOpen(frame, "Load Company Generation Options",
-              FileType.XML, MekHQ.getMHQOptions().getCompanyGenerationDirectoryPath());
-
-        value.ifPresent(x -> MekHQ.getMHQOptions().setCompanyGenerationDirectoryPath(x.getParent()));
-        return value;
+    public static Optional<File> savePersonnelCSV(JFrame frame, Campaign campaign) {
+        return saveWithBackup(frame, getTextAt("dlgSavePersonnelCSV.title"), MekHQ.getPersonnelDirectory(),
+              getDefaultFilename(campaign, getTextAt("dlgSavePersonnelCSV.fileSuffix")), FileType.CSV);
     }
 
     /**
-     * Displays a dialog window from which the user can select a <code>.xml</code> file to save to.
-     *
-     * @return the file selected, if any
+     * Displays a dialog window from which the user can select a <code>.csv</code> file to save units to. Uses
+     * <code>[Campaign Name]</code><code>[Date]</code>_ExportUnits.csv as default filename.
      */
-    public static Optional<File> saveCompanyGenerationOptions(final JFrame frame) {
-        Optional<File> value = GUI.fileDialogSave(frame, "Save Company Generation Options",
-              FileType.XML, MekHQ.getMHQOptions().getCompanyGenerationDirectoryPath(),
-              "myoptions.xml");
-
-        value.ifPresent(x -> MekHQ.getMHQOptions().setCompanyGenerationDirectoryPath(x.getParent()));
-        return value;
+    public static Optional<File> saveUnitsCSV(JFrame frame, Campaign campaign) {
+        return saveWithBackup(frame, getTextAt("dlgSaveUnitsCSV.title"), MekHQ.getUnitsDirectory(),
+              getDefaultFilename(campaign, getTextAt("dlgSaveUnitsCSV.fileSuffix")), FileType.CSV);
     }
+
+    /**
+     * Displays a dialog window from which the user can select a <code>.csv</code> file to save finances to. Uses
+     * <code>[Campaign Name]</code><code>[Date]</code>_ExportFinances.csv as default filename.
+     */
+    public static Optional<File> saveFinancesCSV(JFrame frame, Campaign campaign) {
+        return saveWithBackup(frame, getTextAt("dlgSaveFinancesCSV.title"), MekHQ.getFinancesDirectory(),
+              getDefaultFilename(campaign, getTextAt("dlgSaveFinancesCSV.fileSuffix")), FileType.CSV);
+    }
+
+    /**
+     * Displays a dialog pointing at the default directory where the user can save a file, ensures its extension, and
+     * creates a backup if it already exists.
+     *
+     * <p>
+     * To streamline UX, the dialog show default directory and pre-populates output file. After file selection is done,
+     * makes file's parent directory default.
+     * </p>
+     *
+     * @param frame           dialog parent frame
+     * @param dialogTitle     title of the dialog frame
+     * @param defaultDir      default save directory
+     * @param defaultFilename default file name, excluding extension
+     * @param fileType        file type to be enforced
+     *
+     * @return a file user chose to save to, <code>Optional.empty</code> if the dialog was canceled
+     */
+    public static Optional<File> saveWithBackup(JFrame frame, String dialogTitle,
+          ObservableString defaultDir, String defaultFilename, FileType fileType) {
+        String saveFilename = defaultFilename + '.' + fileType.getRecommendedExtension();
+        Optional<File> selectedFile = GUI.fileDialogSave(frame,
+              dialogTitle,
+              fileType,
+              defaultDir.getValue(),
+              saveFilename);
+        Optional<File> outputFile = selectedFile.map(file -> enforceFileExtension(file, fileType));
+
+        outputFile.ifPresent(file -> defaultDir.setValue(file.getParent()));
+        // if the file already exists, make a backup copy
+        outputFile.filter(File::exists)
+              .ifPresent(file -> Utilities.copyfile(file, new File(file.getPath() + "_backup")));
+
+        return outputFile;
+    }
+
+    /**
+     * Ensures that the file has the appropriate file type extension.
+     *
+     * @param file     the file to check
+     * @param fileType enforced file type
+     *
+     * @return File with the appropriate file type extension
+     */
+    private static File enforceFileExtension(File file, FileType fileType) {
+        String path = file.getPath();
+        if (!path.endsWith('.' + fileType.getRecommendedExtension())) {
+            path += '.' + fileType.getRecommendedExtension();
+            file = new File(path);
+        }
+        return file;
+    }
+
+    private static String getDefaultFilename(Campaign campaign, String filenameSuffix) {
+        return campaign.getPlayerForce().getName() + campaign.getLocalDate().format(DATE_TIME_FORMATTER) + "_" + filenameSuffix;
+    }
+
+
+    private static String getTextAt(String key) {
+        return MHQInternationalization.getTextAt(RESOURCE_BUNDLE, key);
+    }
+
 }

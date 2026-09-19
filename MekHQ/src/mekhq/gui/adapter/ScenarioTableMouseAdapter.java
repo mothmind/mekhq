@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2014-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -40,15 +40,13 @@ import javax.swing.JPopupMenu;
 import javax.swing.JTable;
 
 import mekhq.MekHQ;
+import mekhq.campaign.digitalGM.stratCon.gm.MaplessStratCon;
 import mekhq.campaign.events.scenarios.ScenarioChangedEvent;
-import mekhq.campaign.mission.AtBDynamicScenario;
-import mekhq.campaign.mission.Mission;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.stratCon.MaplessStratCon;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
+import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.gui.CampaignGUI;
-import mekhq.gui.StratConTab;
 import mekhq.gui.dialog.CustomizeScenarioDialog;
-import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.model.ScenarioTableModel;
 
 public class ScenarioTableMouseAdapter extends JPopupMenuAdapter {
@@ -76,19 +74,26 @@ public class ScenarioTableMouseAdapter extends JPopupMenuAdapter {
             return Optional.empty();
         }
 
-        JPopupMenu popup = new JPopupMenu();
-
         Scenario scenario = scenarioModel.getScenario(scenarioTable.convertRowIndexToModel(row));
+        if (scenario == null) {
+            return Optional.empty();
+        }
+
+        // Resolved scenarios can still be edited (e.g. to add an After-Action Report), but actions that only make
+        // sense for an active scenario, such as deploying to it, are only offered while the scenario is current.
+        final boolean isCurrent = scenario.getStatus().isCurrent();
+
+        JPopupMenu popup = new JPopupMenu();
         JMenuItem menuItem;
         JMenu menu;
 
         // let's fill the pop-up menu
-        if (gui.getTab(MHQTabType.STRAT_CON) instanceof StratConTab stratConTab
-                  && scenario instanceof AtBDynamicScenario) {
+        if (isCurrent && gui.getStratConTab().isPresent() && scenario instanceof AtBDynamicScenario) {
             menuItem = new JMenuItem("Deploy...");
-            menuItem.addActionListener(evt -> MaplessStratCon.deployWithoutMap(stratConTab.getStratconPanel(),
-                  gui.getCampaign(),
-                  scenario));
+            menuItem.addActionListener(
+                  event -> gui.getStratConTab().ifPresent(
+                        tab -> MaplessStratCon.deployWithoutMap(tab.getStratconPanel(), gui.getCampaign(), scenario))
+            );
             popup.add(menuItem);
         }
 
@@ -113,7 +118,7 @@ public class ScenarioTableMouseAdapter extends JPopupMenuAdapter {
     }
 
     private void editScenario(Scenario scenario) {
-        Mission mission = gui.getCampaign().getMission(scenario.getMissionId());
+        AbstractContract mission = gui.getCampaign().getContract(scenario.getMissionId());
         if (mission != null) {
             CustomizeScenarioDialog csd = new CustomizeScenarioDialog(gui.getFrame(), true,
                   scenario, mission, gui);

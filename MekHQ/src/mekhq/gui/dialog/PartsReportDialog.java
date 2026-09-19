@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,6 +32,8 @@
  */
 package mekhq.gui.dialog;
 
+import static mekhq.utilities.MHQInternationalization.getTextAt;
+
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
@@ -40,13 +42,14 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ResourceBundle;
 import java.util.Set;
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
 import javax.swing.table.TableRowSorter;
@@ -55,7 +58,9 @@ import megamek.client.ui.util.UIUtil;
 import megamek.common.ui.FastJScrollPane;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.Quartermaster;
+import mekhq.campaign.base.PlayerBase;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.location.IPlace;
 import mekhq.campaign.market.PartsInUseManager;
 import mekhq.campaign.parts.Part;
 import mekhq.campaign.parts.PartInUse;
@@ -64,6 +69,8 @@ import mekhq.campaign.work.IAcquisitionWork;
 import mekhq.gui.CampaignGUI;
 import mekhq.gui.baseComponents.roundedComponents.RoundedJButton;
 import mekhq.gui.baseComponents.roundedComponents.RoundedLineBorder;
+import mekhq.gui.model.LocationFilterItem;
+import mekhq.gui.model.PartsFilterGroup;
 import mekhq.gui.model.PartsInUseTableModel;
 import mekhq.gui.sorter.FormattedNumberSorter;
 import mekhq.gui.sorter.TwoNumbersSorter;
@@ -79,20 +86,33 @@ public class PartsReportDialog extends JDialog {
     private JComboBox<String> ignoreSparesUnderQualityCB;
     private JTable overviewPartsInUseTable;
     private PartsInUseTableModel overviewPartsModel;
+    private JTextField txtPartsSearch;
+    private JComboBox<String> partsGroupFilterCB;
+    private JComboBox<LocationFilterItem> choiceLocation;
+    private TableRowSorter<PartsInUseTableModel> partsInUseSorter;
 
     private final Campaign campaign;
-    private final PartsInUseManager partsInUseManager;
+    private PartsInUseManager partsInUseManager;
+    /** The location whose parts are currently shown in the table and whose stock edits are being saved. */
+    private IPlace activePlace;
     private final CampaignGUI gui;
 
+    @Deprecated(since = "0.51.0")
     private final transient ResourceBundle resourceMap = ResourceBundle.getBundle(
           "mekhq.resources.PartsReportDialog", MekHQ.getMHQOptions().getLocale());
+
+    private static final String RESOURCE_BUNDLE = "mekhq.resources.PartsReportDialog";
 
     public PartsReportDialog(CampaignGUI gui, boolean modal) {
         super(gui.getFrame(), modal);
         this.gui = gui;
         this.campaign = gui.getCampaign();
-        this.partsInUseManager = new PartsInUseManager(campaign);
+        this.activePlace = campaign.getPlayerForce().getForceDetachment();
+        this.partsInUseManager = new PartsInUseManager(campaign, campaign.getPlayerForce().getForceDetachment());
         initComponents();
+        // initComponents() selects the dropdown to match the main GUI's active location; sync the scoped manager to it.
+        activePlace = getSelectedPlace();
+        partsInUseManager = new PartsInUseManager(campaign, activePlace);
         updateOverviewPartsInUse();
         pack();
         setLocationRelativeTo(gui.getFrame());
@@ -107,7 +127,6 @@ public class PartsReportDialog extends JDialog {
     }
 
     private void initComponents() {
-
         this.setTitle(resourceMap.getString("Form.title"));
 
         Container container = this.getContentPane();
@@ -134,7 +153,7 @@ public class PartsReportDialog extends JDialog {
         }
         overviewPartsInUseTable.setIntercellSpacing(new Dimension(0, 0));
         overviewPartsInUseTable.setShowGrid(false);
-        TableRowSorter<PartsInUseTableModel> partsInUseSorter = new TableRowSorter<>(overviewPartsModel);
+        partsInUseSorter = new TableRowSorter<>(overviewPartsModel);
         partsInUseSorter.setSortsOnUpdates(true);
         // Don't sort the buttons
         partsInUseSorter.setSortable(PartsInUseTableModel.COL_BUTTON_BUY, false);
@@ -162,7 +181,7 @@ public class PartsReportDialog extends JDialog {
                 int row = Integer.parseInt(e.getActionCommand());
                 PartInUse partInUse = overviewPartsModel.getPartInUse(row);
                 IAcquisitionWork partToBuy = partInUse.getPartToBuy();
-                campaign.getShoppingList().addShoppingItem(partToBuy, 1, campaign);
+                campaign.getPlayerForce().getShoppingList().addShoppingItem(partToBuy, 1, campaign, getSelectedPlace());
                 refreshOverviewSpecificPart(row, partInUse, partToBuy);
             }
         };
@@ -173,16 +192,18 @@ public class PartsReportDialog extends JDialog {
                 int row = Integer.parseInt(e.getActionCommand());
                 PartInUse partInUse = overviewPartsModel.getPartInUse(row);
                 int quantity = 1;
-                PopupValueChoiceDialog pcd = new PopupValueChoiceDialog(gui.getFrame(), true,
+                PopupValueChoiceDialog bulkPurchaseDialog = new PopupValueChoiceDialog(gui.getFrame(), true,
                       "How Many " + partInUse.getPartToBuy().getAcquisitionName(), quantity, 1,
                       CampaignGUI.MAX_QUANTITY_SPINNER);
-                pcd.setVisible(true);
-                quantity = pcd.getValue();
-                if (quantity <= 0) {
+                bulkPurchaseDialog.setVisible(true);
+                quantity = bulkPurchaseDialog.getValue();
+                if (bulkPurchaseDialog.wasCanceled()) {
                     return;
                 }
                 IAcquisitionWork partToBuy = partInUse.getPartToBuy();
-                campaign.getShoppingList().addShoppingItem(partToBuy, quantity, campaign);
+                campaign.getPlayerForce()
+                      .getShoppingList()
+                      .addShoppingItem(partToBuy, quantity, campaign, getSelectedPlace());
                 refreshOverviewSpecificPart(row, partInUse, partToBuy);
             }
         };
@@ -209,21 +230,21 @@ public class PartsReportDialog extends JDialog {
                 }
                 int spareQty = spares.stream().mapToInt(Part::getSellableQuantity).sum();
                 int sellQty = 1;
-                PopupValueChoiceDialog popupValueChoiceDialog = new PopupValueChoiceDialog(gui.getFrame(),
+                PopupValueChoiceDialog sellQuantityDialog = new PopupValueChoiceDialog(gui.getFrame(),
                       true,
-                      "Sell how many " + spares.get(0).getName(),
+                      "Sell how many " + spares.getFirst().getName(),
                       sellQty,
                       1,
                       CampaignGUI.MAX_QUANTITY_SPINNER);
-                popupValueChoiceDialog.setVisible(true);
-                sellQty = popupValueChoiceDialog.getValue();
-                if (sellQty <= 0) {
+                sellQuantityDialog.setVisible(true);
+                sellQty = sellQuantityDialog.getValue();
+                if (sellQuantityDialog.wasCanceled()) {
                     return;
                 }
                 if (sellQty > spareQty) {
                     sellQty = spareQty;
                 }
-                Quartermaster quartermaster = campaign.getQuartermaster();
+                mekhq.campaign.ForceQuartermaster quartermaster = campaign.getQuartermaster();
                 int i = 0;
                 while (sellQty > 0 && i < spares.size()) {
                     Part spare = spares.get(i);
@@ -248,7 +269,8 @@ public class PartsReportDialog extends JDialog {
                 int row = Integer.parseInt(e.getActionCommand());
                 PartInUse partInUse = overviewPartsModel.getPartInUse(row);
                 IAcquisitionWork partToBuy = partInUse.getPartToBuy();
-                campaign.getQuartermaster().addPart((Part) partToBuy.getNewEquipment(), 0, false);
+                campaign.getQuartermaster()
+                      .addPart((Part) partToBuy.getNewEquipment(), 0, false, getSelectedPlace().getWarehouse());
                 refreshOverviewSpecificPart(row, partInUse, partToBuy);
             }
         };
@@ -258,15 +280,18 @@ public class PartsReportDialog extends JDialog {
                 int row = Integer.parseInt(e.getActionCommand());
                 PartInUse partInUse = overviewPartsModel.getPartInUse(row);
                 int quantity = 1;
-                PopupValueChoiceDialog pcd = new PopupValueChoiceDialog(gui.getFrame(), true,
+                PopupValueChoiceDialog addBulkDialog = new PopupValueChoiceDialog(gui.getFrame(), true,
                       "How Many " + partInUse.getPartToBuy().getAcquisitionName(), quantity, 1,
                       CampaignGUI.MAX_QUANTITY_SPINNER);
-                pcd.setVisible(true);
-                quantity = pcd.getValue();
+                addBulkDialog.setVisible(true);
+                quantity = addBulkDialog.getValue();
                 IAcquisitionWork partToBuy = partInUse.getPartToBuy();
-                while (quantity > 0) {
-                    campaign.getQuartermaster().addPart((Part) partToBuy.getNewEquipment(), 0, false);
-                    --quantity;
+                if (!addBulkDialog.wasCanceled()) {
+                    while (quantity > 0) {
+                        campaign.getQuartermaster()
+                              .addPart((Part) partToBuy.getNewEquipment(), 0, false, getSelectedPlace().getWarehouse());
+                        --quantity;
+                    }
                 }
                 refreshOverviewSpecificPart(row, partInUse, partToBuy);
             }
@@ -282,17 +307,58 @@ public class PartsReportDialog extends JDialog {
         new PartsInUseTableModel.ButtonColumn(overviewPartsInUseTable, addInBulk,
               PartsInUseTableModel.COL_BUTTON_GM_ADD_BULK);
 
-
         JScrollPane tableScroll = new FastJScrollPane(overviewPartsInUseTable);
         tableScroll.setBorder(RoundedLineBorder.createRoundedLineBorder());
 
+        JLabel lblGroup = new JLabel(getTextAt(RESOURCE_BUNDLE, "lblPartsGroup.text"));
+
+        // The group filters are shared with the Warehouse tab and Parts Store dialog via PartsFilterGroup, so this
+        // dialog offers the same groups (including Armor Kits) and classifies parts identically.
+        PartsFilterGroup[] partsFilterGroups = PartsFilterGroup.values();
+        String[] groupNames = new String[partsFilterGroups.length];
+        for (int i = 0; i < partsFilterGroups.length; i++) {
+            groupNames[i] = partsFilterGroups[i].getGroupName();
+        }
+        partsGroupFilterCB = new JComboBox<>(groupNames);
+        partsGroupFilterCB.setMaximumSize(partsGroupFilterCB.getPreferredSize());
+        partsGroupFilterCB.addActionListener(evt -> applyFilter());
+
+        JLabel lblLocation = new JLabel(getTextAt(RESOURCE_BUNDLE, "lblLocation.text"));
+        choiceLocation = new JComboBox<>(buildLocationModel());
+        // Open at the same location as the main GUI's active-location filter (ALL collapses to Main Force here). Select
+        // before attaching the listener so this doesn't fire onLocationChanged() before the rest of the UI is built.
+        choiceLocation.setSelectedItem(initialLocationItem());
+        choiceLocation.setMaximumSize(choiceLocation.getPreferredSize());
+        choiceLocation.addActionListener(evt -> onLocationChanged());
+
+        JLabel lblSearch = new JLabel(getTextAt(RESOURCE_BUNDLE, "lblPartsSearch.text"));
+
+        txtPartsSearch = new JTextField(15);
+        txtPartsSearch.setToolTipText(getTextAt(RESOURCE_BUNDLE, "lblPartsSearch.tooltip"));
+        txtPartsSearch.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent event) {
+                applyFilter();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event) {
+                applyFilter();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event) {
+                applyFilter();
+            }
+        });
+
         ignoreMothballedCheck = new JCheckBox(resourceMap.getString("chkIgnoreMothballed.text"));
         ignoreMothballedCheck.addActionListener(evt -> refreshOverviewPartsInUse());
-        ignoreMothballedCheck.setSelected(campaign.getIgnoreMothballed());
+        ignoreMothballedCheck.setSelected(campaign.getPlayerForce().getIgnoreMothballed());
 
         topUpWeeklyCheck = new JCheckBox(resourceMap.getString("chkTopUpWeekly.text"));
         topUpWeeklyCheck.addActionListener(evt -> refreshOverviewPartsInUse());
-        topUpWeeklyCheck.setSelected(campaign.getTopUpWeekly());
+        topUpWeeklyCheck.setSelected(campaign.getPlayerForce().getTopUpWeekly());
 
         RoundedJButton topUpButton = new RoundedJButton();
         topUpButton.setText(resourceMap.getString("topUpBtn.text"));
@@ -312,7 +378,7 @@ public class PartsReportDialog extends JDialog {
         resetRequestedStockButton.setMargin(new Insets(10, 20, 10, 20));
         resetRequestedStockButton.addActionListener(evt -> resetRequestedStock());
 
-        boolean reverse = campaign.getCampaignOptions().isReverseQualityNames();
+        boolean reverse = campaign.getCampaignOptions().get(CampaignOption.REVERSE_QUALITY_NAMES);
         String[] qualities = {
               " ", // Combo box is blank for first one because it accepts everything and is default
               PartQuality.QUALITY_B.toName(reverse),
@@ -326,8 +392,8 @@ public class PartsReportDialog extends JDialog {
         ignoreSparesUnderQualityCB.setMaximumSize(ignoreSparesUnderQualityCB.getPreferredSize());
         ignoreSparesUnderQualityCB.addActionListener(evt -> refreshOverviewPartsInUse());
         JLabel ignorePartsUnderLabel = new JLabel(resourceMap.getString("lblIgnoreSparesUnderQuality.text"));
-        if (campaign.getIgnoreSparesUnderQuality() != null) {
-            ignoreSparesUnderQualityCB.setSelectedItem(campaign.getIgnoreSparesUnderQuality());
+        if (campaign.getPlayerForce().getIgnoreSparesUnderQuality() != null) {
+            ignoreSparesUnderQualityCB.setSelectedItem(campaign.getPlayerForce().getIgnoreSparesUnderQuality());
         } else {
             ignoreSparesUnderQualityCB.setSelectedItem(" ");
         }
@@ -341,47 +407,95 @@ public class PartsReportDialog extends JDialog {
 
         layout.setHorizontalGroup(
               layout.createParallelGroup()
+                    .addGroup(layout.createSequentialGroup()
+                                    .addComponent(lblLocation)
+                                    .addComponent(choiceLocation)
+                                    .addGap(20)
+                                    .addComponent(lblGroup)
+                                    .addComponent(partsGroupFilterCB)
+                                    .addGap(20)
+                                    .addComponent(lblSearch)
+                                    .addComponent(txtPartsSearch)
+                                    .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                     .addComponent(tableScroll)
                     .addGroup(layout.createSequentialGroup()
                                     .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
-                                          GroupLayout.DEFAULT_SIZE,
-                                          Short.MAX_VALUE)
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                     .addComponent(ignorePartsUnderLabel)
                                     .addComponent(ignoreSparesUnderQualityCB)
+                                    .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addGroup(layout.createSequentialGroup()
+                                    .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                     .addComponent(ignoreMothballedCheck)
                                     .addComponent(topUpWeeklyCheck)
                                     .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
-                                          GroupLayout.DEFAULT_SIZE,
-                                          Short.MAX_VALUE))
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                     .addGroup(layout.createSequentialGroup()
                                     .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
-                                          GroupLayout.DEFAULT_SIZE,
-                                          Short.MAX_VALUE)
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                     .addComponent(topUpButton)
                                     .addComponent(topUpGMButton)
+                                    .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addGroup(layout.createSequentialGroup()
+                                    .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                     .addComponent(resetRequestedStockButton)
                                     .addComponent(btnClose)
                                     .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
-                                          GroupLayout.DEFAULT_SIZE,
-                                          Short.MAX_VALUE))
+                                          GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
         );
 
         layout.setVerticalGroup(
               layout.createSequentialGroup()
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                                    .addComponent(lblLocation)
+                                    .addComponent(choiceLocation)
+                                    .addComponent(lblGroup)
+                                    .addComponent(partsGroupFilterCB)
+                                    .addComponent(lblSearch)
+                                    .addComponent(txtPartsSearch))
                     .addComponent(tableScroll)
                     .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
-                                    .addComponent(ignoreMothballedCheck)
                                     .addComponent(ignorePartsUnderLabel)
-                                    .addComponent(ignoreSparesUnderQualityCB)
+                                    .addComponent(ignoreSparesUnderQualityCB))
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                                    .addComponent(ignoreMothballedCheck)
                                     .addComponent(topUpWeeklyCheck))
                     .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
                                     .addComponent(topUpButton)
-                                    .addComponent(topUpGMButton)
+                                    .addComponent(topUpGMButton))
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
                                     .addComponent(resetRequestedStockButton)
                                     .addComponent(btnClose))
         );
 
         setPreferredSize(UIUtil.scaleForGUI(1400, 1000));
+    }
+
+    private void applyFilter() {
+        final int group = partsGroupFilterCB.getSelectedIndex();
+        final String searchText = txtPartsSearch.getText().trim().toLowerCase();
+
+        partsInUseSorter.setRowFilter(new RowFilter<>() {
+            @Override
+            public boolean include(Entry<? extends PartsInUseTableModel, ? extends Integer> entry) {
+                PartInUse partInUse = entry.getModel().getPartInUse(entry.getIdentifier());
+                Part part = (Part) partInUse.getPartToBuy().getNewEquipment();
+
+                // Group filter
+                boolean inGroup = PartsFilterGroup.matches(group, part);
+
+                // Search filter
+                boolean inSearch = searchText.isEmpty() ||
+                                         partInUse.getDescription().toLowerCase().contains(searchText);
+
+                return inGroup && inSearch;
+            }
+        });
     }
 
 
@@ -398,7 +512,7 @@ public class PartsReportDialog extends JDialog {
             // The blank spot always means "everything", so minimum = lowest
             return PartQuality.QUALITY_A;
         } else {
-            return PartQuality.fromName(rating, campaign.getCampaignOptions().isReverseQualityNames());
+            return PartQuality.fromName(rating, campaign.getCampaignOptions().get(CampaignOption.REVERSE_QUALITY_NAMES));
         }
     }
 
@@ -442,7 +556,7 @@ public class PartsReportDialog extends JDialog {
 
     private Set<PartInUse> getPartsInUseFromTable() {
         Set<PartInUse> partsInUse = new HashSet<>();
-        for (int row = 0; row < overviewPartsInUseTable.getRowCount(); row++) {
+        for (int row = 0; row < overviewPartsModel.getRowCount(); row++) {
             partsInUse.add(overviewPartsModel.getPartInUse(row));
         }
         return partsInUse;
@@ -466,38 +580,80 @@ public class PartsReportDialog extends JDialog {
         updateOverviewPartsInUse();
     }
 
+    private DefaultComboBoxModel<LocationFilterItem> buildLocationModel() {
+        DefaultComboBoxModel<LocationFilterItem> model = new DefaultComboBoxModel<>();
+        model.addElement(LocationFilterItem.MAIN_FORCE);
+        for (PlayerBase base : campaign.getCampaignLocationManager().getPlayerBases()) {
+            model.addElement(LocationFilterItem.forBase(base));
+        }
+        return model;
+    }
+
+    /**
+     * The dropdown item to open on, matching the main GUI's active-location filter. "All" has no equivalent here, so it
+     * (and Main Force) map to Main Force; a base maps to this dialog's own item wrapping that same base.
+     */
+    private LocationFilterItem initialLocationItem() {
+        LocationFilterItem active = gui.getActiveLocation();
+        if (active == null || active.isAll() || active.isMainForce()) {
+            return LocationFilterItem.MAIN_FORCE;
+        }
+        ComboBoxModel<LocationFilterItem> model = choiceLocation.getModel();
+        for (int i = 0; i < model.getSize(); i++) {
+            LocationFilterItem item = model.getElementAt(i);
+            if (!item.isMainForce() && item.getBase() == active.getBase()) {
+                return item;
+            }
+        }
+        return LocationFilterItem.MAIN_FORCE;
+    }
+
+    /** The place currently selected in the location dropdown; the campaign (main force) or a specific base. */
+    private IPlace getSelectedPlace() {
+        LocationFilterItem item = (LocationFilterItem) choiceLocation.getSelectedItem();
+        if (item == null || item.isMainForce()) {
+            return campaign.getPlayerForce().getForceDetachment();
+        }
+        return item.getBase();
+    }
+
+    private void onLocationChanged() {
+        // Persist edits made while the previous location was active before switching the table over.
+        storePartInUseRequestedStockMap();
+        activePlace = getSelectedPlace();
+        partsInUseManager = new PartsInUseManager(campaign, activePlace);
+        updateOverviewPartsInUse();
+    }
+
     public void storePartInUseRequestedStockMap() {
         if (overviewPartsInUseTable.isEditing()) {
             overviewPartsInUseTable.getCellEditor().stopCellEditing();
         }
 
-        campaign.setIgnoreMothballed(ignoreMothballedCheck.isSelected());
-        campaign.setTopUpWeekly(topUpWeeklyCheck.isSelected());
+        campaign.getPlayerForce().setIgnoreMothballed(ignoreMothballedCheck.isSelected());
+        campaign.getPlayerForce().setTopUpWeekly(topUpWeeklyCheck.isSelected());
         if (ignoreSparesUnderQualityCB == null) {
-            campaign.setIgnoreSparesUnderQuality(getMinimumQuality(" "));
+            PartQuality ignoreSparesUnderQuality = getMinimumQuality(" ");
+            campaign.getPlayerForce().setIgnoreSparesUnderQuality(ignoreSparesUnderQuality);
         } else {
             Object object = ignoreSparesUnderQualityCB.getSelectedItem();
             if (object instanceof String string) {
-                campaign.setIgnoreSparesUnderQuality(getMinimumQuality(string));
+                PartQuality ignoreSparesUnderQuality = getMinimumQuality(string);
+                campaign.getPlayerForce().setIgnoreSparesUnderQuality(ignoreSparesUnderQuality);
             }
         }
 
-        Map<String, Double> stockMap = campaign.getPartsInUseRequestedStockMap();
-        if (stockMap == null) {
-            stockMap = new LinkedHashMap<>();
-            campaign.setPartsInUseRequestedStockMap(stockMap);
-        } else {
-            stockMap.clear();
-        }
+        Map<String, Double> stockMap = activePlace.getRequestedStockLevels().getStockMap();
+        stockMap.clear();
 
-        for (int row = 0; row < overviewPartsInUseTable.getRowCount(); row++) {
+        for (int row = 0; row < overviewPartsModel.getRowCount(); row++) {
             PartInUse partInUse = overviewPartsModel.getPartInUse(row);
             stockMap.put(PartsInUseManager.getStockKey(partInUse), partInUse.getRequestedStock());
         }
     }
 
     private void storePartInUseRequestedStock(PartInUse partInUse) {
-        Map<String, Double> stockMap = campaign.getPartsInUseRequestedStockMap();
+        Map<String, Double> stockMap = activePlace.getRequestedStockLevels().getStockMap();
         stockMap.put(PartsInUseManager.getStockKey(partInUse), partInUse.getRequestedStock());
     }
 
@@ -505,7 +661,7 @@ public class PartsReportDialog extends JDialog {
      * Wipes the requested stock numbers back to their defaults
      */
     private void resetRequestedStock() {
-        campaign.wipePartsInUseMap();
+        activePlace.getRequestedStockLevels().clear();
         updateOverviewPartsInUse();
     }
 

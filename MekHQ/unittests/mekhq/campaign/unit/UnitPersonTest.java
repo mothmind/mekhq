@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -48,6 +48,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.util.List;
 import java.util.Set;
@@ -62,9 +63,9 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.personnel.ranks.Ranks;
+import mekhq.campaign.randomEvents.prisoners.PrisonerStatus;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -76,7 +77,7 @@ public class UnitPersonTest {
     @Test
     public void testGetTechReturnsTech() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -87,7 +88,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTech = mock(Person.class);
         when(mockTech.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTech);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTech);
 
         // Set the tech
         unit.setTech(mockTech);
@@ -102,7 +103,7 @@ public class UnitPersonTest {
     @Test
     public void testGetTechReturnsEngineerIfPresent() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -113,7 +114,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTech = mock(Person.class);
         when(mockTech.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTech);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTech);
 
         // Set the tech
         unit.setTech(mockTech);
@@ -134,7 +135,7 @@ public class UnitPersonTest {
     @Test
     public void testNoTechRemoveTech() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -151,7 +152,7 @@ public class UnitPersonTest {
     @Test
     public void testRemoveTech() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -159,7 +160,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTech = mock(Person.class);
         when(mockTech.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTech);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTech);
 
         // Set the tech
         unit.setTech(mockTech);
@@ -177,7 +178,7 @@ public class UnitPersonTest {
     @Test
     public void testUnitIsUnmaintained() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -201,7 +202,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTech = mock(Person.class);
         when(mockTech.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTech);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTech);
         unit.setTech(mockTech);
 
         // ...then it is no longer unmaintained.
@@ -211,7 +212,7 @@ public class UnitPersonTest {
     @Test
     public void testUnitCompleteActivationRemovesTech() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -219,7 +220,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTech = mock(Person.class);
         when(mockTech.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTech);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTech);
         when(mockTech.getUnit()).thenReturn(null);
 
         // Set the tech
@@ -235,7 +236,7 @@ public class UnitPersonTest {
     @Test
     public void testUnitIsUnmanned() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -256,7 +257,7 @@ public class UnitPersonTest {
     @Test
     public void testDriver() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -269,7 +270,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockDriver = mock(Person.class);
         when(mockDriver.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockDriver);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockDriver);
         when(mockDriver.getUnit()).thenReturn(unit);
 
         // This person is NOT a driver (yet)
@@ -315,7 +316,7 @@ public class UnitPersonTest {
     @Test
     public void testGunner() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -328,7 +329,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockGunner = mock(Person.class);
         when(mockGunner.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockGunner);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockGunner);
         when(mockGunner.getUnit()).thenReturn(unit);
 
         // This person is NOT a gunner (yet)
@@ -374,7 +375,7 @@ public class UnitPersonTest {
     @Test
     public void testVesselCrew() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -387,7 +388,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockVesselCrew = mock(Person.class);
         when(mockVesselCrew.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockVesselCrew);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockVesselCrew);
         when(mockVesselCrew.getUnit()).thenReturn(unit);
 
         // Add the vessel crew
@@ -422,7 +423,7 @@ public class UnitPersonTest {
     @Test
     public void testTechOfficer() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -435,7 +436,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockTechOfficer = mock(Person.class);
         when(mockTechOfficer.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockTechOfficer);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockTechOfficer);
         when(mockTechOfficer.getUnit()).thenReturn(unit);
 
         // This person is NOT a tech officer (yet)
@@ -480,7 +481,7 @@ public class UnitPersonTest {
     @Test
     public void testNavigator() {
         Entity mockEntity = mock(Entity.class);
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Unit unit = spy(new Unit(mockEntity, mockCampaign));
         UUID unitId = UUID.randomUUID();
         when(unit.getId()).thenReturn(unitId);
@@ -493,7 +494,7 @@ public class UnitPersonTest {
         UUID id = UUID.randomUUID();
         Person mockNavigator = mock(Person.class);
         when(mockNavigator.getId()).thenReturn(id);
-        when(mockCampaign.getPerson(eq(id))).thenReturn(mockNavigator);
+        when(mockCampaign.getPlayerForce().getHumanResources().getPerson(eq(id))).thenReturn(mockNavigator);
         when(mockNavigator.getUnit()).thenReturn(unit);
 
         // This person is NOT a navigator (yet)
@@ -536,9 +537,8 @@ public class UnitPersonTest {
     }
 
     /**
-     * Tests for Unit temp crew (blob crew) functionality.
-     * Tests getting/setting temp crew for different personnel roles,
-     * total crew calculations, and blob crew status checks.
+     * Tests for Unit temp crew (blob crew) functionality. Tests getting/setting temp crew for different personnel
+     * roles, total crew calculations, and blob crew status checks.
      */
     @Nested
     @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -560,7 +560,12 @@ public class UnitPersonTest {
 
             // Enable blob crew for all roles (required for temp crew to work)
             // Using doReturn for spy to avoid calling real method
-            doReturn(true).when(mockCampaign).isBlobCrewEnabled(any(PersonnelRole.class));
+            mekhq.campaign.ForceHumanResources spyHumanResources = spy(mockCampaign.getPlayerForce()
+                                                                             .getHumanResources());
+            mockCampaign.getPlayerForce().setHumanResources(spyHumanResources);
+            doReturn(true).when(spyHumanResources)
+                  .isBlobCrewEnabled(any(mekhq.campaign.personnel.enums.PersonnelRole.class),
+                        any(mekhq.campaign.campaignOptions.CampaignOptions.class));
 
             mockEntity = mock(Entity.class);
             when(mockEntity.getId()).thenReturn(1);
@@ -659,8 +664,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that initial temp crew state is zero for all roles.
-             * Tests {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
+             * Tests that initial temp crew state is zero for all roles. Tests
+             * {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -669,8 +674,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests setting temp crew to a positive value.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
+             * Tests setting temp crew to a positive value. Tests {@link Unit#setTempCrew(PersonnelRole, int)} and
+             * {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -686,8 +691,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that setting temp crew to zero removes it from tracking.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#isUsingBlobCrew()}.
+             * Tests that setting temp crew to zero removes it from tracking. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#isUsingBlobCrew()}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -704,8 +709,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that setting temp crew to negative value removes it from tracking.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)}.
+             * Tests that setting temp crew to negative value removes it from tracking. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -721,8 +726,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that temp crew can be updated to different values.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)}.
+             * Tests that temp crew can be updated to different values. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -738,8 +743,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that multiple roles can have temp crew simultaneously.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
+             * Tests that multiple roles can have temp crew simultaneously. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
              */
             @Test
             void testMultipleRolesWithTempCrew() {
@@ -756,8 +761,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that setting one role's temp crew doesn't affect others.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)}.
+             * Tests that setting one role's temp crew doesn't affect others. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)}.
              */
             @Test
             void testTempCrewRoleIsolation() {
@@ -781,8 +786,8 @@ public class UnitPersonTest {
         class TotalTempCrewTests {
 
             /**
-             * Tests that getTotalTempCrew returns zero when no temp crew assigned.
-             * Tests {@link Unit#getTotalTempCrew()}.
+             * Tests that getTotalTempCrew returns zero when no temp crew assigned. Tests
+             * {@link Unit#getTotalTempCrew()}.
              */
             @Test
             void testGetTotalTempCrewWithNoTempCrew() {
@@ -790,8 +795,7 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that getTotalTempCrew sums across a single role.
-             * Tests {@link Unit#getTotalTempCrew()}.
+             * Tests that getTotalTempCrew sums across a single role. Tests {@link Unit#getTotalTempCrew()}.
              */
             @Test
             void testGetTotalTempCrewWithSingleRole() {
@@ -806,8 +810,7 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that getTotalTempCrew sums across multiple roles.
-             * Tests {@link Unit#getTotalTempCrew()}.
+             * Tests that getTotalTempCrew sums across multiple roles. Tests {@link Unit#getTotalTempCrew()}.
              */
             @Test
             void testGetTotalTempCrewWithMultipleRoles() {
@@ -824,8 +827,7 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that getTotalTempCrew updates when temp crew is removed.
-             * Tests {@link Unit#getTotalTempCrew()}.
+             * Tests that getTotalTempCrew updates when temp crew is removed. Tests {@link Unit#getTotalTempCrew()}.
              */
             @Test
             void testGetTotalTempCrewAfterRemoval() {
@@ -853,8 +855,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that isUsingBlobCrew returns false when no temp crew assigned.
-             * Tests {@link Unit#isUsingBlobCrew()}.
+             * Tests that isUsingBlobCrew returns false when no temp crew assigned. Tests
+             * {@link Unit#isUsingBlobCrew()}.
              */
             @Test
             void testIsUsingBlobCrewReturnsFalseWhenNoTempCrew() {
@@ -862,8 +864,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that isUsingBlobCrew returns true when temp crew is assigned.
-             * Tests {@link Unit#isUsingBlobCrew()}.
+             * Tests that isUsingBlobCrew returns true when temp crew is assigned. Tests
+             * {@link Unit#isUsingBlobCrew()}.
              */
             @ParameterizedTest
             @MethodSource(value = "getTempCrewRoles")
@@ -876,8 +878,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that isUsingBlobCrew returns false after all temp crew is removed.
-             * Tests {@link Unit#isUsingBlobCrew()}.
+             * Tests that isUsingBlobCrew returns false after all temp crew is removed. Tests
+             * {@link Unit#isUsingBlobCrew()}.
              */
             @Test
             void testIsUsingBlobCrewReturnsFalseAfterRemoval() {
@@ -894,8 +896,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that isUsingBlobCrew returns true when at least one role has temp crew.
-             * Tests {@link Unit#isUsingBlobCrew()}.
+             * Tests that isUsingBlobCrew returns true when at least one role has temp crew. Tests
+             * {@link Unit#isUsingBlobCrew()}.
              */
             @Test
             void testIsUsingBlobCrewReturnsTrueWithMultipleRoles() {
@@ -912,15 +914,15 @@ public class UnitPersonTest {
         }
 
         /**
-         * Nested test class for testing resetPilotAndEntity with temp crew.
-         * Verifies that temp crew properly fills missing crew slots.
+         * Nested test class for testing resetPilotAndEntity with temp crew. Verifies that temp crew properly fills
+         * missing crew slots.
          */
         @Nested
         class ResetPilotAndEntityTests {
 
             /**
-             * Tests that without temp crew, missing crew slots are marked as missing.
-             * Tests {@link Unit#resetPilotAndEntity()}.
+             * Tests that without temp crew, missing crew slots are marked as missing. Tests
+             * {@link Unit#resetPilotAndEntity()}.
              */
             @Test
             void testMissingCrewMarkedAsMissingWithoutTempCrew() {
@@ -955,8 +957,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that with temp crew assigned, those slots are NOT marked as missing.
-             * Tests {@link Unit#resetPilotAndEntity()}.
+             * Tests that with temp crew assigned, those slots are NOT marked as missing. Tests
+             * {@link Unit#resetPilotAndEntity()}.
              */
             @Test
             void testTempCrewFillsMissingSlots() {
@@ -1021,8 +1023,8 @@ public class UnitPersonTest {
             }
 
             /**
-             * Tests that temp crew exactly fills the gap between real crew and required crew.
-             * Tests {@link Unit#resetPilotAndEntity()}.
+             * Tests that temp crew exactly fills the gap between real crew and required crew. Tests
+             * {@link Unit#resetPilotAndEntity()}.
              */
             @Test
             void testTempCrewPartialFill() {
@@ -1062,39 +1064,44 @@ public class UnitPersonTest {
         }
 
         /**
-         * Nested test class for entity-role compatibility.
-         * Tests that only certain entity types can use specific temp crew roles.
+         * Nested test class for entity-role compatibility. Tests that only certain entity types can use specific temp
+         * crew roles.
          */
         @Nested
         class EntityRoleCompatibilityTests {
 
             /**
-             * Provides entity type and expected driver/gunner role pairs for parameterized tests.
-             * Returns: [EntityType class, expected driver role, expected gunner role]
+             * Provides entity type and expected driver/gunner role pairs for parameterized tests. Returns: [EntityType
+             * class, expected driver role, expected gunner role]
              */
             private static Stream<Object[]> getEntityRoles() {
                 return Stream.of(
-                    // Infantry uses SOLDIER for both driver and gunner
-                    new Object[]{megamek.common.units.Infantry.class, PersonnelRole.SOLDIER, PersonnelRole.SOLDIER},
+                      // Infantry uses SOLDIER for both driver and gunner
+                      new Object[] { megamek.common.units.Infantry.class, PersonnelRole.SOLDIER,
+                                     PersonnelRole.SOLDIER },
 
-                    // BattleArmor uses BATTLE_ARMOUR for both
-                    new Object[]{megamek.common.battleArmor.BattleArmor.class, PersonnelRole.BATTLE_ARMOUR, PersonnelRole.BATTLE_ARMOUR},
+                      // BattleArmor uses BATTLE_ARMOUR for both
+                      new Object[] { megamek.common.battleArmor.BattleArmor.class, PersonnelRole.BATTLE_ARMOUR,
+                                     PersonnelRole.BATTLE_ARMOUR },
 
-                    // Tank (ground vehicle) uses VEHICLE_CREW_GROUND
-                    new Object[]{megamek.common.units.Tank.class, PersonnelRole.VEHICLE_CREW_GROUND, PersonnelRole.VEHICLE_CREW_GROUND},
+                      // Tank (ground vehicle) uses VEHICLE_CREW_GROUND
+                      new Object[] { megamek.common.units.Tank.class, PersonnelRole.VEHICLE_CREW_GROUND,
+                                     PersonnelRole.VEHICLE_CREW_GROUND },
 
-                    // VTOL uses VEHICLE_CREW_VTOL
-                    new Object[]{megamek.common.units.VTOL.class, PersonnelRole.VEHICLE_CREW_VTOL, PersonnelRole.VEHICLE_CREW_VTOL}
+                      // VTOL uses VEHICLE_CREW_VTOL
+                      new Object[] { megamek.common.units.VTOL.class, PersonnelRole.VEHICLE_CREW_VTOL,
+                                     PersonnelRole.VEHICLE_CREW_VTOL }
                 );
             }
 
             /**
-             * Tests that entity types report the correct driver and gunner roles.
-             * Tests {@link Unit#getDriverRole()} and {@link Unit#getGunnerRole()}.
+             * Tests that entity types report the correct driver and gunner roles. Tests {@link Unit#getDriverRole()}
+             * and {@link Unit#getGunnerRole()}.
              */
             @ParameterizedTest
             @MethodSource("getEntityRoles")
-            void testEntityReturnsCorrectRoles(Class<?> entityClass, PersonnelRole expectedDriverRole, PersonnelRole expectedGunnerRole) {
+            void testEntityReturnsCorrectRoles(Class<?> entityClass, PersonnelRole expectedDriverRole,
+                  PersonnelRole expectedGunnerRole) {
                 // Arrange - Mock the entity to be the specified type
                 @SuppressWarnings("unchecked")
                 Entity mockSpecificEntity = mock((Class<Entity>) entityClass);
@@ -1110,9 +1117,9 @@ public class UnitPersonTest {
                 // Mock entity type checks based on the entity class
                 when(mockSpecificEntity.isMek()).thenReturn(false);
                 when(mockSpecificEntity.isBattleArmor()).thenReturn(
-                    entityClass.equals(megamek.common.battleArmor.BattleArmor.class));
+                      entityClass.equals(megamek.common.battleArmor.BattleArmor.class));
                 when(mockSpecificEntity.isConventionalInfantry()).thenReturn(
-                    entityClass.equals(megamek.common.units.Infantry.class));
+                      entityClass.equals(megamek.common.units.Infantry.class));
                 when(mockSpecificEntity.isAerospace()).thenReturn(false);
                 when(mockSpecificEntity.isSmallCraft()).thenReturn(false);
                 when(mockSpecificEntity.isLargeCraft()).thenReturn(false);
@@ -1120,12 +1127,12 @@ public class UnitPersonTest {
 
                 // Mock movement mode for Tank/VTOL types
                 if (entityClass.equals(megamek.common.units.Tank.class) ||
-                    entityClass.equals(megamek.common.units.VTOL.class)) {
+                          entityClass.equals(megamek.common.units.VTOL.class)) {
                     megamek.common.units.EntityMovementMode mockMovementMode =
-                        mock(megamek.common.units.EntityMovementMode.class);
+                          mock(megamek.common.units.EntityMovementMode.class);
                     when(mockMovementMode.isMarine()).thenReturn(false);
                     when(mockMovementMode.isVTOL()).thenReturn(
-                        entityClass.equals(megamek.common.units.VTOL.class));
+                          entityClass.equals(megamek.common.units.VTOL.class));
                     when(mockSpecificEntity.getMovementMode()).thenReturn(mockMovementMode);
                 }
 
@@ -1137,16 +1144,16 @@ public class UnitPersonTest {
 
                 // Assert
                 assertEquals(expectedDriverRole, actualDriverRole,
-                    String.format("%s should use %s as driver role",
-                        entityClass.getSimpleName(), expectedDriverRole));
+                      String.format("%s should use %s as driver role",
+                            entityClass.getSimpleName(), expectedDriverRole));
                 assertEquals(expectedGunnerRole, actualGunnerRole,
-                    String.format("%s should use %s as gunner role",
-                        entityClass.getSimpleName(), expectedGunnerRole));
+                      String.format("%s should use %s as gunner role",
+                            entityClass.getSimpleName(), expectedGunnerRole));
             }
 
             /**
-             * Tests that temp crew can be set and retrieved for compatible roles.
-             * Tests {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
+             * Tests that temp crew can be set and retrieved for compatible roles. Tests
+             * {@link Unit#setTempCrew(PersonnelRole, int)} and {@link Unit#getTempCrewByPersonnelRole(PersonnelRole)}.
              */
             @Test
             void testSetTempCrewForCompatibleRole() {
@@ -1157,9 +1164,9 @@ public class UnitPersonTest {
 
                 // Assert
                 assertEquals(5, testUnit.getTempCrewByPersonnelRole(PersonnelRole.SOLDIER),
-                    "Temp crew should be set for compatible role");
+                      "Temp crew should be set for compatible role");
                 assertEquals(5, testUnit.getTotalTempCrew(),
-                    "Total temp crew should reflect assigned crew");
+                      "Total temp crew should reflect assigned crew");
             }
         }
 
@@ -1290,6 +1297,7 @@ public class UnitPersonTest {
         when(mockCommander.getCallsign()).thenReturn("TestPilot");
         when(mockCommander.getGender()).thenReturn(megamek.common.enums.Gender.MALE);
         when(mockCommander.isClanPersonnel()).thenReturn(false);
+        when(mockCommander.getPrisonerStatus()).thenReturn(PrisonerStatus.PRISONER); // Bypass armor kit distribution
 
         // Mock Portrait and make it cloneable
         megamek.common.icons.Portrait mockPortrait = mock(megamek.common.icons.Portrait.class);
@@ -1327,6 +1335,7 @@ public class UnitPersonTest {
         when(mockPlanet.getParentSystem()).thenReturn(mockSystem);
 
         when(mockCommander.getOriginPlanet()).thenReturn(mockPlanet);
+
         return mockCommander;
     }
 }

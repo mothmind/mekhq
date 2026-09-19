@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2017-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -41,10 +41,12 @@ import megamek.common.bays.Bay;
 import megamek.common.compute.Compute;
 import megamek.common.units.Entity;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingBayDoor;
 import mekhq.campaign.parts.missing.MissingCubicle;
 import mekhq.campaign.parts.missing.MissingPart;
+import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -56,6 +58,7 @@ public class TransportBayPart extends Part {
     private int bayNumber;
     private double size;
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public TransportBayPart() {
         this(0, 0, 0, null);
     }
@@ -79,9 +82,18 @@ public class TransportBayPart extends Part {
     }
 
     @Override
+    public boolean isRightTechType(String skillType) {
+        return skillType.equals(SkillType.S_TECH_MECHANICAL);
+    }
+
+    @Override
     public String getName() {
-        if (null != getBay()) {
-            return getBay().getTransporterType() + " Bay #" + bayNumber;
+        // Resolved once. getBay() reads through to the unit's entity, and the Warehouse tab refreshes on a Swing
+        // timer that can run while a campaign is still loading, so asking twice could return a bay and then null
+        // and throw between the two calls (issue #8925). Every other method here already caches it.
+        Bay bay = getBay();
+        if (null != bay) {
+            return bay.getTransporterType() + " Bay #" + bayNumber;
         }
         return super.getName();
     }
@@ -115,7 +127,7 @@ public class TransportBayPart extends Part {
                                          .toList();
                 for (Part door : doors) {
                     if (checkForDestruction
-                              && Compute.d6(2) < campaign.getCampaignOptions().getDestroyPartTarget()) {
+                              && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                         door.remove(false);
                     } else {
                         door.hits = 1;

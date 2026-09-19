@@ -59,7 +59,9 @@ import javax.swing.*;
 
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
+import megamek.common.ui.FastJScrollPane;
 import megamek.logging.MMLogger;
+import mekhq.IconPackage;
 import mekhq.MekHQ;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
@@ -73,7 +75,6 @@ import mekhq.campaign.personnel.InjuryType;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.InjuryLevel;
 import mekhq.campaign.personnel.medical.BodyLocation;
-import mekhq.gui.utilities.JScrollPaneWithSpeed;
 import mekhq.gui.view.PaperDoll;
 
 public class MedicalViewDialog extends JDialog {
@@ -103,26 +104,21 @@ public class MedicalViewDialog extends JDialog {
     private final transient ResourceBundle resourceMap = ResourceBundle.getBundle("mekhq.resources.MedicalViewDialog",
           MekHQ.getMHQOptions().getLocale());
 
-    public MedicalViewDialog(Window parent, Campaign campaign, Person person) {
+    public MedicalViewDialog(Window parent, Campaign campaign, Person person, IconPackage iconPackage) {
         super();
         this.campaign = Objects.requireNonNull(campaign);
         this.person = Objects.requireNonNull(person);
         gatherRelevantInjuries(person.getInjuries());
 
         // Preload default paper dolls
-        try (InputStream fis = new FileInputStream(campaign.getApp()
-                                                         .getIconPackage()
-                                                         .getGuiElement("default_male_paperdoll"))) { // TODO : Remove inline file
-            // path
+        // TODO: Remove inline file path
+        try (InputStream fis = new FileInputStream(iconPackage.getGuiElement("default_male_paperdoll"))) {
             defaultMaleDoll = new PaperDoll(fis);
         } catch (IOException e) {
             LOGGER.error("", e);
         }
-
-        try (InputStream fis = new FileInputStream(campaign.getApp()
-                                                         .getIconPackage()
-                                                         .getGuiElement("default_female_paperdoll"))) { // TODO : Remove inline file
-            // path
+        // TODO: Remove inline file path
+        try (InputStream fis = new FileInputStream(iconPackage.getGuiElement("default_female_paperdoll"))) {
             defaultFemaleDoll = new PaperDoll(fis);
         } catch (IOException e) {
             LOGGER.error("", e);
@@ -217,7 +213,7 @@ public class MedicalViewDialog extends JDialog {
 
         getContentPane().setLayout(new BoxLayout(getContentPane(), BoxLayout.Y_AXIS));
         Container scrollPanel = new JPanel();
-        getContentPane().add(new JScrollPaneWithSpeed(scrollPanel,
+        getContentPane().add(new FastJScrollPane(scrollPanel,
               JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
               JScrollPane.HORIZONTAL_SCROLLBAR_NEVER));
         initComponents(scrollPanel);
@@ -344,7 +340,11 @@ public class MedicalViewDialog extends JDialog {
                       && !person.isLocationMissing(bodyLocation.getParent())) {
                 doll.setLocTag(bodyLocation, "lost");
             } else if (!person.isLocationMissing(bodyLocation)) {
-                InjuryLevel level = getMaxInjuryLevel(bodyLocation, injuriesMappedToPrimaryLocations);
+                BodyLocation parentLocation = bodyLocation.getParent();
+                boolean parentHasProsthetic = person.hasProstheticInjuryNoImplant(parentLocation);
+                BodyLocation location = parentHasProsthetic ? parentLocation : bodyLocation;
+                InjuryLevel level =
+                      MedicalViewDialog.getMaxInjuryLevel(location, injuriesMappedToPrimaryLocations);
                 Color col = switch (level) {
                     case CHRONIC -> new Color(255, 204, 255);
                     case DEADLY -> Color.RED;
@@ -384,10 +384,10 @@ public class MedicalViewDialog extends JDialog {
                                  resourceMap.getString("baselinePhenotype.text") :
                                  p.getPhenotype().toString();
 
-        Formation f = c.getFormationFor(p);
+        Formation f = c.getPlayerForce().getFormationFor(p);
         String force = (null != f) ? f.getFullName() : "-";
 
-        Person doc = c.getPerson(p.getDoctorId());
+        Person doc = c.getPlayerForce().getHumanResources().getPerson(p.getDoctorId());
         String doctor = resourceMap.getString("none.text");
         if ((null != doc) && doc.getStatus().isActive()) {
             doctor = doc.getFullTitle();
@@ -449,7 +449,7 @@ public class MedicalViewDialog extends JDialog {
                   } else {
                       panel.add(genWrittenText(String.format(resourceMap.getString("historyDateAndText.format"),
                             e.getKey(),
-                            e.getValue().get(0).getDesc())));
+                            e.getValue().getFirst().getDesc())));
                   }
               });
         return panel;

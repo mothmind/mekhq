@@ -36,8 +36,11 @@ package mekhq.gui.view;
 import static megamek.common.options.OptionsConstants.BASE_BLIND_DROP;
 import static megamek.common.options.OptionsConstants.BASE_REAL_BLIND_DROP;
 import static megamek.common.units.Entity.getEntityMajorTypeName;
+import static mekhq.utilities.MHQInternationalization.getTextAt;
 
+import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -70,17 +73,20 @@ import megamek.common.units.Entity;
 import mekhq.MekHQ;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.force.FormationStub;
 import mekhq.campaign.force.UnitStub;
-import mekhq.campaign.mission.AtBDynamicScenario;
-import mekhq.campaign.mission.AtBScenario;
-import mekhq.campaign.mission.BotForceStub;
-import mekhq.campaign.mission.Loot;
-import mekhq.campaign.mission.Scenario;
-import mekhq.campaign.mission.ScenarioForceTemplate;
-import mekhq.campaign.mission.ScenarioObjective;
+import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
+import mekhq.campaign.mission.scenarios.AtBScenario;
+import mekhq.campaign.mission.scenarios.BotForceStub;
+import mekhq.campaign.mission.scenarios.Loot;
+import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.scenarios.ScenarioForceTemplate;
+import mekhq.campaign.mission.scenarios.ScenarioObjective;
 import mekhq.gui.baseComponents.JScrollablePanel;
+import mekhq.gui.utilities.BriefingStyle;
+import mekhq.gui.utilities.MarkdownRenderer;
 
 /**
  * @author Neoancient
@@ -141,9 +147,11 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
 
     private JTree playerForceTree;
 
-    private JTextArea txtDesc;
+    private JTextPane txtDesc;
 
     private final StubTreeModel playerForceModel;
+
+    private static final String RESOURCE_BUNDLE = "mekhq.resources.AtBScenarioViewPanel";
 
     public AtBScenarioViewPanel(AtBScenario s, Campaign c, JFrame frame) {
         super();
@@ -172,46 +180,55 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
     private void initComponents() {
         GridBagConstraints gridBagConstraints;
 
+        JPanel statsSection = BriefingStyle.createSectionPanel(scenario.getName());
         panStats = new JPanel();
-        txtDesc = new JTextArea();
-        JTextArea txtReport = new JTextArea();
-        playerForceTree = new JTree();
+        txtDesc = new JTextPane();
+        playerForceTree = new JTree() {
+            @Override
+            public Dimension getMinimumSize() {
+                return super.getPreferredSize();
+            }
+        };
 
         setLayout(new GridBagLayout());
 
-        setTracksViewportWidth(false);
+        setTracksViewportWidth(true);
 
         int y = 0;
 
         panStats.setName("pnlStats");
-        panStats.setBorder(BorderFactory.createTitledBorder(scenario.getName()));
         fillStats();
+        statsSection.add(panStats, BorderLayout.CENTER);
         gridBagConstraints = new GridBagConstraints();
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y++;
         gridBagConstraints.gridheight = 1;
-        gridBagConstraints.weightx = 0.0;
-        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-        gridBagConstraints.fill = GridBagConstraints.BOTH;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        add(panStats, gridBagConstraints);
-
-        txtReport.setName("txtReport");
-        txtReport.setText(scenario.getReport());
-        txtReport.setEditable(false);
-        txtReport.setLineWrap(true);
-        txtReport.setWrapStyleWord(true);
-        txtReport.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createTitledBorder("After-Action Report"),
-              BorderFactory.createEmptyBorder(5, 5, 5, 5)));
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = y;
-        gridBagConstraints.gridwidth = 1;
         gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 1.0;
+        gridBagConstraints.insets = new Insets(0, 0, 0, 0);
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        add(txtReport, gridBagConstraints);
+        add(statsSection, gridBagConstraints);
+
+        if ((scenario.getReport() != null) && !scenario.getReport().isBlank()) {
+            JPanel reportSection = BriefingStyle.createSectionPanel("After-Action Report");
+            JTextPane txtReport = new JTextPane();
+            txtReport.setName("txtReport");
+            txtReport.setEditable(false);
+            txtReport.setContentType("text/html");
+            txtReport.setText(MarkdownRenderer.getRenderedHtml(scenario.getReport()));
+            txtReport.setBorder(BorderFactory.createEmptyBorder());
+            reportSection.add(txtReport, BorderLayout.CENTER);
+            gridBagConstraints = new GridBagConstraints();
+            gridBagConstraints.gridx = 0;
+            gridBagConstraints.gridy = y;
+            gridBagConstraints.gridwidth = 1;
+            gridBagConstraints.weightx = 1.0;
+            gridBagConstraints.weighty = 1.0;
+            gridBagConstraints.fill = GridBagConstraints.BOTH;
+            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+            add(reportSection, gridBagConstraints);
+        }
     }
 
     private void fillStats() {
@@ -241,97 +258,6 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridy = y++;
         panStats.add(lblStatusDesc, gridBagConstraints);
 
-        playerForceTree.setModel(playerForceModel);
-        playerForceTree.setCellRenderer(new ForceStubRenderer());
-        playerForceTree.setRowHeight(50);
-        playerForceTree.setRootVisible(false);
-        gridBagConstraints = new GridBagConstraints();
-        gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy = y++;
-        gridBagConstraints.gridwidth = 3;
-        gridBagConstraints.gridheight = 1;
-        gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 1.0;
-        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-        gridBagConstraints.fill = GridBagConstraints.BOTH;
-        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        panStats.add(playerForceTree, gridBagConstraints);
-
-        if (!attachedAllyStub.isEmpty()) {
-            DefaultMutableTreeNode top = new DefaultMutableTreeNode("Attached Allies");
-            for (String en : attachedAllyStub) {
-                top.add(new DefaultMutableTreeNode(en));
-            }
-            JTree tree = new JTree(top);
-            tree.collapsePath(new TreePath(top));
-            gridBagConstraints.gridx = 0;
-            gridBagConstraints.gridy = y++;
-            gridBagConstraints.gridwidth = 3;
-            gridBagConstraints.gridheight = 1;
-            gridBagConstraints.weightx = 1.0;
-            gridBagConstraints.weighty = 1.0;
-            gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-            gridBagConstraints.fill = GridBagConstraints.BOTH;
-            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-            panStats.add(tree, gridBagConstraints);
-        }
-
-        boolean isBlindDrop = campaign.getGameOptions().getOption(BASE_BLIND_DROP).booleanValue();
-        boolean isTrueBlindDrop = campaign.getGameOptions().getOption(BASE_REAL_BLIND_DROP).booleanValue();
-        boolean isCurrent = scenario.getStatus().isCurrent();
-        for (int i = 0; i < botStubs.size(); i++) {
-            BotForceStub botStub = botStubs.get(i);
-            if (botStub == null) {
-                continue;
-            }
-
-            int team = botStub.team();
-            List<String> allEntries = botStub.entityList();
-            DefaultMutableTreeNode top = new DefaultMutableTreeNode(botStubs.get(i).name());
-
-            if (!(isTrueBlindDrop && (team != 1))) {
-                boolean hideInformation = isCurrent && isBlindDrop && (team != 1);
-                for (String entityString : allEntries) {
-                    if (hideInformation) {
-                        int unitIndex = allEntries.indexOf(entityString);
-                        Entity entity = scenario.getBotForce(i).getFullEntityList(campaign).get(unitIndex);
-
-                        if (entity == null) {
-                            String label = "???";
-                            top.add(new DefaultMutableTreeNode(label));
-                            continue;
-                        }
-
-                        String weightClass = entity.getWeightClassName();
-                        long entityType = entity.getEntityType();
-                        String unitType = getEntityMajorTypeName(entityType);
-
-                        String label = weightClass + ' ' + unitType;
-                        top.add(new DefaultMutableTreeNode(label));
-                    } else {
-                        top.add(new DefaultMutableTreeNode(entityString));
-                    }
-                }
-            }
-
-            JTree tree = new JTree(top);
-            tree.collapsePath(new TreePath(top));
-            tree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
-            gridBagConstraints.gridx = 0;
-            gridBagConstraints.gridy = y++;
-            gridBagConstraints.gridwidth = 3;
-            gridBagConstraints.gridheight = 1;
-            gridBagConstraints.weightx = 1.0;
-            gridBagConstraints.weighty = 1.0;
-            gridBagConstraints.insets = new Insets(5, 5, 5, 5);
-            gridBagConstraints.fill = GridBagConstraints.BOTH;
-            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-            panStats.add(tree, gridBagConstraints);
-            if (scenario.getStatus().isCurrent()) {
-                tree.addMouseListener(new TreeMouseAdapter(tree, i));
-            }
-        }
-
         gridBagConstraints = new GridBagConstraints();
         lblType.setText(resourceMap.getString("lblType.text"));
         gridBagConstraints.gridx = 0;
@@ -353,10 +279,12 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             panStats.add(lblForce, gridBagConstraints);
 
             if (null != scenario.getCombatTeamById(campaign)) {
-                Formation formation = campaign.getFormation(scenario.getCombatTeamId());
+                int id1 = scenario.getCombatTeamId();
+                Formation formation = campaign.getPlayerForce().getFormation(id1);
 
                 if (formation != null) {
-                    lblForceDesc.setText(campaign.getFormation(scenario.getCombatTeamId()).getFullName());
+                    int id = scenario.getCombatTeamId();
+                    lblForceDesc.setText(campaign.getPlayerForce().getFormation(id).getFullName());
                 } else {
                     lblForceDesc.setText("Unknown Force ID: " + scenario.getCombatTeamId());
                 }
@@ -365,7 +293,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
                 forceBuilder.append("<html>");
                 boolean chop = false;
                 for (int forceID : scenario.getForceIDs()) {
-                    forceBuilder.append(campaign.getFormation(forceID).getFullName());
+                    forceBuilder.append(campaign.getPlayerForce().getFormation(forceID).getFullName());
                     forceBuilder.append("<br/>");
                     ScenarioForceTemplate template = ((AtBDynamicScenario) scenario).getPlayerForceTemplates()
                                                            .get(forceID);
@@ -425,21 +353,25 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         }
 
         txtDesc.setName("txtDesc");
-        txtDesc.setText(scenario.getDescription());
         txtDesc.setEditable(false);
-        txtDesc.setLineWrap(true);
-        txtDesc.setWrapStyleWord(true);
+        txtDesc.setContentType("text/html");
+        txtDesc.setText(MarkdownRenderer.getRenderedHtml(scenario.getDescription()));
         gridBagConstraints.gridx = 0;
         gridBagConstraints.gridy = y++;
         gridBagConstraints.gridwidth = 3;
         gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 1.0;
+        gridBagConstraints.weighty = 0.0;
         gridBagConstraints.insets = new Insets(5, 5, 5, 5);
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         panStats.add(txtDesc, gridBagConstraints);
 
         StringBuilder objectiveBuilder = new StringBuilder();
+
+        String disclaimer = getTextAt(RESOURCE_BUNDLE, "AtBScenarioViewPanel.scenarioDescription.disclaimer");
+        objectiveBuilder.append(disclaimer);
+        objectiveBuilder.append("\n\n");
+
         objectiveBuilder.append(scenario.getDeploymentInstructions());
 
         for (ScenarioObjective objective : scenario.getScenarioObjectives()) {
@@ -496,11 +428,13 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridy = y++;
         gridBagConstraints.gridwidth = 3;
         gridBagConstraints.weightx = 1.0;
-        gridBagConstraints.weighty = 1.0;
+        gridBagConstraints.weighty = 0.0;
         gridBagConstraints.insets = new Insets(5, 5, 5, 5);
         gridBagConstraints.fill = GridBagConstraints.BOTH;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         panStats.add(txtDetails, gridBagConstraints);
+
+        y = addForceTrees(y);
 
         if (!scenario.getLoot().isEmpty()) {
             gridBagConstraints.gridx = 0;
@@ -525,6 +459,109 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
                 panStats.add(new JLabel(loot.getShortDescription()), gridBagConstraints);
             }
         }
+    }
+
+    private int addForceTrees(int row) {
+        playerForceTree.setModel(playerForceModel);
+        playerForceTree.setCellRenderer(new ForceStubRenderer());
+        playerForceTree.setRowHeight(50);
+        playerForceTree.setRootVisible(false);
+        GridBagConstraints gridBagConstraints = new GridBagConstraints();
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy = row++;
+        gridBagConstraints.gridwidth = 3;
+        gridBagConstraints.gridheight = 1;
+        gridBagConstraints.weightx = 1.0;
+        gridBagConstraints.weighty = 0.0;
+        gridBagConstraints.insets = new Insets(5, 5, 5, 5);
+        gridBagConstraints.fill = GridBagConstraints.BOTH;
+        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+        panStats.add(playerForceTree, gridBagConstraints);
+
+        if (!attachedAllyStub.isEmpty()) {
+            DefaultMutableTreeNode top = new DefaultMutableTreeNode("Attached Allies");
+            for (String entityName : attachedAllyStub) {
+                top.add(new DefaultMutableTreeNode(entityName));
+            }
+            JTree tree = new JTree(top) {
+                @Override
+                public Dimension getMinimumSize() {
+                    return super.getPreferredSize();
+                }
+            };
+            tree.collapsePath(new TreePath(top));
+            gridBagConstraints.gridx = 0;
+            gridBagConstraints.gridy = row++;
+            gridBagConstraints.gridwidth = 3;
+            gridBagConstraints.gridheight = 1;
+            gridBagConstraints.weightx = 1.0;
+            gridBagConstraints.weighty = 0.0;
+            gridBagConstraints.insets = new Insets(5, 5, 5, 5);
+            gridBagConstraints.fill = GridBagConstraints.BOTH;
+            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+            panStats.add(tree, gridBagConstraints);
+        }
+
+        boolean isBlindDrop = campaign.getGameOptions().getOption(BASE_BLIND_DROP).booleanValue();
+        boolean isTrueBlindDrop = campaign.getGameOptions().getOption(BASE_REAL_BLIND_DROP).booleanValue();
+        boolean isCurrent = scenario.getStatus().isCurrent();
+        for (int botIndex = 0; botIndex < botStubs.size(); botIndex++) {
+            BotForceStub botStub = botStubs.get(botIndex);
+            if (botStub == null) {
+                continue;
+            }
+
+            int team = botStub.team();
+            List<String> allEntries = botStub.entityList();
+            DefaultMutableTreeNode top = new DefaultMutableTreeNode(botStubs.get(botIndex).name());
+
+            if (!(isTrueBlindDrop && (team != 1))) {
+                boolean hideInformation = isCurrent && isBlindDrop && (team != 1);
+                for (int unitIndex = 0; unitIndex < allEntries.size(); unitIndex++) {
+                    String entityString = allEntries.get(unitIndex);
+                    if (hideInformation) {
+                        Entity entity = scenario.getBotForce(botIndex).getFullEntityList(campaign).get(unitIndex);
+
+                        if (entity == null) {
+                            top.add(new DefaultMutableTreeNode("???"));
+                            continue;
+                        }
+
+                        String weightClass = entity.getWeightClassName();
+                        long entityType = entity.getEntityType();
+                        String unitType = getEntityMajorTypeName(entityType);
+
+                        top.add(new DefaultMutableTreeNode(weightClass + ' ' + unitType));
+                    } else {
+                        top.add(new DefaultMutableTreeNode(entityString));
+                    }
+                }
+            }
+
+            JTree tree = new JTree(top) {
+                @Override
+                public Dimension getMinimumSize() {
+                    return super.getPreferredSize();
+                }
+            };
+            tree.collapsePath(new TreePath(top));
+            tree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
+            gridBagConstraints.gridx = 0;
+            gridBagConstraints.gridy = row++;
+            gridBagConstraints.gridwidth = 3;
+            gridBagConstraints.gridheight = 1;
+            gridBagConstraints.weightx = 1.0;
+            gridBagConstraints.weighty = 0.0;
+            gridBagConstraints.insets = new Insets(5, 5, 5, 5);
+            gridBagConstraints.fill = GridBagConstraints.BOTH;
+            gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+            panStats.add(tree, gridBagConstraints);
+            if (scenario.getStatus().isCurrent()) {
+                tree.addMouseListener(new TreeMouseAdapter(tree, botIndex));
+            }
+        }
+
+        return row;
     }
 
     /**
@@ -619,7 +656,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         panStats.add(lblLight, gridBagConstraints);
 
         chkReroll[REROLL_LIGHT] = new JCheckBox();
-        if (scenario.getStatus().isCurrent() && campaign.getCampaignOptions().isUseLightConditions()) {
+        if (scenario.getStatus().isCurrent() && campaign.getCampaignOptions().get(CampaignOption.USE_LIGHT_CONDITIONS)) {
             gridBagConstraints.gridx = 1;
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 1;
@@ -632,8 +669,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblLightDesc, gridBagConstraints);
-        lblLight.setVisible(campaign.getCampaignOptions().isUseLightConditions());
-        lblLightDesc.setVisible(campaign.getCampaignOptions().isUseLightConditions());
+        lblLight.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_LIGHT_CONDITIONS));
+        lblLightDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_LIGHT_CONDITIONS));
 
         lblWeather.setText(resourceMap.getString("lblWeather.text"));
         gridBagConstraints.gridx = 0;
@@ -642,7 +679,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         panStats.add(lblWeather, gridBagConstraints);
 
         chkReroll[REROLL_WEATHER] = new JCheckBox();
-        if (scenario.getStatus().isCurrent() && campaign.getCampaignOptions().isUseWeatherConditions()) {
+        if (scenario.getStatus().isCurrent() && campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS)) {
             gridBagConstraints.gridx = 1;
             gridBagConstraints.gridy = y;
             gridBagConstraints.gridwidth = 1;
@@ -655,8 +692,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblWeatherDesc, gridBagConstraints);
-        lblWeather.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
-        lblWeatherDesc.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
+        lblWeather.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
+        lblWeatherDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
 
         lblWind.setText(resourceMap.getString("lblWind.text"));
         gridBagConstraints.gridx = 0;
@@ -668,8 +705,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblWindDesc, gridBagConstraints);
-        lblWind.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
-        lblWindDesc.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
+        lblWind.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
+        lblWindDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
 
         lblFog.setText(resourceMap.getString("lblFog.text"));
         gridBagConstraints.gridx = 0;
@@ -681,8 +718,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblFogDesc, gridBagConstraints);
-        lblFog.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
-        lblFogDesc.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
+        lblFog.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
+        lblFogDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
 
         lblBlowingSand.setText(resourceMap.getString("lblBlowingSand.text"));
         gridBagConstraints.gridx = 0;
@@ -695,8 +732,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblBlowingSandDesc, gridBagConstraints);
-        lblBlowingSand.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
-        lblBlowingSandDesc.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
+        lblBlowingSand.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
+        lblBlowingSandDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
 
         lblEMI.setText(resourceMap.getString("lblEMI.text"));
         gridBagConstraints.gridx = 0;
@@ -709,8 +746,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblEMIDesc, gridBagConstraints);
-        lblEMI.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
-        lblEMIDesc.setVisible(campaign.getCampaignOptions().isUseWeatherConditions());
+        lblEMI.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
+        lblEMIDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_WEATHER_CONDITIONS));
 
         lblTemp.setText(resourceMap.getString("lblTemperature.text"));
         gridBagConstraints.gridx = 0;
@@ -722,8 +759,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.gridx = 2;
         gridBagConstraints.gridy = y++;
         panStats.add(lblTempDesc, gridBagConstraints);
-        lblTemp.setVisible(campaign.getCampaignOptions().isUsePlanetaryConditions());
-        lblTempDesc.setVisible(campaign.getCampaignOptions().isUsePlanetaryConditions());
+        lblTemp.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_PLANETARY_CONDITIONS));
+        lblTempDesc.setVisible(campaign.getCampaignOptions().get(CampaignOption.USE_PLANETARY_CONDITIONS));
 
         lblGravity.setText(resourceMap.getString("lblGravity.text"));
         gridBagConstraints.gridx = 0;
@@ -868,7 +905,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
     private void rerollBattleConditions() {
         if (chkReroll[REROLL_TERRAIN] != null && chkReroll[REROLL_TERRAIN].isSelected()) {
             scenario.setTerrain();
-            scenario.setScenarioMap(campaign.getCampaignOptions().getFixedMapChance());
+            scenario.setScenarioMap(campaign.getCampaignOptions().get(CampaignOption.FIXED_MAP_CHANCE));
             scenario.useReroll();
             chkReroll[REROLL_TERRAIN].setSelected(false);
             lblTerrainDesc.setText(scenario.getTerrainType());
@@ -876,7 +913,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             lblMapSizeDesc.setText(scenario.getMapSizeX() + "x" + scenario.getMapSizeY());
         }
         if (chkReroll[REROLL_MAP] != null && chkReroll[REROLL_MAP].isSelected()) {
-            scenario.setScenarioMap(campaign.getCampaignOptions().getFixedMapChance());
+            scenario.setScenarioMap(campaign.getCampaignOptions().get(CampaignOption.FIXED_MAP_CHANCE));
             scenario.useReroll();
             chkReroll[REROLL_MAP].setSelected(false);
             lblMapDesc.setText(scenario.getMapForDisplay());
@@ -884,7 +921,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         }
         if (chkReroll[REROLL_MAP_SIZE] != null && chkReroll[REROLL_MAP_SIZE].isSelected()) {
             scenario.setMapSize(campaign);
-            scenario.setScenarioMap(campaign.getCampaignOptions().getFixedMapChance());
+            scenario.setScenarioMap(campaign.getCampaignOptions().get(CampaignOption.FIXED_MAP_CHANCE));
             scenario.useReroll();
             chkReroll[REROLL_MAP_SIZE].setSelected(false);
             lblMapDesc.setText(scenario.getMapForDisplay());
@@ -897,7 +934,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             lblLightDesc.setText(scenario.getLight().toString());
         }
         if (chkReroll[REROLL_WEATHER] != null && chkReroll[REROLL_WEATHER].isSelected()) {
-            scenario.setWeatherConditions(campaign.getCampaignOptions().isUseNoTornadoes());
+            scenario.setWeatherConditions(campaign.getCampaignOptions().get(CampaignOption.USE_NO_TORNADOES));
             scenario.useReroll();
             chkReroll[REROLL_WEATHER].setSelected(false);
             lblWeatherDesc.setText(scenario.getWeather().toString());

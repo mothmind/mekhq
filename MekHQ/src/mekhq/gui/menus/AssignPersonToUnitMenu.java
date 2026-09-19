@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -41,6 +41,8 @@ import javax.swing.JMenuItem;
 
 import megamek.common.units.*;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.base.AbstractBase;
+import mekhq.campaign.location.LocationUtils;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.personnel.enums.Profession;
@@ -48,6 +50,7 @@ import mekhq.campaign.unit.HangarSorter;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.JScrollableMenu;
 import mekhq.gui.utilities.StaticChecks;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * This is a standard menu that takes either a person or multiple people, and allows the user to assign them to a unit
@@ -176,15 +179,23 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
             final boolean areAllSoldiers = Stream.of(people).allMatch(person -> person.hasRole(PersonnelRole.SOLDIER));
             final boolean areAllBattleArmourPilots = Stream.of(people)
                                                            .allMatch(person -> person.hasRole(PersonnelRole.BATTLE_ARMOUR));
-            final boolean isUseAltAdvancedMedical = campaign.getCampaignOptions().isUseAlternativeAdvancedMedical();
-            final boolean isUseImplants = campaign.getCampaignOptions().isUseImplants();
+            final boolean isUseAltAdvancedMedical = campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL);
+            final boolean isUseImplants = campaign.getCampaignOptions().get(CampaignOption.USE_IMPLANTS);
 
             // Parsing Variables
             int unitType = -1;
             int weightClass = -1;
 
+            // Use the hangar at the persons' effective location: base hangar when at a base,
+            // campaign hangar when in the main force. All selected persons must be co-located
+            // (enforced above via the in-transit check and the unit co-location filter below).
+            AbstractBase effectiveBase = LocationUtils.findEffectiveBase(people[0]);
+            mekhq.campaign.LocalHangar sourceHangar;
+            sourceHangar = effectiveBase != null ?
+                                 effectiveBase.getBaseHangar() :
+                                 campaign.getPlayerForce().getHangar();
             final List<Unit> units = HangarSorter.defaultSorting()
-                                           .sort(campaign.getHangar().getUnitsStream().filter(Unit::isAvailable))
+                                           .sort(sourceHangar.getUnitsStream().filter(Unit::isAvailable))
                                            .toList();
             for (final Unit unit : units) {
                 Entity entity = unit.getEntity();
@@ -273,20 +284,14 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                      entity.isSuperHeavy() ||
                                      entity.isTripodMek() ||
                                      entity.isQuadMek())) {
-                        final boolean valid;
-                        if (entity instanceof Mek) {
-                            valid = areAllBattleMekPilots;
-                        } else if (entity instanceof ProtoMek) {
-                            valid = areAllProtoMekPilots;
-                        } else if (entity instanceof ConvFighter) {
-                            valid = areAllConventionalAircraftPilots;
-                        } else if (entity instanceof Aero) {
-                            valid = areAllAerospacePilots;
-                        } else if (entity instanceof VTOL) {
-                            valid = areAllVTOLCrew;
-                        } else {
-                            valid = false;
-                        }
+                        final boolean valid = switch (entity) {
+                            case Mek ignored -> areAllBattleMekPilots;
+                            case ProtoMek ignored -> areAllProtoMekPilots;
+                            case ConvFighter ignored -> areAllConventionalAircraftPilots;
+                            case Aero ignored -> areAllAerospacePilots;
+                            case VTOL ignored -> areAllVTOLCrew;
+                            default -> false;
+                        };
 
                         if (valid) {
                             final JMenuItem miPilot = new JMenuItem(unit.getName());
@@ -295,8 +300,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                 final Unit oldUnit = people[0].getUnit();
                                 boolean useTransfers = false;
                                 if (oldUnit != null) {
-                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().isUseTransfers());
-                                    useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                    useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                 }
 
                                 if (entity instanceof VTOL || entity instanceof ConvFighter) {
@@ -324,8 +329,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                     final Unit oldUnit = person.getUnit();
                                     boolean useTransfers = false;
                                     if (oldUnit != null) {
-                                        oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                                        useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                        oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                        useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                     }
                                     unit.addDriver(person, useTransfers);
                                     ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -346,8 +351,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                 final Unit oldUnit = people[0].getUnit();
                                 boolean useTransfers = false;
                                 if (oldUnit != null) {
-                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().isUseTransfers());
-                                    useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                    useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                 }
                                 unit.addDriver(people[0], useTransfers);
 
@@ -392,8 +397,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                     final Unit oldUnit = person.getUnit();
                                     boolean useTransfers = false;
                                     if (oldUnit != null) {
-                                        oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                                        useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                        oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                        useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                     }
                                     unit.addGunner(person, useTransfers);
                                     ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -427,8 +432,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                     final Unit oldUnit = person.getUnit();
                                     boolean useTransfers = false;
                                     if (oldUnit != null) {
-                                        oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                                        useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                        oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                        useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                     }
                                     unit.addVesselCrew(person, useTransfers);
                                     ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -457,8 +462,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                 final Unit oldUnit = people[0].getUnit();
                                 boolean useTransfers = false;
                                 if (oldUnit != null) {
-                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().isUseTransfers());
-                                    useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                    oldUnit.remove(people[0], !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                    useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                 }
                                 unit.setTechOfficer(people[0], useTransfers);
 
@@ -475,8 +480,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                             final Unit oldUnit = people[0].getUnit();
                             boolean useTransfers = false;
                             if (oldUnit != null) {
-                                oldUnit.remove(people[0], !campaign.getCampaignOptions().isUseTransfers());
-                                useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                oldUnit.remove(people[0], !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                             }
                             unit.setTechOfficer(people[0], useTransfers);
 
@@ -502,8 +507,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                                     final Unit oldUnit = person.getUnit();
                                     boolean useTransfers = false;
                                     if (oldUnit != null) {
-                                        oldUnit.remove(person, !campaign.getCampaignOptions().isUseTransfers());
-                                        useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                                        oldUnit.remove(person, !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                                        useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                                     }
                                     unit.addPilotOrSoldier(person, useTransfers);
                                     ensureRecruitmentDate(campaign.getLocalDate(), person);
@@ -522,8 +527,8 @@ public class AssignPersonToUnitMenu extends JScrollableMenu {
                         final Unit oldUnit = people[0].getUnit();
                         boolean useTransfers = false;
                         if (oldUnit != null) {
-                            oldUnit.remove(people[0], !campaign.getCampaignOptions().isUseTransfers());
-                            useTransfers = campaign.getCampaignOptions().isUseTransfers();
+                            oldUnit.remove(people[0], !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS));
+                            useTransfers = campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
                         }
                         unit.setNavigator(people[0], useTransfers);
 

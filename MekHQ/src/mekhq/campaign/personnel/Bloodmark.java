@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -35,6 +35,7 @@ package mekhq.campaign.personnel;
 import static java.lang.Math.min;
 import static megamek.common.compute.Compute.d6;
 import static megamek.common.compute.Compute.randomInt;
+import static megamek.common.units.Crew.DEATH;
 import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
 import static mekhq.campaign.personnel.enums.BloodmarkLevel.BLOODMARK_ZERO;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
@@ -52,6 +53,7 @@ import megamek.client.generator.RandomCallsignGenerator;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.persons.PersonChangedEvent;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
@@ -173,6 +175,10 @@ public class Bloodmark {
             return false;
         }
 
+        if (target.getEduEducationTime() != 0) { // Student Bloodmarks are handled by the education system
+            return false;
+        }
+
         List<LocalDate> bloodhuntSchedule = target.getBloodhuntSchedule();
         if (bloodhuntSchedule.isEmpty()) {
             return false;
@@ -225,7 +231,7 @@ public class Bloodmark {
 
         if (person.isUnderProtection()) {
             Money cost = bloodmark.getBounty().multipliedBy(2.0);
-            boolean paymentSuccessful = campaign.getFinances()
+            boolean paymentSuccessful = campaign.getPlayerForce().getFinances()
                                               .debit(TransactionType.MISCELLANEOUS,
                                                     campaign.getLocalDate(),
                                                     cost,
@@ -258,8 +264,8 @@ public class Bloodmark {
 
         // Inflict injuries or wounds as appropriate
         wounds = InjurySPAUtility.adjustInjuriesAndFatigueForSPAs(person,
-              campaign.getCampaignOptions().isUseInjuryFatigue(),
-              campaign.getCampaignOptions().getFatigueRate(), wounds);
+              campaign.getCampaignOptions().get(CampaignOption.USE_INJURY_FATIGUE),
+              campaign.getCampaignOptions().get(CampaignOption.FATIGUE_RATE), wounds);
         processWounds(campaign, person, today, wounds);
 
         String report = getReport(person.getStatus().isDead(), person.getHyperlinkedFullTitle(), bountyHunterName);
@@ -367,13 +373,13 @@ public class Bloodmark {
             if (wounds > 0) {
                 InjuryUtil.resolveCombatDamage(campaign, person, wounds);
             }
-            if (person.getInjuries().size() >= 6) {
+            if (person.getTotalInjurySeverity() >= DEATH) {
                 person.changeStatus(campaign, today, PersonnelStatus.HOMICIDE);
             }
         } else {
             int currentWounds = person.getHits();
             int newWounds = currentWounds + wounds;
-            if (newWounds >= 6) {
+            if (newWounds >= DEATH) {
                 newWounds = 6;
                 person.changeStatus(campaign, today, PersonnelStatus.HOMICIDE);
             }

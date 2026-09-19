@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2020-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -33,22 +33,69 @@
 package mekhq.campaign;
 
 import java.util.UUID;
+import javax.swing.SwingUtilities;
+
+import megamek.common.event.Subscribe;
+import mekhq.MekHQ;
+import mekhq.campaign.events.StoryFinishedEvent;
+import mekhq.campaign.universe.commandGeneration.SupportCarrierReconciler;
+import mekhq.gui.campaignOptions.optionChangeDialogs.SupportTeamsCampaignOptionsChangedConfirmationDialog;
 
 /**
  * Manages the timeline of a {@link Campaign}.
  */
 public class CampaignController {
+    private final MekHQ app;
     private final Campaign localCampaign;
     private boolean isHost;
     private UUID host;
+    private final CampaignEventProcessor campaignEventProcessor;
 
     /**
      * Creates a new {@code CampaignController} for the given {@link Campaign}
      *
-     * @param c The {@link Campaign} being used locally.
+     * @param campaign The {@link Campaign} being used locally.
      */
-    public CampaignController(Campaign c) {
-        localCampaign = c;
+    public CampaignController(MekHQ app, Campaign campaign) {
+        this.app = app;
+        localCampaign = campaign;
+        campaignEventProcessor = new CampaignEventProcessor(campaign);
+    }
+
+    /**
+     * Manually registers campaign-related event bus listeners.
+     */
+    public void activate() {
+        MekHQ.registerHandler(campaignEventProcessor);
+        MekHQ.registerHandler(this);
+
+        // Person events raised while the save was parsed reached no subscriber, because handlers are only registered
+        // here, after loading. One idempotent pass catches up anyone the events would have placed, and marks carriers
+        // in campaigns saved before carriers were tracked.
+        SupportCarrierReconciler.reconcileAll(localCampaign);
+
+        // A campaign that predates support teams has its staff on the roster and no Support Command, so the sweep
+        // above found nothing to manage. Offer to organize them, once: declining switches the option off, which is
+        // also how the player says "not in this campaign".
+        if (SupportCarrierReconciler.hasStaffToOrganize(localCampaign)) {
+            SwingUtilities.invokeLater(
+                  () -> new SupportTeamsCampaignOptionsChangedConfirmationDialog(localCampaign, true));
+        }
+    }
+
+    /**
+     * Manually unregister campaign-related event bus listeners.
+     */
+    public void deactivate() {
+        if (localCampaign.getStoryArc() != null) {
+            MekHQ.unregisterHandler(localCampaign.getStoryArc());
+        }
+        MekHQ.unregisterHandler(campaignEventProcessor);
+        MekHQ.unregisterHandler(this);
+        CampaignNewDayManager newDayManager = localCampaign.getNewDayManager();
+        if (newDayManager != null) {
+            MekHQ.unregisterHandler(newDayManager);
+        }
     }
 
     /**
@@ -94,4 +141,12 @@ public class CampaignController {
     public void advanceDay() {
         getLocalCampaign().newDay();
     }
+
+    @Subscribe
+    public void handle(StoryFinishedEvent event) {
+        // do on a different thread, because restart will trigger event bus registrations which can
+        // lead to ConcurrentModificationException if done on the event bus trigger thread
+        SwingUtilities.invokeLater(app::restart);
+    }
+
 }

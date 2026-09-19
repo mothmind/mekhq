@@ -64,7 +64,7 @@ public class MRMSOption {
     // region Constructors
     public MRMSOption(PartRepairType type) {
         this(type,
-              false,
+              true,
               SkillType.EXP_ULTRA_GREEN,
               SkillType.EXP_LEGENDARY,
               TARGET_NUMBER_PREFERRED,
@@ -209,7 +209,7 @@ public class MRMSOption {
 
                 if ((mrmsOption.getType() == PartRepairType.UNKNOWN_LOCATION) ||
                           !partRepairTypes.contains(mrmsOption.getType())) {
-                    LOGGER.error("Attempted to load MRMSOption with illegal type id of " + mrmsOption.getType());
+                    LOGGER.error("Attempted to load MRMSOption with illegal type id of {}", mrmsOption.getType());
                 } else {
                     mrmsOptions.add(mrmsOption);
                 }

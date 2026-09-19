@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,6 +32,7 @@
  */
 package mekhq.campaign.personnel.medical.advancedMedicalAlternate;
 
+import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.round;
 import static megamek.common.options.OptionsConstants.*;
@@ -61,7 +62,7 @@ import megamek.common.annotations.Nullable;
 import megamek.common.enums.AvailabilityValue;
 import megamek.common.options.IOption;
 import mekhq.MHQConstants;
-import mekhq.campaign.CurrentLocation;
+import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.enums.ATOWLegalityRating;
 import mekhq.campaign.personnel.InjuryType;
@@ -1306,7 +1307,7 @@ public enum ProstheticType {
      * @author Illiani
      * @since 0.50.10
      */
-    public boolean isAvailableInCurrentLocation(CurrentLocation currentLocation, LocalDate today) {
+    public boolean isAvailableInCurrentLocation(AbstractLocation currentLocation, LocalDate today) {
         PlanetarySystem.PlanetarySophistication minimumSophistication = PlanetarySystem.PlanetarySophistication.F;
 
         // In transit: availability limited to rating F or lower
@@ -1561,17 +1562,17 @@ public enum ProstheticType {
      * <p><b>Ordering:</b> For consistency and readability, the display order of sections mirrors that used by
      * {@link InjuryEffect#getTooltip(List)}.</p>
      *
-     * @param campaignFaction the faction requesting the tooltip, used to determine cost availability and any
-     *                        affiliation-based restrictions
-     * @param currentYear     the current in-game year
-     * @param isUseKinderMode {@code true} to reduce the listed recovery time by 50%; otherwise {@code false}
+     * @param campaignFaction       the faction requesting the tooltip, used to determine cost availability and any
+     *                              affiliation-based restrictions
+     * @param currentYear           the current in-game year
+     * @param healingTimeMultiplier A multiplier applied to the recovery time to account for campaign options
      *
      * @return a fully formatted HTML-compatible tooltip string suitable for display in Swing-based UI components
      *
      * @author Illiani
      * @since 0.50.10
      */
-    public String getTooltip(Faction campaignFaction, int currentYear, boolean isUseKinderMode) {
+    public String getTooltip(Faction campaignFaction, int currentYear, double healingTimeMultiplier) {
         StringJoiner tooltipPortion = new StringJoiner("<br>- ", "- ", "");
 
         // 1) Surgery level required
@@ -1604,7 +1605,8 @@ public enum ProstheticType {
               adjustedLegality.getDescription(), adjustedLegality.name()));
 
         // 7) Estimated recovery time
-        int recoveryTime = (int) round(injuryType.getBaseRecoveryTime() * (isUseKinderMode ? 0.5 : 1.0));
+        int recoveryTime = (int) round(injuryType.getBaseRecoveryTime() * healingTimeMultiplier);
+        recoveryTime = max(recoveryTime, 1);
         tooltipPortion.add(getFormattedTextAt(RESOURCE_BUNDLE, "ProstheticType.tooltip.recovery", recoveryTime));
 
         // 8) Misc

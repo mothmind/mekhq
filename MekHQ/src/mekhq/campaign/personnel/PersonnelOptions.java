@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2017-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -58,23 +58,82 @@ public class PersonnelOptions extends PilotOptions {
     private static final MMLogger LOGGER = MMLogger.create(PersonnelOptions.class);
 
     public static final String EDGE_MEDICAL = "edge_when_heal_crit_fail";
+    public static final String EDGE_ADVANCED_SURGERY = "edge_when_advanced_surgery_fail";
     public static final String EDGE_REPAIR_BREAK_PART = "edge_when_repair_break_part";
     public static final String EDGE_REPAIR_FAILED_REFIT = "edge_when_fail_refit_check";
-    public static final String EDGE_ADMIN_ACQUIRE_FAIL = "edge_when_admin_acquire_fail";
+    /** The single admin acquisition trigger older saves carry; it maps onto the three triggers below on load. */
+    public static final String EDGE_ADMIN_ACQUIRE_FAIL_LEGACY = "edge_when_admin_acquire_fail";
+    public static final String EDGE_ADMIN_ACQUIRE_FAIL_EIGHT = "edge_when_admin_acquire_fail_greater_than_eight";
+    public static final String EDGE_ADMIN_ACQUIRE_FAIL_OTHER = "edge_when_admin_acquire_fail_other";
+    public static final String EDGE_ADMIN_ACQUIRE_FAIL_ELEVEN = "edge_when_admin_acquire_fail_greater_than_eleven";
+    public static final String EDGE_ADMIN_APPRAISAL_FAIL = "edge_when_admin_fail_appraisal";
     public static final String EDGE_SALVAGE_ACCIDENTS = "edge_when_salvage_accident";
+    public static final String EDGE_ESCAPE_ATTEMPTS = "edge_when_escape_attempt_fail";
+    public static final String EDGE_COMMANDER_NEGOTIATION = "edge_when_commander_negotiation_fail";
+    public static final String EDGE_RECON_FAIL = "edge_when_recon_fail";
+    public static final String EDGE_TRAINING = "edge_when_training_fail";
+    public static final String EDGE_RANDOM_EVENTS = "edge_when_random_event_fail";
 
     public static final String TECH_WEAPON_SPECIALIST = "tech_weapon_specialist";
     public static final String TECH_ARMOR_SPECIALIST = "tech_armor_specialist";
     public static final String TECH_INTERNAL_SPECIALIST = "tech_internal_specialist";
+    public static final String TECH_SPECIALIST_ELECTRONIC = "tech_specialist_electronic";
+    public static final String TECH_SPECIALIST_NUCLEAR = "tech_specialist_nuclear";
+    public static final String TECH_SPECIALIST_AERONAUTICS = "tech_specialist_aeronautics";
+    public static final String TECH_SPECIALIST_MECHANICAL = "tech_specialist_mechanical";
+    public static final String TECH_SPECIALIST_MYOMER = "tech_specialist_myomer";
+    public static final String TECH_SPECIALIST_JETS = "tech_specialist_jets";
+    public static final String TECH_SPECIALIST_WEAPONS = "tech_specialist_weapons";
+    public static final String TECH_SPECIALIST_CYBERNETICS = "tech_specialist_cybernetics";
     public static final String TECH_ENGINEER = "tech_engineer";
     public static final String TECH_FIXER = "tech_fixer";
+    public static final String UNOFFICIAL_SPICE_IS_RIGHT = "unofficial_spice_is_right";
+    public static final String UNOFFICIAL_KITCHEN_MENACE = "unofficial_kitchen_menace";
+    public static final String UNOFFICIAL_ILL_DO_IT_MYSELF = "unofficial_ill_do_it_myself";
     public static final String TECH_MAINTAINER = "tech_maintainer";
+    public static final String TECH_FABRICATOR = "tech_fabricator";
+    public static final String TECH_JURY_RIGGER = "tech_jury_rigger";
+    public static final String TECH_MACGYVER = "tech_macgyver";
+    public static final String TECH_MUNITIONEER = "tech_munitioneer";
+    public static final String TECH_WASTEFUL = "tech_wasteful";
     public static final String FLAW_GLASS_JAW = "flaw_glass_jaw";
     public static final String ATOW_TOUGHNESS = "atow_toughness";
     public static final String FLAW_SLOW_LEARNER = "flaw_slow_learner";
     public static final String ATOW_FAST_LEARNER = "atow_fast_learner";
     public static final String ATOW_ALTERNATE_ID = "atow_alternate_id";
     public static final String ATOW_CITIZENSHIP = "atow_citizenship";
+    public static final String DONT_YOU_KNOW_WHO_I_AM = "dont_you_know_who_i_am";
+    public static final String CERTIFIED_NOBODY = "certified_nobody";
+    public static final String IMPORTANT_FRIENDS = "important_friends";
+    public static final String FORGETS_TO_REPLY = "forgets_to_reply";
+    public static final String BIG_PERSONALITY = "big_personality";
+    public static final String REDACTED = "redacted";
+    public static final String LOOSE_LIPS = "loose_lips";
+    public static final String LEAVES_NO_TRAIL = "leaves_no_trail";
+    public static final String BLAMELESS = "blameless";
+    public static final String SCAPEGOAT = "scapegoat";
+    public static final String LOOKS_GOOD_ON_PAPER = "looks_good_on_paper";
+    public static final String UNASSUMING = "unassuming";
+    public static final String SILVER_TONGUE = "silver_tongue";
+    public static final String LOAN_SHARK_VICTIM = "loan_shark_victim";
+    public static final String SLIPPERY = "slippery";
+    public static final String CONSPICUOUS = "conspicuous";
+    public static final String LOOT_GOBLIN = "loot_goblin";
+    public static final String IMPRESSIVE_LEADER = "impressive_leader";
+    public static final String DISAPPOINTING_LEADER = "disappointing_leader";
+    public static final String GOOD_REPUTATION = "good_reputation";
+    public static final String BAD_REPUTATION = "bad_reputation";
+    // Chaos contract negotiation SPAs and Flaws
+    public static final String RELENTLESS_BARGAINER = "relentless_bargainer";
+    public static final String ABRASIVE = "abrasive";
+    public static final String LOOPHOLE_FINDER = "loophole_finder";
+    public static final String FINE_PRINT_READER = "fine_print_reader";
+    public static final String BLACKLISTED = "blacklisted";
+    public static final String EASILY_FOOLED = "easily_fooled";
+    public static final String HARD_BARGAINER = "hard_bargainer";
+    public static final String PUSHOVER = "pushover";
+    public static final String SHREWD_TRADER = "shrewd_trader";
+    public static final String INFLEXIBLE = "inflexible";
     public static final String FLAW_ANIMAL_ANTIPATHY = "flaw_animal_antipathy";
     public static final String ATOW_ANIMAL_EMPATHY = "atow_animal_empathy";
     public static final String ATOW_AMBIDEXTROUS = "atow_ambidextrous";
@@ -102,11 +161,25 @@ public class PersonnelOptions extends PilotOptions {
     public static final String FLAW_TRANSIT_DISORIENTATION_SYNDROME = "flaw_transit_disorientation_syndrome";
     public static final String FLAW_ILLITERATE = "flaw_illiterate";
     public static final String UNOFFICIAL_HOUDINI = "unofficial_houdini";
+    public static final String UNOFFICIAL_TRANSPORT_NEGOTIATOR = "unofficial_transport_negotiator";
     public static final String UNOFFICIAL_MASTER_IMPERSONATOR = "unofficial_master_impersonator";
     public static final String UNOFFICIAL_COUNTERFEITER = "unofficial_counterfeiter";
     public static final String UNOFFICIAL_PICK_POCKET = "unofficial_pick_pocket";
     public static final String UNOFFICIAL_NATURAL_THESPIAN = "unofficial_natural_thespian";
     public static final String UNOFFICIAL_BIOLOGICAL_MACHINIST = "unofficial_biological_machinist";
+    public static final String UNOFFICIAL_HOLISTIC_CARE = "unofficial_holistic_care";
+    public static final String UNOFFICIAL_TRAUMA_SURGEON = "unofficial_trauma_surgeon";
+    public static final String UNOFFICIAL_PROTHESIS_TECHNICIAN = "unofficial_prothesis_technician";
+    public static final String UNOFFICIAL_SHAKEY_SCALPEL = "unofficial_shakey_scalpel";
+    public static final String UNOFFICIAL_PATIENT_EDUCATOR = "unofficial_patient_educator";
+    public static final String UNOFFICIAL_RADIO_HOBBYIST = "unofficial_radio_hobbyist";
+    public static final String UNOFFICIAL_PAPER_SURGEON = "unofficial_paper_surgeon";
+    public static final String UNOFFICIAL_LOSES_PAPERWORK = "unofficial_loses_paperwork";
+    public static final String UNOFFICIAL_EMBEZZLER = "unofficial_embezzler";
+    public static final String UNOFFICIAL_HYPOCHONDRIAC = "unofficial_hypochondriac";
+    public static final String UNOFFICIAL_USELESS_TALENT = "unofficial_useless_talent";
+    public static final String UNOFFICIAL_PATHOLOGIC_INSIGHT = "unofficial_pathologic_insight";
+    public static final String UNOFFICIAL_BARGAIN_HUNTER = "unofficial_bargain_hunter";
     public static final String FLAW_VACCINE_DODGER = "flaw_vaccine_dodger";
     public static final String FLAW_SUPER_SPREADER = "flaw_super_spreader";
     public static final String FLAW_POOR_IMMUNE_SYSTEM = "flaw_poor_immune_system";
@@ -136,6 +209,9 @@ public class PersonnelOptions extends PilotOptions {
     public static final String EXCEPTIONAL_ATTRIBUTE_WILLPOWER = "exceptional_attribute_willpower";
     public static final String EXCEPTIONAL_ATTRIBUTE_CHARISMA = "exceptional_attribute_charisma";
     public static final String EXCEPTIONAL_ATTRIBUTE_EDGE = "exceptional_attribute_edge";
+    public static final String UNOFFICIAL_BELOVED_PET = "unofficial_beloved_pet";
+    public static final String FAMILIARITY_IRON_BOND = "familiarity_iron_bond";
+    public static final String FAMILIARITY_EMOTIONALLY_UNAVAILABLE = "familiarity_emotionally_unavailable";
 
     public static final String ADMIN_MEDIATOR = "admin_mediator";
     public static final String ADMIN_LOGISTICIAN = "admin_logistician";
@@ -184,7 +260,7 @@ public class PersonnelOptions extends PilotOptions {
     public static final int COMPULSION_CHECK_MODIFIER_SEVERE = 7; // ATOW pg 110
     public static final int COMPULSION_CHECK_MODIFIER_EXTREME = 10; // ATOW pg 110
 
-    public static final int PAINKILLER_COST = 42; // 7 days of codeine, ATOW pg 319
+    public static final int MEDICINE_COST = 42; // 7 days of codeine, ATOW pg 319
 
     // ATOW pg 112 (Reputation, Connections)
     public static final Map<String, int[]> DARK_SECRET_MODIFIERS = Map.of(
@@ -236,15 +312,62 @@ public class PersonnelOptions extends PilotOptions {
         addOption(l3a, TECH_WEAPON_SPECIALIST, false);
         addOption(l3a, TECH_ARMOR_SPECIALIST, false);
         addOption(l3a, TECH_INTERNAL_SPECIALIST, false);
+        addOption(l3a, TECH_SPECIALIST_ELECTRONIC, false);
+        addOption(l3a, TECH_SPECIALIST_NUCLEAR, false);
+        addOption(l3a, TECH_SPECIALIST_AERONAUTICS, false);
+        addOption(l3a, TECH_SPECIALIST_MECHANICAL, false);
+        addOption(l3a, TECH_SPECIALIST_MYOMER, false);
+        addOption(l3a, TECH_SPECIALIST_JETS, false);
+        addOption(l3a, TECH_SPECIALIST_WEAPONS, false);
+        addOption(l3a, TECH_SPECIALIST_CYBERNETICS, false);
         addOption(l3a, TECH_ENGINEER, false);
         addOption(l3a, TECH_FIXER, false);
+        addOption(l3a, UNOFFICIAL_SPICE_IS_RIGHT, false);
+        addOption(l3a, UNOFFICIAL_KITCHEN_MENACE, false);
+        addOption(l3a, UNOFFICIAL_ILL_DO_IT_MYSELF, false);
         addOption(l3a, TECH_MAINTAINER, false);
+        addOption(l3a, TECH_FABRICATOR, false);
+        addOption(l3a, TECH_JURY_RIGGER, false);
+        addOption(l3a, TECH_MACGYVER, false);
+        addOption(l3a, TECH_MUNITIONEER, false);
+        addOption(l3a, TECH_WASTEFUL, false);
         addOption(l3a, FLAW_GLASS_JAW, false);
         addOption(l3a, ATOW_TOUGHNESS, false);
         addOption(l3a, FLAW_SLOW_LEARNER, false);
         addOption(l3a, ATOW_FAST_LEARNER, false);
         addOption(l3a, ATOW_ALTERNATE_ID, false);
         addOption(l3a, ATOW_CITIZENSHIP, false);
+        addOption(l3a, DONT_YOU_KNOW_WHO_I_AM, false);
+        addOption(l3a, CERTIFIED_NOBODY, false);
+        addOption(l3a, IMPORTANT_FRIENDS, false);
+        addOption(l3a, FORGETS_TO_REPLY, false);
+        addOption(l3a, BIG_PERSONALITY, false);
+        addOption(l3a, REDACTED, false);
+        addOption(l3a, LOOSE_LIPS, false);
+        addOption(l3a, LEAVES_NO_TRAIL, false);
+        addOption(l3a, BLAMELESS, false);
+        addOption(l3a, SCAPEGOAT, false);
+        addOption(l3a, LOOKS_GOOD_ON_PAPER, false);
+        addOption(l3a, UNASSUMING, false);
+        addOption(l3a, SILVER_TONGUE, false);
+        addOption(l3a, LOAN_SHARK_VICTIM, false);
+        addOption(l3a, SLIPPERY, false);
+        addOption(l3a, CONSPICUOUS, false);
+        addOption(l3a, LOOT_GOBLIN, false);
+        addOption(l3a, IMPRESSIVE_LEADER, false);
+        addOption(l3a, DISAPPOINTING_LEADER, false);
+        addOption(l3a, GOOD_REPUTATION, false);
+        addOption(l3a, BAD_REPUTATION, false);
+        addOption(l3a, RELENTLESS_BARGAINER, false);
+        addOption(l3a, ABRASIVE, false);
+        addOption(l3a, LOOPHOLE_FINDER, false);
+        addOption(l3a, FINE_PRINT_READER, false);
+        addOption(l3a, BLACKLISTED, false);
+        addOption(l3a, EASILY_FOOLED, false);
+        addOption(l3a, HARD_BARGAINER, false);
+        addOption(l3a, PUSHOVER, false);
+        addOption(l3a, SHREWD_TRADER, false);
+        addOption(l3a, INFLEXIBLE, false);
         addOption(l3a, FLAW_ANIMAL_ANTIPATHY, false);
         addOption(l3a, ATOW_ANIMAL_EMPATHY, false);
         addOption(l3a, ATOW_AMBIDEXTROUS, false);
@@ -271,10 +394,24 @@ public class PersonnelOptions extends PilotOptions {
         addOption(l3a, FLAW_TRANSIT_DISORIENTATION_SYNDROME, false);
         addOption(l3a, FLAW_ILLITERATE, false);
         addOption(l3a, UNOFFICIAL_HOUDINI, false);
+        addOption(l3a, UNOFFICIAL_TRANSPORT_NEGOTIATOR, false);
         addOption(l3a, UNOFFICIAL_MASTER_IMPERSONATOR, false);
         addOption(l3a, UNOFFICIAL_COUNTERFEITER, false);
         addOption(l3a, UNOFFICIAL_NATURAL_THESPIAN, false);
         addOption(l3a, UNOFFICIAL_BIOLOGICAL_MACHINIST, false);
+        addOption(l3a, UNOFFICIAL_HOLISTIC_CARE, false);
+        addOption(l3a, UNOFFICIAL_BARGAIN_HUNTER, false);
+        addOption(l3a, UNOFFICIAL_TRAUMA_SURGEON, false);
+        addOption(l3a, UNOFFICIAL_PROTHESIS_TECHNICIAN, false);
+        addOption(l3a, UNOFFICIAL_SHAKEY_SCALPEL, false);
+        addOption(l3a, UNOFFICIAL_PATIENT_EDUCATOR, false);
+        addOption(l3a, UNOFFICIAL_RADIO_HOBBYIST, false);
+        addOption(l3a, UNOFFICIAL_PAPER_SURGEON, false);
+        addOption(l3a, UNOFFICIAL_LOSES_PAPERWORK, false);
+        addOption(l3a, UNOFFICIAL_EMBEZZLER, false);
+        addOption(l3a, UNOFFICIAL_HYPOCHONDRIAC, false);
+        addOption(l3a, UNOFFICIAL_USELESS_TALENT, false);
+        addOption(l3a, UNOFFICIAL_PATHOLOGIC_INSIGHT, false);
         addOption(l3a, UNOFFICIAL_PICK_POCKET, false);
         addOption(l3a, FLAW_VACCINE_DODGER, false);
         addOption(l3a, FLAW_SUPER_SPREADER, false);
@@ -305,6 +442,9 @@ public class PersonnelOptions extends PilotOptions {
         addOption(l3a, EXCEPTIONAL_ATTRIBUTE_WILLPOWER, false);
         addOption(l3a, EXCEPTIONAL_ATTRIBUTE_CHARISMA, false);
         addOption(l3a, EXCEPTIONAL_ATTRIBUTE_EDGE, false);
+        addOption(l3a, UNOFFICIAL_BELOVED_PET, false);
+        addOption(l3a, FAMILIARITY_IRON_BOND, false);
+        addOption(l3a, FAMILIARITY_EMOTIONALLY_UNAVAILABLE, false);
 
         addOption(l3a, ADMIN_MEDIATOR, false);
         addOption(l3a, ADMIN_LOGISTICIAN, false);
@@ -348,10 +488,19 @@ public class PersonnelOptions extends PilotOptions {
         addOption(l3a, MADNESS_BERSERKER, false);
 
         addOption(edge, EDGE_MEDICAL, true);
+        addOption(edge, EDGE_ADVANCED_SURGERY, true);
         addOption(edge, EDGE_REPAIR_BREAK_PART, true);
         addOption(edge, EDGE_REPAIR_FAILED_REFIT, true);
-        addOption(edge, EDGE_ADMIN_ACQUIRE_FAIL, true);
+        addOption(edge, EDGE_ADMIN_ACQUIRE_FAIL_OTHER, true);
+        addOption(edge, EDGE_ADMIN_ACQUIRE_FAIL_EIGHT, true);
+        addOption(edge, EDGE_ADMIN_ACQUIRE_FAIL_ELEVEN, true);
+        addOption(edge, EDGE_ADMIN_APPRAISAL_FAIL, false);
         addOption(edge, EDGE_SALVAGE_ACCIDENTS, true);
+        addOption(edge, EDGE_ESCAPE_ATTEMPTS, true);
+        addOption(edge, EDGE_COMMANDER_NEGOTIATION, true);
+        addOption(edge, EDGE_RECON_FAIL, false);
+        addOption(edge, EDGE_TRAINING, true);
+        addOption(edge, EDGE_RANDOM_EVENTS, false);
 
         List<CustomOption> customs = CustomOption.getCustomAbilities();
         for (CustomOption option : customs) {

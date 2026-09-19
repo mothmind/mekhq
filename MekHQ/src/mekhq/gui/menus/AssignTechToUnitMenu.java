@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2021-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -41,10 +41,14 @@ import javax.swing.JMenuItem;
 import megamek.common.units.EntityWeightClass;
 import megamek.common.units.UnitType;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.base.AbstractBase;
+import mekhq.campaign.location.IPlace;
+import mekhq.campaign.location.LocationUtils;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.HangarSorter;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.JScrollableMenu;
+import mekhq.campaign.campaignOptions.CampaignOption;
 
 /**
  * This is a standard menu that takes a person and lets the user assign a unit for them to tech
@@ -68,7 +72,7 @@ public class AssignTechToUnitMenu extends JScrollableMenu {
                   || person.isDeployed() || !person.isTech()) {
             return;
         }
-        boolean techsUseAdmin = campaign.getCampaignOptions().isTechsUseAdministration();
+        boolean techsUseAdmin = campaign.getCampaignOptions().get(CampaignOption.TECHS_USE_ADMINISTRATION);
 
         // Initialize Menu
         setText(resources.getString("AssignTechToUnitMenu.title"));
@@ -83,10 +87,18 @@ public class AssignTechToUnitMenu extends JScrollableMenu {
 
         // Get all units that are:
         // 1) Available
-        // 2) Potentially maintained by the person
-        // 3) The unit can take a tech and the person can afford the time to maintain the unit
+        // 2) Co-located with the person (same IPlace ancestor — handles in-transit units correctly)
+        // 3) Potentially maintained by the person
+        // 4) The unit can take a tech and the person can afford the time to maintain the unit
+        IPlace personPlace = person.getPlace();
+        AbstractBase effectiveBase = LocationUtils.findEffectiveBase(person);
+        mekhq.campaign.LocalHangar sourceHangar;
+        sourceHangar = effectiveBase != null ? effectiveBase.getBaseHangar() : campaign.getPlayerForce().getHangar();
         final List<Unit> units = HangarSorter.defaultSorting()
-                                       .sort(campaign.getHangar().getUnitsStream().filter(Unit::isAvailable)
+                                       .sort(sourceHangar.getUnitsStream()
+                                                   .filter(Unit::isAvailable)
+                                                   .filter(unit -> LocationUtils.areSameEffectiveLocation(unit,
+                                                         personPlace))
                                                    .filter(unit -> person.canTech(unit.getEntity()))
                                                    .filter(unit -> unit.canTakeTech()
                                                                          &&

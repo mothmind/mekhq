@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -58,8 +58,8 @@ import java.util.Set;
 import megamek.codeUtilities.ObjectUtility;
 import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
+import mekhq.campaign.AbstractLocation;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.CurrentLocation;
 import mekhq.campaign.finances.Finances;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
@@ -118,7 +118,7 @@ public class Inoculations {
      * @since 0.50.10
      */
     public static void triggerInoculationPrompt(Campaign campaign, boolean isAdHoc) {
-        CurrentLocation location = campaign.getLocation();
+        AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         if (!location.isOnPlanet()) {
             new ImmersiveDialogNotification(campaign, getTextAt(RESOURCE_BUNDLE, "Inoculations.inTransit"), true);
             return;
@@ -130,7 +130,9 @@ public class Inoculations {
         String planetName = currentPlanet.getName(today);
 
         // Determine who, if anyone, needs inoculations
-        Collection<Person> allPersonnel = campaign.getPersonnelFilteringOutDepartedAndAbsent();
+        Collection<Person> allPersonnel = campaign.getPlayerForce()
+                                                .getHumanResources()
+                                                .getPersonnelFilteringOutDepartedAndAbsent();
 
         // Generic inoculations
         Set<Person> militaryPersonnelInNeedOfGenericInoculation = new HashSet<>();
@@ -218,6 +220,32 @@ public class Inoculations {
               civilianInoculationCost);
     }
 
+    /**
+     * Silently inoculates eligible personnel at the given location's planet without displaying a dialog.
+     *
+     * <p>Only personnel nested under {@code location}'s node are vaccinated — personnel at other
+     * locations are not affected. Vaccine dodgers are still excluded. No cost is charged.</p>
+     *
+     * @param campaign the current campaign
+     * @param location the location whose personnel should be inoculated
+     */
+    public static void autoInoculateAll(Campaign campaign, mekhq.campaign.AbstractLocation location) {
+        if (!location.isOnPlanet()) {
+            return;
+        }
+        Planet currentPlanet = location.getPlanet();
+        LocalDate today = campaign.getLocalDate();
+
+        Set<Person> personnel = new HashSet<>();
+        for (Person person : location.fetchPersonnelAtLocation()) {
+            if (!person.getOptions().booleanOption(FLAW_VACCINE_DODGER)) {
+                personnel.add(person);
+            }
+        }
+
+        inoculatePersonnel(today, personnel, currentPlanet);
+    }
+
     private static void gatherPersonnelInNeedOfCanonInoculations(Set<InjuryType> availableCures,
           Collection<Person> allPersonnel,
           Map<String, Set<Person>> civilianPersonnelInNeedOfCanonInoculation,
@@ -291,7 +319,7 @@ public class Inoculations {
      */
     private static ImmersiveDialogSimple triggerDialog(Campaign campaign, String planetName, String militaryCost,
           String civilianCost, String totalCost, boolean isAdHoc) {
-        List<Person> doctors = campaign.getDoctors();
+        List<Person> doctors = campaign.getPlayerForce().getHumanResources().getDoctors();
         Person seniorDoctor = getDoctor(doctors, campaign);
 
         String inCharacterKey = isAdHoc ? "Inoculations.prompt.ic.adHoc" : "Inoculations.prompt.ic";
@@ -301,7 +329,7 @@ public class Inoculations {
               seniorDoctor,
               null,
               getFormattedTextAt(RESOURCE_BUNDLE, inCharacterKey, campaign.getCommanderAddress(), planetName,
-                    campaign.getFunds().toAmountString()),
+                    campaign.getPlayerForce().getFunds().toAmountString()),
               getButtons(militaryCost, civilianCost, totalCost),
               getTextAt(RESOURCE_BUNDLE, outOfCharacterKey),
               null,
@@ -330,7 +358,7 @@ public class Inoculations {
     private static void handleDialogChoice(Campaign campaign, int choiceIndex, LocalDate today,
           Money totalInoculationCost, Set<Person> militaryPersonnel, Planet location, Set<Person> civilianPersonnel,
           Money militaryInoculationCost, Money civilianInoculationCost) {
-        Finances finances = campaign.getFinances();
+        Finances finances = campaign.getPlayerForce().getFinances();
         switch (choiceIndex) {
             case DIALOG_CHOICE_EVERYBODY -> {
                 if (payForInoculations(finances, today, totalInoculationCost)) {
@@ -491,13 +519,15 @@ public class Inoculations {
      * @since 0.50.10
      */
     public static void performDiseaseChecks(Campaign campaign) {
-        CurrentLocation location = campaign.getLocation();
+        AbstractLocation location = campaign.getPlayerForce().getForceDetachment().getCurrentLocation();
         LocalDate today = campaign.getLocalDate();
 
         String planetCode = location.isOnPlanet() ? location.getPlanet().getId() : null;
         String systemCode = location.getCurrentSystem().getId();
 
-        List<Person> allPersonnel = campaign.getPersonnelFilteringOutDepartedAndAbsent();
+        List<Person> allPersonnel = campaign.getPlayerForce()
+                                          .getHumanResources()
+                                          .getPersonnelFilteringOutDepartedAndAbsent();
 
         // Gather the active diseases in the players' campaign
         DiseaseScanResult diseaseScanResult = getActiveDiseases(allPersonnel);
@@ -681,21 +711,32 @@ public class Inoculations {
           Set<InjuryType> activeCanonDiseases) {}
 
     /**
-     * Scans all personnel for disease-related injuries and the presence of any Super Spreader flaw. Returns both the
-     * collected set of active diseases and whether at least one Super Spreader is present.
+     * Scans all personnel for transmissible disease-related injuries and the presence of any Super Spreader flaw.
+     * Returns the collected sets of active diseases (split by canon vs. generic) and whether at least one Super
+     * Spreader is present.
+     *
+     * <p>Permanent infections are deliberately excluded from both returned sets. The carrier still has the disease
+     * on their medical sheet and it still counts as a permanent Hit; it simply does not contribute to the unit-wide
+     * contagion pool the spread roll iterates over. Without this exclusion, a permanent canon disease such as
+     * Knights-Grasse Syndrome would stay in the active-spread set forever (the carrier never recovers) and cascade
+     * through the unit on the next jump, when vaccinations are suppressed for close-confines reasons.</p>
      *
      * @param allPersonnel the collection of personnel to evaluate
      *
      * @return a {@link DiseaseScanResult} containing:
      *       <ul>
      *         <li>{@code hasSuperSpreader} — {@code true} if any person has the Super Spreader flaw</li>
-     *         <li>{@code activeDiseases} — the set of all disease-type injuries present across the personnel</li>
+     *         <li>{@code activeDiseases} — non-permanent disease-typed injuries with the {@link InjurySubType#DISEASE_GENERIC}
+     *               subtype present across the personnel</li>
+     *         <li>{@code activeCanonDiseases} — non-permanent disease-typed injuries with the
+     *               {@link InjurySubType#DISEASE_CANON_GENERIC} or {@link InjurySubType#DISEASE_CANON_BIOWEAPON}
+     *               subtype present across the personnel</li>
      *       </ul>
      *
      * @author Illiani
      * @since 0.50.10
      */
-    private static DiseaseScanResult getActiveDiseases(List<Person> allPersonnel) {
+    static DiseaseScanResult getActiveDiseases(List<Person> allPersonnel) {
         boolean hasSuperSpreader = false;
         Set<InjuryType> activeDiseases = new HashSet<>();
         Set<InjuryType> activeCanonDiseases = new HashSet<>();
@@ -711,6 +752,13 @@ public class Inoculations {
                 InjuryType type = injury.getType();
 
                 if (subType.isDisease()) {
+                    // Permanent infections do not act as contagion vectors. Without this guard, a permanent
+                    // canon disease (e.g. Knights-Grasse Syndrome) keeps its InjuryType in the active-spread
+                    // set forever — the carrier never recovers — and on the next jump the disease cascades
+                    // through the unit because vaccinations are suppressed in transit.
+                    if (injury.isPermanent()) {
+                        continue;
+                    }
                     if (subType.isCanonDisease()) {
                         activeCanonDiseases.add(type);
                         continue;
@@ -792,8 +840,8 @@ public class Inoculations {
 
     public static void triggerCanonDiseaseSpreadMessages(Campaign campaign, boolean isInTransit, boolean hasCure,
           Set<String> diseases) {
-        String alertColor = spanOpeningWithCustomColor(isInTransit ? getNegativeColor() : getWarningColor());
-        alertColor = hasCure ? alertColor : getNegativeColor();
+        String alertColor = isInTransit ? getNegativeColor() : getWarningColor();
+        alertColor = spanOpeningWithCustomColor(hasCure ? alertColor : getNegativeColor());
 
         String reportKey = "Inoculations.spread.normal";
         if (!hasCure) {
@@ -810,8 +858,8 @@ public class Inoculations {
 
     public static void triggerBioweaponSpreadMessages(Campaign campaign, boolean isInTransit, boolean hasCure,
           Set<String> diseases) {
-        String alertColor = spanOpeningWithCustomColor(isInTransit ? getNegativeColor() : getWarningColor());
-        alertColor = hasCure ? alertColor : getNegativeColor();
+        String alertColor = isInTransit ? getNegativeColor() : getWarningColor();
+        alertColor = spanOpeningWithCustomColor(hasCure ? alertColor : getNegativeColor());
 
         String reportKey;
         if (!hasCure) {

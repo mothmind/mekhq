@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -34,27 +34,45 @@ package mekhq.campaign.randomEvents.prisoners;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
-import static mekhq.campaign.mission.enums.AtBMoraleLevel.STALEMATE;
-import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.DEFAULT_TEMPORARY_CAPACITY;
-import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.TEMPORARY_CAPACITY_DEGRADE_RATE;
+import static java.lang.Math.round;
+import static mekhq.campaign.force.FormationType.SECURITY;
+import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.STALEMATE;
+import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.Vector;
 
+import megamek.common.compute.Compute;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
-import mekhq.campaign.finances.Finances;
-import mekhq.campaign.mission.AtBContract;
+import mekhq.campaign.force.Formation;
+import mekhq.campaign.force.PlayerForce;
+import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.ChaosContract;
+import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
 import mekhq.campaign.personnel.Person;
+import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 /**
  * Test class for the {@link PrisonerEventManager} class.
@@ -70,15 +88,18 @@ public class PrisonerEventManagerTest {
         final int INITIAL_TEMPORARY_CAPACITY = 150;
 
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
-        when(mockCampaign.getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
+        Campaign mockCampaign = mockCampaign();
+        when(mockCampaign.getPlayerForce().getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
@@ -100,15 +121,18 @@ public class PrisonerEventManagerTest {
         final int INITIAL_TEMPORARY_CAPACITY = 101;
 
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
-        when(mockCampaign.getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
+        Campaign mockCampaign = mockCampaign();
+        when(mockCampaign.getPlayerForce().getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
@@ -128,15 +152,18 @@ public class PrisonerEventManagerTest {
         final int INITIAL_TEMPORARY_CAPACITY = 50;
 
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
-        when(mockCampaign.getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
+        Campaign mockCampaign = mockCampaign();
+        when(mockCampaign.getPlayerForce().getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
@@ -159,15 +186,18 @@ public class PrisonerEventManagerTest {
         final int INITIAL_TEMPORARY_CAPACITY = 99;
 
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
-        when(mockCampaign.getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
+        Campaign mockCampaign = mockCampaign();
+        when(mockCampaign.getPlayerForce().getTemporaryPrisonerCapacity()).thenReturn(INITIAL_TEMPORARY_CAPACITY);
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
@@ -185,20 +215,23 @@ public class PrisonerEventManagerTest {
     @Test
     void testCheckForRansomEvents_NoEvent() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
 
-        AtBContract contract = new AtBContract("TEST");
-        contract.setMoraleLevel(STALEMATE);
+        AbstractContract contract = new ChaosContract();
+        contract.changeMorale(STALEMATE);
         when(mockCampaign.hasActiveContract()).thenReturn(true);
         when(mockCampaign.getActiveContracts()).thenReturn(List.of(contract));
 
@@ -214,7 +247,7 @@ public class PrisonerEventManagerTest {
 
         // We're deliberately not triggering this when initializing eventManager, as that allows us
         // to effectively skip the rest of the logic and create a more predictable test environment.
-        boolean eventTriggered = eventManager.checkForRansomEvents().get(0);
+        boolean eventTriggered = eventManager.checkForRansomEvents().getFirst();
 
         // Assert
         assertFalse(eventTriggered);
@@ -223,22 +256,26 @@ public class PrisonerEventManagerTest {
     @Test
     void testCheckForRansomEvents_EnemyEvent() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         when(mockCampaign.hasActiveContract()).thenReturn(true);
         Faction campaignFaction = mock(Faction.class);
         when(campaignFaction.isMercenary()).thenReturn(true);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
 
 
         Person friendlyPrisonerOfWar = new Person(mockCampaign);
-        when(mockCampaign.getFriendlyPrisoners()).thenReturn(List.of(friendlyPrisonerOfWar));
+        when(mockCampaign.getPlayerForce().getHumanResources().getFriendlyPrisoners()).thenReturn(List.of(
+              friendlyPrisonerOfWar));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(mockCampaign) {
             @Override
@@ -250,6 +287,11 @@ public class PrisonerEventManagerTest {
             protected int randomInt(int maxValue) {
                 return 2;
             }
+
+            @Override
+            protected void triggerRansomEvent(boolean isFriendlyPOWs) {
+                // Suppress the modal ransom dialog; we only assert the event was detected.
+            }
         };
 
         // Act
@@ -258,7 +300,7 @@ public class PrisonerEventManagerTest {
         // We're deliberately not triggering this when initializing eventManager, as that allows us
         // to effectively skip the rest of the logic and create a more predictable test environment.
         List<Boolean> results = eventManager.checkForRansomEvents();
-        boolean eventTriggered = results.get(0);
+        boolean eventTriggered = results.getFirst();
         boolean isAllied = results.get(1);
 
         // Assert
@@ -269,23 +311,24 @@ public class PrisonerEventManagerTest {
     @Test
     void testCheckForRansomEvents_FriendlyEvent() {
         // Setup
-        Campaign mockCampaign = mock(Campaign.class);
+        Campaign mockCampaign = mockCampaign();
         Faction campaignFaction = mock(Faction.class);
-        when(mockCampaign.getFaction()).thenReturn(campaignFaction);
+        when(mockCampaign.getPlayerForce().getFaction()).thenReturn(campaignFaction);
         when(campaignFaction.getShortName()).thenReturn("MERC");
         when(mockCampaign.hasActiveContract()).thenReturn(true);
 
         CampaignOptions mockCampaignOptions = mock(CampaignOptions.class);
         when(mockCampaign.getCampaignOptions()).thenReturn(mockCampaignOptions);
+        lenient().when(mockCampaignOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+        lenient().when(mockCampaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+        when(mockCampaignOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle.NONE);
 
         LocalDate today = LocalDate.of(3151, 1, 3);
         when(mockCampaign.getLocalDate()).thenReturn(today);
 
         Person friendlyPrisonerOfWar = new Person(mockCampaign);
-        when(mockCampaign.getFriendlyPrisoners()).thenReturn(List.of(friendlyPrisonerOfWar));
-
-        Finances finances = new Finances();
-        when(mockCampaign.getFinances()).thenReturn(finances);
+        when(mockCampaign.getPlayerForce().getHumanResources().getFriendlyPrisoners()).thenReturn(List.of(
+              friendlyPrisonerOfWar));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(mockCampaign) {
             @Override
@@ -297,6 +340,11 @@ public class PrisonerEventManagerTest {
             protected int randomInt(int maxValue) {
                 return 1;
             }
+
+            @Override
+            protected void triggerRansomEvent(boolean isFriendlyPOWs) {
+                // Suppress the modal ransom dialog; we only assert the event was detected.
+            }
         };
 
         // Act
@@ -305,7 +353,7 @@ public class PrisonerEventManagerTest {
         // We're deliberately not triggering this when initializing eventManager, as that allows us
         // to effectively skip the rest of the logic and create a more predictable test environment.
         List<Boolean> results = eventManager.checkForRansomEvents();
-        boolean eventTriggered = results.get(0);
+        boolean eventTriggered = results.getFirst();
         boolean isAllied = results.get(1);
 
         // Assert
@@ -319,7 +367,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 1;
         int prisonerCapacity = 10;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -334,7 +383,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -348,7 +397,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 1;
         int prisonerCapacity = 0;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -363,7 +413,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -377,7 +427,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 1;
         int prisonerCapacity = 1;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -392,7 +443,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -406,7 +457,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 25;
         int prisonerCapacity = 25;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -421,7 +473,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -435,7 +487,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 100;
         int prisonerCapacity = 0;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -450,7 +503,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -464,7 +517,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 1;
         int prisonerCapacity = 0;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -479,7 +533,7 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
@@ -493,7 +547,8 @@ public class PrisonerEventManagerTest {
         int totalPrisoners = 100;
         int prisonerCapacity = 100;
 
-        Campaign campaign = mock(Campaign.class);
+        Campaign campaign = mockCampaign();
+        when(campaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(java.util.List.of());
         when(campaign.getLocalDate()).thenReturn(LocalDate.of(3151, 1, 1));
 
         PrisonerEventManager realEventManager = new PrisonerEventManager(campaign) {
@@ -508,11 +563,623 @@ public class PrisonerEventManagerTest {
               totalPrisoners,
               totalPrisoners,
               prisonerCapacity);
-        boolean minorEvent = results.get(0);
+        boolean minorEvent = results.getFirst();
         boolean majorEvent = results.get(1);
 
         // Assert
         assertTrue(minorEvent);
         assertTrue(majorEvent);
+    }
+
+    /**
+     * Tests for {@link PrisonerEventManager#calculatePrisonerCapacity(Campaign)}.
+     */
+    @Nested
+    class CalculatePrisonerCapacity {
+
+        private Campaign buildCampaign(PrisonerCaptureStyle captureStyle, int temporaryCapacity) {
+            CampaignOptions mockOptions = mock(CampaignOptions.class);
+            when(mockOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(captureStyle);
+
+            Campaign mockCampaign = mockCampaign();
+            when(mockCampaign.getCampaignOptions()).thenReturn(mockOptions);
+            lenient().when(mockOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+            lenient().when(mockOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+            when(mockCampaign.getPlayerForce().getTemporaryPrisonerCapacity()).thenReturn(temporaryCapacity);
+            when(mockCampaign.getActiveContracts()).thenReturn(List.of());
+            when(mockCampaign.getPlayerForce().getAllFormations()).thenReturn(List.of());
+            return mockCampaign;
+        }
+
+        private Formation securityFormation(Vector<UUID> unitIds) {
+            Formation mockFormation = mock(Formation.class);
+            when(mockFormation.isFormationType(SECURITY)).thenReturn(true);
+            when(mockFormation.getUnits()).thenReturn(unitIds);
+            return mockFormation;
+        }
+
+        private Person healthySoldier() {
+            return mock(Person.class);
+        }
+
+        private Person injuredSoldier() {
+            Person p = mock(Person.class);
+            when(p.needsFixing()).thenReturn(true);
+            return p;
+        }
+
+        private Unit infantryUnit(Person... crew) {
+            Unit unit = mock(Unit.class);
+            when(unit.isAvailable()).thenReturn(true);
+            when(unit.isBattleArmor()).thenReturn(false);
+            when(unit.isConventionalInfantry()).thenReturn(true);
+            when(unit.getCrew()).thenReturn(List.of(crew));
+            return unit;
+        }
+
+        private Unit infantryUnit(int soldierCount) {
+            Person[] crew = new Person[soldierCount];
+            for (int i = 0; i < soldierCount; i++) {
+                crew[i] = healthySoldier();
+            }
+            return infantryUnit(crew);
+        }
+
+        private Unit battleArmorUnit(int operableSuits) {
+            Unit unit = mock(Unit.class);
+            when(unit.isAvailable()).thenReturn(true);
+            when(unit.isBattleArmor()).thenReturn(true);
+            List<Person> crew = new ArrayList<>();
+            for (int i = 0; i < operableSuits; i++) {
+                crew.add(mock(Person.class));
+                when(unit.isBattleArmorSuitOperable(i)).thenReturn(true);
+            }
+            when(unit.getCrew()).thenReturn(crew);
+            return unit;
+        }
+
+        private Unit otherUnit(boolean damaged) {
+            Unit unit = mock(Unit.class);
+            when(unit.isAvailable()).thenReturn(true);
+            when(unit.isBattleArmor()).thenReturn(false);
+            when(unit.isConventionalInfantry()).thenReturn(false);
+            when(unit.isDamaged()).thenReturn(damaged);
+            return unit;
+        }
+
+        private Campaign campaignWithUnits(PrisonerCaptureStyle style, int tempCapacity, Unit... units) {
+            Vector<UUID> unitIds = new Vector<>();
+            Campaign mockCampaign = buildCampaign(style, tempCapacity);
+            for (Unit unit : units) {
+                UUID id = UUID.randomUUID();
+                unitIds.add(id);
+                when(mockCampaign.getUnit(id)).thenReturn(unit);
+            }
+            Formation formation = securityFormation(unitIds);
+            when(mockCampaign.getPlayerForce().getAllFormations()).thenReturn(List.of(formation));
+            return mockCampaign;
+        }
+
+        private Campaign campaignWithUnits(Unit... units) {
+            return campaignWithUnits(PrisonerCaptureStyle.MEKHQ, 100, units);
+        }
+
+        private Campaign campaignWithUnit(Unit unit, PrisonerCaptureStyle style, int tempCapacity) {
+            return campaignWithUnits(style, tempCapacity, unit);
+        }
+
+        private Campaign campaignWithUnit(Unit unit) {
+            return campaignWithUnits(unit);
+        }
+
+        @Test
+        void noFormations_returnsZero() {
+            // Arrange
+            Campaign campaign = buildCampaign(PrisonerCaptureStyle.MEKHQ, 100);
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(0, result);
+        }
+
+        @Test
+        void nonSecurityFormation_returnsZero() {
+            // Arrange
+            // isFormationType returns false by default — formation is not SECURITY
+            Campaign campaign = buildCampaign(PrisonerCaptureStyle.MEKHQ, 100);
+            when(campaign.getPlayerForce().getAllFormations()).thenReturn(List.of(mock(Formation.class)));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(0, result);
+        }
+
+        @Test
+        void unavailableUnit_returnsZero() {
+            // Arrange
+            Unit mockUnit = mock(Unit.class);
+            when(mockUnit.isAvailable()).thenReturn(false);
+            Campaign campaign = campaignWithUnit(mockUnit);
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(0, result);
+        }
+
+        @Test
+        void battleArmor_mekHQStyle_countsOperableSuits() {
+            // Arrange
+            Campaign campaign = campaignWithUnit(battleArmorUnit(2));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(2 * PRISONER_CAPACITY_BATTLE_ARMOR, result);
+        }
+
+        @Test
+        void battleArmor_camOpsStyle_appliesCapacityMultiplier() {
+            // Arrange
+            Campaign campaign = campaignWithUnit(battleArmorUnit(2), PrisonerCaptureStyle.CAMPAIGN_OPERATIONS, 100);
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(2 * PRISONER_CAPACITY_BATTLE_ARMOR * PRISONER_CAPACITY_CAM_OPS_MULTIPLIER, result);
+        }
+
+        @Test
+        void conventionalInfantry_mekHQStyle_countsHealthySoldiers() {
+            // Arrange
+            Campaign campaign = campaignWithUnit(infantryUnit(3));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(3 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY, result);
+        }
+
+        @Test
+        void conventionalInfantry_injuredSoldierSkipped_returnsReducedCapacity() {
+            // Arrange
+            Campaign campaign = campaignWithUnit(infantryUnit(healthySoldier(), healthySoldier(), injuredSoldier()));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(2 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY, result);
+        }
+
+        @Test
+        void otherUnit_undamaged_mekHQStyle_boostsCapacityMultiplier() {
+            // Arrange — infantry provides base capacity; other unit raises the multiplier
+            Campaign campaign = campaignWithUnits(infantryUnit(4), otherUnit(false));
+            int expected = (int) round(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY *
+                                             (1.0 + PRISONER_CAPACITY_OTHER_UNIT_MULTIPLIER));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(expected, result);
+        }
+
+        @Test
+        void otherUnit_damaged_mekHQStyle_doesNotBoostMultiplier() {
+            // Arrange — damaged other unit leaves the multiplier at its 1.0 baseline
+            Campaign campaign = campaignWithUnits(infantryUnit(4), otherUnit(true));
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY, result);
+        }
+
+        @Test
+        void manyOtherUnits_multiplierCappedAtMaximum() {
+            // Arrange — 6 undamaged other units would push multiplier to 1.30, but cap is 1.25
+            Unit[] units = new Unit[7];
+            units[0] = infantryUnit(4);
+            for (int i = 1; i < units.length; i++) {
+                units[i] = otherUnit(false);
+            }
+            Campaign campaign = campaignWithUnits(units);
+            int expected = (int) round(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY *
+                                             PRISONER_CAPACITY_OTHER_UNIT_MAX_MULTIPLIER);
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(expected, result);
+        }
+
+        @Test
+        void temporaryCapacityModifier_scalesResult() {
+            // Arrange — halved temporary capacity halves the final result
+            Campaign campaign = campaignWithUnit(infantryUnit(4), PrisonerCaptureStyle.MEKHQ, 50);
+            int expected = (int) round(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY * 0.5);
+
+            // Act
+            int result = calculatePrisonerCapacity(campaign);
+
+            // Assert
+            assertEquals(expected, result);
+        }
+
+        /**
+         * Documents the intended behavior of {@link PrisonerEventManager#calculatePrisonerCapacity(Campaign)} with
+         * respect to blob crew (temporary personnel stored as integers rather than {@link Person} objects).
+         *
+         * <p>Blob crew should count equally toward prisoner capacity alongside regular {@link Person} crew.
+         * These tests are expected to <strong>fail</strong> until {@code calculatePrisonerCapacity} is updated to
+         * include {@link mekhq.campaign.unit.Unit#getTotalTempCrew()} in its calculations.</p>
+         *
+         * <p>Note: tank capacity is derived from {@code otherUnitMultiplier} which does not examine crew
+         * at all, so the tank blob-crew tests pass under the current implementation.</p>
+         */
+        @Nested
+        class BlobCrewCounting {
+
+            @Test
+            void conventionalInfantry_partialBlobCrew_blobSoldiersCountedEquallyToRegular() {
+                // Arrange
+                int blobCount = 2;
+                Unit unit = infantryUnit(1);
+                when(unit.getTotalTempCrew()).thenReturn(blobCount);
+                Campaign campaign = campaignWithUnit(unit);
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals((1 + blobCount) * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY, result);
+            }
+
+            @Test
+            void conventionalInfantry_fullyCrewedWithBlobCrew_blobSoldiersCountedEquallyToRegular() {
+                // Arrange
+                int blobCount = 3;
+                Unit unit = infantryUnit(1);
+                when(unit.getTotalTempCrew()).thenReturn(blobCount);
+                Campaign campaign = campaignWithUnit(unit);
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals((1 + blobCount) * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY, result);
+            }
+
+            @Test
+            void battleArmor_partialBlobCrew_blobTroopersCountedEquallyToRegular() {
+                // Arrange
+                int blobCount = 2;
+                Unit unit = battleArmorUnit(1);
+                when(unit.getTotalTempCrew()).thenReturn(blobCount);
+                Campaign campaign = campaignWithUnit(unit);
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals((1 + blobCount) * PRISONER_CAPACITY_BATTLE_ARMOR, result);
+            }
+
+            @Test
+            void battleArmor_fullyCrewedWithBlobCrew_blobTroopersCountedEquallyToRegular() {
+                // Arrange
+                int blobCount = 3;
+                Unit unit = battleArmorUnit(1);
+                when(unit.getTotalTempCrew()).thenReturn(blobCount);
+                Campaign campaign = campaignWithUnit(unit);
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals((1 + blobCount) * PRISONER_CAPACITY_BATTLE_ARMOR, result);
+            }
+
+            @Test
+            void tank_partialBlobCrew_unitContributesToCapacity() {
+                // Arrange — infantry provides base capacity; blob-crewed tank still raises the multiplier
+                Unit tank = otherUnit(false);
+                when(tank.getTotalTempCrew()).thenReturn(2);
+                Campaign campaign = campaignWithUnits(infantryUnit(4), tank);
+                int expected = (int) round(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY *
+                                                 (1.0 + PRISONER_CAPACITY_OTHER_UNIT_MULTIPLIER));
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals(expected, result);
+            }
+
+            @Test
+            void tank_fullyCrewedWithBlobCrew_unitContributesToCapacity() {
+                // Arrange — infantry provides base capacity; fully blob-crewed tank still raises the multiplier
+                Unit tank = otherUnit(false);
+                when(tank.getTotalTempCrew()).thenReturn(3);
+                Campaign campaign = campaignWithUnits(infantryUnit(4), tank);
+                int expected = (int) round(4 * PRISONER_CAPACITY_CONVENTIONAL_INFANTRY *
+                                                 (1.0 + PRISONER_CAPACITY_OTHER_UNIT_MULTIPLIER));
+
+                // Act
+                int result = calculatePrisonerCapacity(campaign);
+
+                // Assert
+                assertEquals(expected, result);
+            }
+        }
+    }
+
+    /**
+     * Tests for {@link PrisonerEventManager#calculatePrisonerCapacityUsage(Campaign)}.
+     *
+     * <p>The "GREGification" merge rerouted the prisoner lookup through
+     * {@code getPlayerForce().getHumanResources().getCurrentPrisoners()}. These tests pin the accounting so a reroute
+     * regression is caught: every prisoner consumes one unit of capacity, and an injured prisoner without an assigned
+     * doctor consumes an additional unit — but only under the MekHQ capture style.</p>
+     */
+    @Nested
+    class CalculatePrisonerCapacityUsage {
+
+        private Campaign campaignWithPrisoners(PrisonerCaptureStyle captureStyle, List<Person> prisoners) {
+            CampaignOptions mockOptions = mock(CampaignOptions.class);
+            when(mockOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(captureStyle);
+
+            Campaign mockCampaign = mockCampaign();
+            when(mockCampaign.getCampaignOptions()).thenReturn(mockOptions);
+            lenient().when(mockOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+            lenient().when(mockOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+            when(mockCampaign.getPlayerForce().getHumanResources().getCurrentPrisoners()).thenReturn(prisoners);
+            return mockCampaign;
+        }
+
+        private Person healthyPrisoner() {
+            return mock(Person.class);
+        }
+
+        private Person injuredPrisoner(boolean hasDoctor) {
+            Person prisoner = mock(Person.class);
+            when(prisoner.needsFixing()).thenReturn(true);
+            if (hasDoctor) {
+                when(prisoner.getDoctorId()).thenReturn(UUID.randomUUID());
+            }
+            return prisoner;
+        }
+
+        @Test
+        void noPrisoners_returnsZero() {
+            Campaign campaign = campaignWithPrisoners(PrisonerCaptureStyle.MEKHQ, List.of());
+
+            assertEquals(0, calculatePrisonerCapacityUsage(campaign));
+        }
+
+        @Test
+        void healthyPrisoners_eachCountOnce() {
+            Campaign campaign = campaignWithPrisoners(PrisonerCaptureStyle.MEKHQ,
+                  List.of(healthyPrisoner(), healthyPrisoner(), healthyPrisoner()));
+
+            assertEquals(3, calculatePrisonerCapacityUsage(campaign));
+        }
+
+        @Test
+        void injuredWithDoctor_mekHQStyle_countsOnce() {
+            Campaign campaign = campaignWithPrisoners(PrisonerCaptureStyle.MEKHQ, List.of(injuredPrisoner(true)));
+
+            assertEquals(1, calculatePrisonerCapacityUsage(campaign));
+        }
+
+        @Test
+        void injuredWithoutDoctor_mekHQStyle_countsTwice() {
+            Campaign campaign = campaignWithPrisoners(PrisonerCaptureStyle.MEKHQ, List.of(injuredPrisoner(false)));
+
+            assertEquals(2, calculatePrisonerCapacityUsage(campaign));
+        }
+
+        @Test
+        void injuredWithoutDoctor_nonMekHQStyle_countsOnce() {
+            // The injured-without-doctor surcharge only applies under the MekHQ capture style.
+            Campaign campaign = campaignWithPrisoners(PrisonerCaptureStyle.NONE, List.of(injuredPrisoner(false)));
+
+            assertEquals(1, calculatePrisonerCapacityUsage(campaign));
+        }
+    }
+
+    /**
+     * Tests for {@link PrisonerEventManager#processAdHocExecution(Campaign, int)}.
+     *
+     * <p>The merge rerouted the temporary-capacity and crime-rating mutations through {@code getPlayerForce()}. These
+     * tests pin both the target and the sign of those mutations — the kind of detail a conflict resolution can silently
+     * invert. {@link Compute} is mocked so the backfire and crime-notice rolls are deterministic.</p>
+     */
+    @Nested
+    class ProcessAdHocExecution {
+        private static final int BACKFIRE_ROLL = 1;
+        private static final int NO_BACKFIRE_ROLL = 2;
+        private static final int CRIME_NOTICED_ROLL = 0;
+        private static final int CRIME_UNNOTICED_ROLL = 99;
+        private static final LocalDate TODAY = LocalDate.of(3151, 1, 3);
+
+        private Campaign newCampaign() {
+            Campaign campaign = mockCampaign();
+            when(campaign.getLocalDate()).thenReturn(TODAY);
+            // Chaos Reputation disabled so the CamOps crime-rating path is exercised.
+            CampaignOptions campaignOptions = new CampaignOptions();
+            campaignOptions.set(CampaignOption.USE_CHAOS_REPUTATION, false);
+            when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
+            return campaign;
+        }
+
+        @Test
+        void successfulExecution_increasesTemporaryCapacity() {
+            Campaign campaign = newCampaign();
+            PlayerForce playerForce = campaign.getPlayerForce();
+            int victims = 3;
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                compute.when(() -> Compute.d6(1)).thenReturn(NO_BACKFIRE_ROLL);
+                compute.when(() -> Compute.randomInt(100)).thenReturn(CRIME_UNNOTICED_ROLL);
+
+                PrisonerEventManager.processAdHocExecution(campaign, victims);
+            }
+
+            verify(playerForce).changeTemporaryPrisonerCapacity(victims * 2);
+        }
+
+        @Test
+        void backfiredExecution_decreasesTemporaryCapacity() {
+            Campaign campaign = newCampaign();
+            PlayerForce playerForce = campaign.getPlayerForce();
+            int victims = 3;
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                compute.when(() -> Compute.d6(1)).thenReturn(BACKFIRE_ROLL);
+                compute.when(() -> Compute.randomInt(100)).thenReturn(CRIME_UNNOTICED_ROLL);
+
+                PrisonerEventManager.processAdHocExecution(campaign, victims);
+            }
+
+            verify(playerForce).changeTemporaryPrisonerCapacity(-(victims * 2));
+        }
+
+        @Test
+        void crimeNoticed_appliesNegativePenaltyAndRecordsDate() {
+            Campaign campaign = newCampaign();
+            PlayerForce playerForce = campaign.getPlayerForce();
+            int victims = 3;
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                compute.when(() -> Compute.d6(1)).thenReturn(NO_BACKFIRE_ROLL);
+                compute.when(() -> Compute.randomInt(100)).thenReturn(CRIME_NOTICED_ROLL);
+
+                PrisonerEventManager.processAdHocExecution(campaign, victims);
+            }
+
+            verify(playerForce).changeCrimeRating(-(victims * 2));
+            verify(playerForce).setCampOpsDateOfLastCrime(TODAY);
+        }
+
+        @Test
+        void crimeNoticed_penaltyCappedAtMaximum() {
+            Campaign campaign = newCampaign();
+            PlayerForce playerForce = campaign.getPlayerForce();
+            int victims = 100; // victims * 2 = 200, which exceeds MAX_CRIME_PENALTY
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                compute.when(() -> Compute.d6(1)).thenReturn(NO_BACKFIRE_ROLL);
+                compute.when(() -> Compute.randomInt(100)).thenReturn(CRIME_NOTICED_ROLL);
+
+                PrisonerEventManager.processAdHocExecution(campaign, victims);
+            }
+
+            verify(playerForce).changeCrimeRating(-MAX_CRIME_PENALTY);
+        }
+
+        @Test
+        void crimeUnnoticed_doesNotChangeCrimeRating() {
+            Campaign campaign = newCampaign();
+            PlayerForce playerForce = campaign.getPlayerForce();
+            int victims = 3;
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                compute.when(() -> Compute.d6(1)).thenReturn(NO_BACKFIRE_ROLL);
+                compute.when(() -> Compute.randomInt(100)).thenReturn(CRIME_UNNOTICED_ROLL);
+
+                PrisonerEventManager.processAdHocExecution(campaign, victims);
+            }
+
+            verify(playerForce, never()).changeCrimeRating(anyInt());
+        }
+    }
+
+    /**
+     * Tests for {@link PrisonerEventManager#checkForIntelBreachEvent(Campaign, int)}.
+     *
+     * <p>Covers the guard conditions and the no-breach path after the merge rerouted contract access. When no breach
+     * occurs the affected contract's morale must be left untouched. The breach-triggered path is intentionally not
+     * exercised here because it opens a modal dialog.</p>
+     */
+    @Nested
+    class CheckForIntelBreachEvent {
+
+        private Campaign campaignWithCaptureStyle(PrisonerCaptureStyle captureStyle) {
+            CampaignOptions mockOptions = mock(CampaignOptions.class);
+            when(mockOptions.get(CampaignOption.PRISONER_CAPTURE_STYLE)).thenReturn(captureStyle);
+
+            Campaign mockCampaign = mockCampaign();
+            when(mockCampaign.getCampaignOptions()).thenReturn(mockOptions);
+            lenient().when(mockOptions.get(CampaignOption.IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT)).thenReturn(false);
+            lenient().when(mockOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION)).thenReturn(false);
+            return mockCampaign;
+        }
+
+        private AbstractContract contractWithMorale(ContractMoraleLevel morale) {
+            AbstractContract contract = new ChaosContract();
+            contract.changeMorale(morale);
+            return contract;
+        }
+
+        @Test
+        void nonMekHQStyle_doesNotInspectContracts() {
+            Campaign campaign = campaignWithCaptureStyle(PrisonerCaptureStyle.NONE);
+
+            PrisonerEventManager.checkForIntelBreachEvent(campaign, 5);
+
+            verify(campaign, never()).getActiveContracts();
+        }
+
+        @Test
+        void allContractsOverwhelmingOrRouted_filteredOut_noBreach() {
+            Campaign campaign = campaignWithCaptureStyle(PrisonerCaptureStyle.MEKHQ);
+            AbstractContract contract = contractWithMorale(ContractMoraleLevel.OVERWHELMING);
+            when(campaign.getActiveContracts()).thenReturn(new ArrayList<>(List.of(contract)));
+
+            PrisonerEventManager.checkForIntelBreachEvent(campaign, 5);
+
+            // The only candidate contract is filtered out, so no breach can occur and morale is unchanged.
+            assertEquals(ContractMoraleLevel.OVERWHELMING, contract.getMoraleLevel());
+        }
+
+        @Test
+        void zeroFreedPrisoners_noBreach() {
+            Campaign campaign = campaignWithCaptureStyle(PrisonerCaptureStyle.MEKHQ);
+            AbstractContract contract = contractWithMorale(STALEMATE);
+            when(campaign.getActiveContracts()).thenReturn(new ArrayList<>(List.of(contract)));
+
+            PrisonerEventManager.checkForIntelBreachEvent(campaign, 0);
+
+            assertEquals(STALEMATE, contract.getMoraleLevel());
+        }
+
+        @Test
+        void breachRollAtOrAboveFreedCount_noBreach() {
+            Campaign campaign = campaignWithCaptureStyle(PrisonerCaptureStyle.MEKHQ);
+            AbstractContract contract = contractWithMorale(STALEMATE);
+            when(campaign.getActiveContracts()).thenReturn(new ArrayList<>(List.of(contract)));
+
+            try (MockedStatic<Compute> compute = mockStatic(Compute.class)) {
+                // A roll that is not less than the freed count (freed = 1, roll = 40) means no breach.
+                compute.when(() -> Compute.randomInt(50)).thenReturn(40);
+
+                PrisonerEventManager.checkForIntelBreachEvent(campaign, 1);
+            }
+
+            assertEquals(STALEMATE, contract.getMoraleLevel());
+        }
     }
 }

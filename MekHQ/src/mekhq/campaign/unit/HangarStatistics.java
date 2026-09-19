@@ -34,12 +34,16 @@
 package mekhq.campaign.unit;
 
 import java.util.HashMap;
+import java.util.function.ToDoubleFunction;
 
 import megamek.common.bays.BayType;
 import megamek.common.equipment.GunEmplacement;
-import megamek.common.units.*;
+import megamek.common.units.Dropship;
+import megamek.common.units.Entity;
+import megamek.common.units.FighterSquadron;
+import megamek.common.units.Jumpship;
+import megamek.common.units.SpaceStation;
 import megamek.logging.MMLogger;
-import mekhq.campaign.Hangar;
 
 /**
  * Provides methods to gather statistics on units in a hangar.
@@ -47,15 +51,16 @@ import mekhq.campaign.Hangar;
 public class HangarStatistics {
     private static final MMLogger logger = MMLogger.create(HangarStatistics.class);
 
-    private final Hangar hangar;
+    private final mekhq.campaign.LocalHangar hangar;
+    private static final long UNMAPPED_BAY_TYPE = -1L;
     private static final long LIGHT_VEHICLE_BIT = 1L << 62;
     private static final long SUPER_HEAVY_BIT = 1L << 63;
 
-    public HangarStatistics(Hangar hangar) {
+    public HangarStatistics(mekhq.campaign.LocalHangar hangar) {
         this.hangar = hangar;
     }
 
-    public Hangar getHangar() {
+    public mekhq.campaign.LocalHangar getHangar() {
         return hangar;
     }
 
@@ -109,23 +114,21 @@ public class HangarStatistics {
             Entity en = unit.getEntity();
 
             // Non-transportable unit types that are tracked for other reporting purposes
-            if (en instanceof GunEmplacement) {
-                hashMap.merge(Entity.ETYPE_GUN_EMPLACEMENT, 1, Integer::sum);
-            } else if (en instanceof FighterSquadron) {
-                hashMap.merge(Entity.ETYPE_FIGHTER_SQUADRON, 1, Integer::sum);
-            } else if (en instanceof Jumpship) {
-                hashMap.merge(Entity.ETYPE_JUMPSHIP, 1, Integer::sum);
-            } else if (en instanceof Dropship) {
-                hashMap.merge(Entity.ETYPE_DROPSHIP, 1, Integer::sum);
-            } else {
-                // For all other units, use BayType to determine the correct transport bay category.
-                // This delegates to MegaMek's canonical entity-to-bay mapping, ensuring fighters
-                // (ASF, Conventional, Fixed-Wing Support) are all correctly categorized together.
-                BayType bayType = BayType.getTypeForEntity(en);
-                if (bayType != null) {
-                    long key = bayTypeToKey(bayType);
-                    if (key >= 0) {
-                        hashMap.merge(key, 1, Integer::sum);
+            switch (en) {
+                case GunEmplacement ignored -> hashMap.merge(Entity.ETYPE_GUN_EMPLACEMENT, 1, Integer::sum);
+                case FighterSquadron ignored -> hashMap.merge(Entity.ETYPE_FIGHTER_SQUADRON, 1, Integer::sum);
+                case Jumpship ignored -> hashMap.merge(Entity.ETYPE_JUMPSHIP, 1, Integer::sum);
+                case Dropship ignored -> hashMap.merge(Entity.ETYPE_DROPSHIP, 1, Integer::sum);
+                case null, default -> {
+                    // For all other units, use BayType to determine the correct transport bay category.
+                    // This delegates to MegaMek's canonical entity-to-bay mapping, ensuring fighters
+                    // (ASF, Conventional, Fixed-Wing Support) are all correctly categorized together.
+                    BayType bayType = BayType.getTypeForEntity(en);
+                    if (bayType != null) {
+                        long key = bayTypeToKey(bayType);
+                        if (key != UNMAPPED_BAY_TYPE) {
+                            hashMap.merge(key, 1, Integer::sum);
+                        }
                     }
                 }
             }
@@ -135,8 +138,8 @@ public class HangarStatistics {
     }
 
     /**
-     * Maps a {@link BayType} to the ETYPE-based key used in the tally map. Returns {@code -1L} and logs a warning
-     * for any unhandled bay type so that new types added to MegaMek fail visibly rather than being silently counted.
+     * Maps a {@link BayType} to the ETYPE-based key used in the tally map. Returns {@code -1L} and logs a warning for
+     * any unhandled bay type so that new types added to MegaMek fail visibly rather than being silently counted.
      *
      * @param bayType the bay type to map
      *
@@ -155,9 +158,26 @@ public class HangarStatistics {
             case BATTLEARMOR_IS, BATTLEARMOR_CLAN, BATTLEARMOR_CS -> Entity.ETYPE_BATTLEARMOR;
             default -> {
                 logger.warn("Unmapped BayType in transport tally: {}", bayType);
-                yield -1L;
+                yield UNMAPPED_BAY_TYPE;
             }
         };
+    }
+
+    private static boolean isTransportCapacitySource(Unit unit) {
+        if ((unit == null) || !unit.isPresent() || unit.isMothballed()) {
+            return false;
+        }
+
+        Entity entity = unit.getEntity();
+        return (entity != null) && !(entity instanceof SpaceStation);
+    }
+
+    private int getTotalTransportCapacity(ToDoubleFunction<Unit> capacityGetter) {
+        return (int) Math.round(getHangar().getUnits()
+                                      .stream()
+                                      .filter(HangarStatistics::isTransportCapacitySource)
+                                      .mapToDouble(capacityGetter)
+                                      .sum());
     }
 
     public int getNumberOfUnitsByType(long type, boolean inTransit, boolean lv) {
@@ -165,6 +185,27 @@ public class HangarStatistics {
         long key = (lv) ? type | LIGHT_VEHICLE_BIT : type;
 
         return bayMap.getOrDefault(key, 0);
+    }
+
+    /**
+     * Returns the number of super-heavy vehicles (Tank-class units with weight > 100 tons) currently in the hangar.
+     * Mirrors {@link #getNumberOfUnitsByType(long, boolean, boolean)} for the super-heavy bay category, which has no
+     * dedicated public flag because super-heavy bays are tallied via an internal bit on the hash key.
+     *
+     * @return number of present (not in-transit) super-heavy vehicles in the hangar
+     */
+    public int getNumberOfSuperHeavyVehicles() {
+        return tallyBaysByType(false).getOrDefault(Entity.ETYPE_TANK | SUPER_HEAVY_BIT, 0);
+    }
+
+    /**
+     * Returns the number of occupied super-heavy vehicle bays, capped by the total super-heavy vehicle bay capacity.
+     *
+     * @return occupied super-heavy vehicle bays
+     */
+    public int getOccupiedSuperHeavyVehicleBays() {
+        int num = tallyBaysByType(false).getOrDefault(Entity.ETYPE_TANK | SUPER_HEAVY_BIT, 0);
+        return Math.min(getTotalSuperHeavyVehicleBays(), num);
     }
 
     public int getOccupiedBays(long type) {
@@ -217,69 +258,56 @@ public class HangarStatistics {
     }
 
     public int getTotalMekBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getMekCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getMekCapacity);
     }
 
     public int getTotalASFBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getASFCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getASFCapacity);
     }
 
     public int getTotalSmallCraftBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getSmallCraftCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getSmallCraftCapacity);
     }
 
     public int getTotalBattleArmorBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getBattleArmorCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getBattleArmorCapacity);
     }
 
     public int getTotalInfantryBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getInfantryCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getInfantryCapacity);
     }
 
     public int getTotalHeavyVehicleBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getHeavyVehicleCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getHeavyVehicleCapacity);
     }
 
     public int getTotalSuperHeavyVehicleBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getSuperHeavyVehicleCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getSuperHeavyVehicleCapacity);
     }
 
     public int getTotalLightVehicleBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getLightVehicleCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getLightVehicleCapacity);
     }
 
     public int getTotalProtoMekBays() {
-        return (int) Math.round(getHangar().getUnitsStream()
-                                      .mapToDouble(Unit::getProtoMekCapacity)
-                                      .sum());
+        return getTotalTransportCapacity(Unit::getProtoMekCapacity);
     }
 
     public int getTotalDockingCollars() {
-        return getHangar().getUnitsStream()
-                     .filter(u -> u.getEntity() instanceof Jumpship)
+        return getHangar().getUnits()
+                     .stream()
+                     .filter(HangarStatistics::isTransportCapacitySource)
+                     .filter(unit -> unit.getEntity() instanceof Jumpship)
                      .mapToInt(Unit::getDocks)
                      .sum();
     }
 
+    @Deprecated(since = "0.51.0", forRemoval = true)
     public int getTotalLargeCraftPassengerCapacity() {
-        return getHangar().getUnitsStream()
-                     .filter(u -> u.getEntity().isLargeCraft() || u.getEntity().isSmallCraft())
+        return getHangar().getUnits()
+                     .stream()
+                     .filter(HangarStatistics::isTransportCapacitySource)
+                     .filter(unit -> unit.getEntity().isLargeCraft() || unit.getEntity().isSmallCraft())
                      .mapToInt(u -> u.getEntity().getNPassenger() + u.getEntity().getBayPersonnel())
                      .sum();
     }

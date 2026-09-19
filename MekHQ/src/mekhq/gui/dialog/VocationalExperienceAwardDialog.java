@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2025-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -32,14 +32,14 @@
  */
 package mekhq.gui.dialog;
 
-import static mekhq.campaign.Campaign.AdministratorSpecialization.HR;
 import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 
 import java.util.List;
 
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
-import mekhq.campaign.mission.AtBContract;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.personnel.Person;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
 
@@ -64,7 +64,10 @@ public class VocationalExperienceAwardDialog extends ImmersiveDialogSimple {
      * @param campaign the {@link Campaign} to which this dialog is tied
      */
     public VocationalExperienceAwardDialog(Campaign campaign) {
-        super(campaign, campaign.getSeniorAdminPerson(HR),
+        super(campaign, campaign.getPlayerForce().getHumanResources()
+                              .getSeniorAdminPerson(campaign.getCampaignOptions(),
+                                    campaign.getPlayerForce().isClanForce(),
+                                    campaign.getLocalDate()),
               null,
               createInCharacterMessage(campaign), null,
               createOutOfCharacterMessage(campaign),
@@ -86,7 +89,7 @@ public class VocationalExperienceAwardDialog extends ImmersiveDialogSimple {
      * @return a string representing the in-character message in HTML format
      */
     private static String createInCharacterMessage(Campaign campaign) {
-        List<Person> personnelWhoAdvanced = campaign.getPersonnelWhoAdvancedInXP();
+        List<Person> personnelWhoAdvanced = campaign.getPlayerForce().getHumanResources().getPersonnelWhoAdvancedInXP();
 
         String commanderAddress = campaign.getCommanderAddress();
 
@@ -127,8 +130,6 @@ public class VocationalExperienceAwardDialog extends ImmersiveDialogSimple {
      * <p>This method integrates campaign options such as:</p>
      * <ul>
      *     <li>The default vocational XP advancement rate ({@code VocationalXP})</li>
-     *     <li>The status of whether the campaign is using the AtB (Against the Bot)
-     *         system ({@code isUseAtB})</li>
      *     <li>The type of active employment contracts (e.g., garrison or non-garrison)</li>
      * </ul>
      *
@@ -142,12 +143,12 @@ public class VocationalExperienceAwardDialog extends ImmersiveDialogSimple {
     private static String createOutOfCharacterMessage(Campaign campaign) {
         final CampaignOptions campaignOptions = campaign.getCampaignOptions();
 
-        int advancement = campaignOptions.getVocationalXP();
+        int advancement = campaignOptions.get(CampaignOption.VOCATIONAL_XP);
 
         if (campaign.hasActiveContract()) {
-            if (campaignOptions.isUseAtB()) {
-                for (AtBContract contract : campaign.getActiveAtBContracts()) {
-                    if (!contract.getContractType().isGarrisonType()) {
+            if (campaignOptions.isUseStratCon()) {
+                for (AbstractContract contract : campaign.getActiveContracts()) {
+                    if (!contract.getObjectiveType().isGarrisonType()) {
                         advancement *= 2;
                         break;
                     }

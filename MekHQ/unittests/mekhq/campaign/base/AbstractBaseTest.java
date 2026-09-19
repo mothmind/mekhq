@@ -1,0 +1,308 @@
+/*
+ * Copyright (C) 2026 The MegaMek Team. All Rights Reserved.
+ *
+ * This file is part of MekHQ.
+ *
+ * MekHQ is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License (GPL),
+ * version 3 or (at your option) any later version,
+ * as published by the Free Software Foundation.
+ *
+ * MekHQ is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * A copy of the GPL should have been included with this project;
+ * if not, see <https://www.gnu.org/licenses/>.
+ *
+ * NOTICE: The MegaMek organization is a non-profit group of volunteers
+ * creating free software for the BattleTech community.
+ *
+ * MechWarrior, BattleMech, `Mech and AeroTech are registered trademarks
+ * of The Topps Company, Inc. All Rights Reserved.
+ *
+ * Catalyst Game Labs and the Catalyst Game Labs logo are trademarks of
+ * InMediaRes Productions, LLC.
+ *
+ * MechWarrior Copyright Microsoft Corporation. MekHQ was created under
+ * Microsoft's "Game Content Usage Rules"
+ * <https://www.xbox.com/en-US/developers/rules> and it is not endorsed by or
+ * affiliated with Microsoft.
+ */
+package mekhq.campaign.base;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.UUID;
+
+import mekhq.campaign.Campaign;
+import mekhq.campaign.CampaignLocationManager;
+import mekhq.campaign.FixedLocation;
+import mekhq.campaign.GroundTransitLocation;
+import mekhq.campaign.LocalPersonnel;
+import mekhq.campaign.LocalWarehouse;
+import mekhq.campaign.parts.Armor;
+import mekhq.campaign.parts.PartInventory;
+import mekhq.campaign.parts.meks.MekSensor;
+import mekhq.campaign.personnel.Person;
+import mekhq.campaign.unit.Unit;
+import mekhq.campaign.universe.PlanetarySystem;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+public class AbstractBaseTest {
+
+    FixedLocation parent;
+    PlayerBase base;
+
+    @BeforeEach
+    void setUp() {
+        parent = new FixedLocation(mock(PlanetarySystem.class));
+        base = new PlayerBase(parent);
+    }
+
+    @Test
+    void getId_isNotNull() {
+        assertNotNull(base.getId());
+    }
+
+    @Test
+    void getLocationNode_isNotNull() {
+        assertNotNull(base.getLocationNode());
+    }
+
+    @Test
+    void getLocationNode_locatableIsBase() {
+        assertSame(base, base.getLocationNode().getLocatable());
+    }
+
+    @Nested
+    class ResourceOwnership {
+        @Test
+        void getWarehouse_returnsBaseWarehouse() {
+            LocalWarehouse wh = base.getWarehouse();
+            assertNotNull(wh);
+            assertSame(wh, base.getBaseWarehouse());
+        }
+
+        @Test
+        void getHangar_returnsBaseHangar() {
+            mekhq.campaign.LocalHangar h = base.getHangar();
+            assertNotNull(h);
+            assertSame(h, base.getBaseHangar());
+        }
+
+        @Test
+        void getPersonnel_returnsBasePersonnel() {
+            LocalPersonnel p = base.getPersonnel();
+            assertNotNull(p);
+            assertSame(p, base.getBasePersonnel());
+        }
+    }
+
+    @Nested
+    class LocationTreeWiring {
+        @Test
+        void baseHangar_parentIsBase() {
+            assertTrue(base.getBaseHangar().isParented());
+            assertSame(base, base.getBaseHangar().getParentLocation());
+        }
+
+        @Test
+        void baseWarehouse_parentIsBase() {
+            assertTrue(base.getBaseWarehouse().isParented());
+            assertSame(base, base.getBaseWarehouse().getParentLocation());
+        }
+
+        @Test
+        void basePersonnel_parentIsBase() {
+            assertTrue(base.getBasePersonnel().isParented());
+            assertSame(base, base.getBasePersonnel().getParentLocation());
+        }
+
+        @Test
+        void base_parentIsSuppliedFixedLocation() {
+            assertSame(parent, base.getParent());
+        }
+    }
+
+    @Nested
+    class DisplayFields {
+        @Test
+        void displayName_roundTrip() {
+            base.setDisplayName("Alpha Base");
+            assertEquals("Alpha Base", base.getDisplayName());
+        }
+
+        @Test
+        void displayType_roundTrip() {
+            base.setDisplayType("Repair Depot");
+            assertEquals("Repair Depot", base.getDisplayType());
+        }
+
+        @Test
+        void displayType_nullByDefault() {
+            assertNull(base.getDisplayType());
+        }
+
+        @Test
+        void planetId_roundTrip() {
+            base.setPlanetId("Galatea");
+            assertEquals("Galatea", base.getPlanetId());
+        }
+    }
+
+    @Nested
+    class PartInventoryDefault {
+        @Test
+        void emptyWarehouse_returnsZeroCounts() {
+            PartInventory inv = base.getPartInventory(new MekSensor());
+            assertEquals(0, inv.getSupply());
+            assertEquals(0, inv.getTransit());
+        }
+
+        @Test
+        void supplyCountMatchesPresentSpareParts() {
+            MekSensor template = new MekSensor();
+            MekSensor spare1 = new MekSensor();
+            MekSensor spare2 = new MekSensor();
+            base.getBaseWarehouse().addPart(spare1);
+            base.getBaseWarehouse().addPart(spare2);
+
+            PartInventory inv = base.getPartInventory(template);
+            // Each spare has quantity 1 by default.
+            assertEquals(2, inv.getSupply());
+            assertEquals(0, inv.getTransit());
+        }
+
+        @Test
+        void transitCountMatchesNonPresentSpareParts() {
+            MekSensor template = new MekSensor();
+            MekSensor inTransit = new MekSensor();
+            inTransit.setDaysToArrival(3);
+            base.getBaseWarehouse().addPart(inTransit);
+
+            PartInventory inv = base.getPartInventory(template);
+            assertEquals(0, inv.getSupply());
+            assertEquals(1, inv.getTransit());
+        }
+
+        @Test
+        void armorPart_setsCountModifierToPoints() {
+            Armor armorTemplate = new Armor();
+            PartInventory inv = base.getPartInventory(armorTemplate);
+            assertEquals(" points", inv.getCountModifier());
+        }
+    }
+
+    @Nested
+    class IsEmpty {
+        Campaign campaign;
+        CampaignLocationManager locationManager;
+
+        @BeforeEach
+        void setUpCampaign() {
+            locationManager = mock(CampaignLocationManager.class);
+            campaign = mock(Campaign.class);
+            when(campaign.getCampaignLocationManager()).thenReturn(locationManager);
+            // holdsPendingTravelDestination defaults to false on the mock unless a test overrides it.
+        }
+
+        @Test
+        void freshBase_isEmpty() {
+            assertTrue(base.isEmpty(campaign));
+        }
+
+        @Test
+        void withPersonnelPresent_isNotEmpty() {
+            base.getBasePersonnel().put(UUID.randomUUID(), mock(Person.class));
+            assertFalse(base.isEmpty(campaign));
+        }
+
+        @Test
+        void withHangarUnit_isNotEmpty() {
+            Unit unit = mock(Unit.class);
+            when(unit.getId()).thenReturn(UUID.randomUUID());
+            base.getBaseHangar().addUnit(unit);
+            assertFalse(base.isEmpty(campaign));
+        }
+
+        @Test
+        void withWarehousePart_isNotEmpty() {
+            base.getBaseWarehouse().addPart(new MekSensor());
+            assertFalse(base.isEmpty(campaign));
+        }
+
+        @Test
+        void withInTransitTravelerOnTravelNode_isNotEmpty() {
+            GroundTransitLocation travel = new GroundTransitLocation(mock(PlanetarySystem.class), 2d);
+            assertTrue(travel.setParent(base), "travel node should attach under the base");
+            Person traveler = new Person("First", "Last", null, "MERC");
+            assertTrue(traveler.setParent(travel), "traveler should attach under the travel node");
+
+            assertFalse(base.isEmpty(campaign));
+        }
+
+        @Test
+        void withPendingTravelDestination_isNotEmpty() {
+            when(locationManager.holdsPendingTravelDestination(base)).thenReturn(true);
+            assertFalse(base.isEmpty(campaign));
+        }
+
+        @Test
+        void freshBase_consultsPendingTravelQueue() {
+            // An otherwise-empty base must still fall through to the pending-travel check before reporting empty.
+            assertTrue(base.isEmpty(campaign));
+            verify(locationManager).holdsPendingTravelDestination(base);
+        }
+    }
+
+    @Nested
+    class PendingIdDrain {
+        @Test
+        void drainPendingPersonIds_returnsEmptyByDefault() {
+            List<UUID> ids = base.drainPendingPersonIds();
+            assertTrue(ids.isEmpty());
+        }
+
+        @Test
+        void drainPendingPersonIds_clearsOnSecondCall() {
+            // First drain may not be empty if populated during XML load, but second must be.
+            base.drainPendingPersonIds();
+            assertTrue(base.drainPendingPersonIds().isEmpty());
+        }
+
+        @Test
+        void drainPendingBaseWarehouseParts_returnsEmptyByDefault() {
+            assertTrue(base.drainPendingBaseWarehouseParts().isEmpty());
+        }
+
+        @Test
+        void drainPendingBaseWarehouseParts_clearsOnSecondCall() {
+            base.drainPendingBaseWarehouseParts();
+            assertTrue(base.drainPendingBaseWarehouseParts().isEmpty());
+        }
+
+        @Test
+        void drainPendingBaseHangarUnits_returnsEmptyByDefault() {
+            assertTrue(base.drainPendingBaseHangarUnits().isEmpty());
+        }
+
+        @Test
+        void drainPendingBaseHangarUnits_clearsOnSecondCall() {
+            base.drainPendingBaseHangarUnits();
+            assertTrue(base.drainPendingBaseHangarUnits().isEmpty());
+        }
+    }
+}
