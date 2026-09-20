@@ -170,6 +170,8 @@ public class BotForce implements IPlayerSettings {
         copy.getBehaviorSettings().setSelfPreservationIndex(this.getBehaviorSettings().getSelfPreservationIndex());
         copy.getBehaviorSettings().setHerdMentalityIndex(this.getBehaviorSettings().getHerdMentalityIndex());
         copy.getBehaviorSettings().setCombatPosture(this.getBehaviorSettings().getCombatPosture());
+        copy.getBehaviorSettings().setAllowSurrender(this.getBehaviorSettings().isAllowSurrender());
+        copy.getBehaviorSettings().setResolveIndex(this.getBehaviorSettings().getResolveIndex());
         // this bit of trickery seems to work to make a proper copy of the entity list
         copy.fixedEntityList = new ArrayList<>(this.getFixedEntityListDirect());
 
@@ -534,6 +536,8 @@ public class BotForce implements IPlayerSettings {
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "herdMentalityIndex", behaviorSettings.getHerdMentalityIndex());
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "braveryIndex", behaviorSettings.getBraveryIndex());
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "combatPosture", behaviorSettings.getCombatPosture().name());
+        MHQXMLUtility.writeSimpleXMLTag(pw, indent, "allowSurrender", behaviorSettings.isAllowSurrender());
+        MHQXMLUtility.writeSimpleXMLTag(pw, indent, "resolveIndex", behaviorSettings.getResolveIndex());
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "behaviorSettings");
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "botForce");
     }
@@ -617,6 +621,10 @@ public class BotForce implements IPlayerSettings {
                             // The string setter parses case-insensitively and falls back to AUTO,
                             // so campaigns saved before this tag existed load unchanged.
                             behaviorSettings.setCombatPosture(wn3.getTextContent());
+                        } else if (wn3.getNodeName().equalsIgnoreCase("allowSurrender")) {
+                            behaviorSettings.setAllowSurrender(Boolean.parseBoolean(wn3.getTextContent()));
+                        } else if (wn3.getNodeName().equalsIgnoreCase("resolveIndex")) {
+                            behaviorSettings.setResolveIndex(Integer.parseInt(wn3.getTextContent()));
                         }
                     }
                 }

@@ -48,6 +48,7 @@ class RulesetsOptionsModel {
     int opForLanceTypeMixed;
     int opForLanceTypeVehicles;
     boolean autoGenerateOpForCallSigns;
+    boolean enemyForcesMaySurrender;
     SkillLevel minimumCallsignSkillLevel;
     boolean useDropShips;
     boolean restrictScenariosToFleetCapability;
@@ -96,6 +97,7 @@ class RulesetsOptionsModel {
         opForLanceTypeMixed = options.get(CampaignOption.OP_FOR_LANCE_TYPE_MIXED);
         opForLanceTypeVehicles = options.get(CampaignOption.OP_FOR_LANCE_TYPE_VEHICLES);
         autoGenerateOpForCallSigns = options.get(CampaignOption.AUTO_GENERATE_OP_FOR_CALL_SIGNS);
+        enemyForcesMaySurrender = options.get(CampaignOption.ENEMY_FORCES_MAY_SURRENDER);
         minimumCallsignSkillLevel = options.get(CampaignOption.MINIMUM_CALLSIGN_SKILL_LEVEL);
         useDropShips = options.get(CampaignOption.USE_DROP_SHIPS);
         restrictScenariosToFleetCapability = options.get(CampaignOption.RESTRICT_SCENARIOS_TO_FLEET_CAPABILITY);
@@ -145,6 +147,7 @@ class RulesetsOptionsModel {
         options.set(CampaignOption.OP_FOR_LANCE_TYPE_MIXED, opForLanceTypeMixed);
         options.set(CampaignOption.OP_FOR_LANCE_TYPE_VEHICLES, opForLanceTypeVehicles);
         options.set(CampaignOption.AUTO_GENERATE_OP_FOR_CALL_SIGNS, autoGenerateOpForCallSigns);
+        options.set(CampaignOption.ENEMY_FORCES_MAY_SURRENDER, enemyForcesMaySurrender);
         options.set(CampaignOption.MINIMUM_CALLSIGN_SKILL_LEVEL, minimumCallsignSkillLevel);
         options.set(CampaignOption.USE_DROP_SHIPS, useDropShips);
         options.set(CampaignOption.RESTRICT_SCENARIOS_TO_FLEET_CAPABILITY, restrictScenariosToFleetCapability);

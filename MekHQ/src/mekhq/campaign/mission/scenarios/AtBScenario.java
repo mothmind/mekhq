@@ -882,7 +882,7 @@ public abstract class AtBScenario extends Scenario implements IAtBScenario {
                   true,
                   campaign));
 
-            BotForce bf = getEnemyBotForce(getContract(campaign), enemyHome, enemyHome, reinforcements);
+            BotForce bf = getEnemyBotForce(campaign, getContract(campaign), enemyHome, enemyHome, reinforcements);
             bf.setName(bf.getName() + " (Reinforcements)");
             addBotForce(bf, campaign);
         }
@@ -1115,7 +1115,7 @@ public abstract class AtBScenario extends Scenario implements IAtBScenario {
         if (combatTeam != null) {
             addEnemyForce(enemyEntities, combatTeam.getWeightClass(campaign), campaign);
         }
-        addBotForce(getEnemyBotForce(getContract(campaign), enemyHome, enemyHome, enemyEntities), campaign);
+        addBotForce(getEnemyBotForce(campaign, getContract(campaign), enemyHome, enemyHome, enemyEntities), campaign);
     }
 
     @Override
@@ -1673,7 +1673,7 @@ public abstract class AtBScenario extends Scenario implements IAtBScenario {
                   contract.getEnemyFaction().isPirate(),
                   contract.getEnemyFactionCode());
 
-            BotForce bf = getEnemyBotForce(getContract(campaign), enemyHome, enemyHome, aircraft);
+            BotForce bf = getEnemyBotForce(campaign, getContract(campaign), enemyHome, enemyHome, aircraft);
             bf.setName(bf.getName() + " (Air Support)");
             addBotForce(bf, campaign);
         }
@@ -1798,7 +1798,7 @@ public abstract class AtBScenario extends Scenario implements IAtBScenario {
                     en.setHidden(true);
                 }
             });
-            BotForce bf = getEnemyBotForce(getContract(campaign), Board.START_CENTER, enemyHome, scrubs);
+            BotForce bf = getEnemyBotForce(campaign, getContract(campaign), Board.START_CENTER, enemyHome, scrubs);
             bf.setName(bf.getName() + " (Local Forces)");
             addBotForce(bf, campaign);
         }
@@ -1849,18 +1849,22 @@ public abstract class AtBScenario extends Scenario implements IAtBScenario {
               contract.getEmployerColor());
     }
 
-    protected BotForce getEnemyBotForce(AbstractContract contract, int start, List<Entity> entities) {
-        return getEnemyBotForce(contract, start, start, entities);
+    protected BotForce getEnemyBotForce(Campaign campaign, AbstractContract contract, int start,
+          List<Entity> entities) {
+        return getEnemyBotForce(campaign, contract, start, start, entities);
     }
 
-    protected BotForce getEnemyBotForce(AbstractContract contract, int start, int home, List<Entity> entities) {
-        return new BotForce(contract.getEnemyDisplayName(),
+    protected BotForce getEnemyBotForce(Campaign campaign, AbstractContract contract, int start, int home,
+          List<Entity> entities) {
+        BotForce botForce = new BotForce(contract.getEnemyDisplayName(),
               2,
               start,
               home,
               entities,
               contract.getEnemyCamouflage().clone(),
               contract.getEnemyColour());
+        OpposingForceSurrender.apply(botForce, contract, campaign);
+        return botForce;
     }
 
     @Override

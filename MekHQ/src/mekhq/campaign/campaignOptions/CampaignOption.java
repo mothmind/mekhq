@@ -1043,6 +1043,8 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "autoResolveUseExperimentalPacarGui");
     public static final CampaignOption<Boolean> AUTO_GENERATE_OP_FOR_CALL_SIGNS =
           of(Boolean.class, true, "autoGenerateOpForCallSigns");
+    public static final CampaignOption<Boolean> ENEMY_FORCES_MAY_SURRENDER =
+          of(Boolean.class, true, "enemyForcesMaySurrender");
     public static final CampaignOption<SkillLevel> MINIMUM_CALLSIGN_SKILL_LEVEL =
           of(SkillLevel.class, SkillLevel.VETERAN, "minimumCallsignSkillLevel");
     public static final CampaignOption<Boolean> TRACK_FACTION_STANDING =

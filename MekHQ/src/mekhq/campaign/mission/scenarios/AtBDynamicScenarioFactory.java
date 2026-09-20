@@ -429,7 +429,7 @@ public class AtBDynamicScenarioFactory {
 
         BotForce generatedForce = new BotForce();
         generatedForce.setFixedEntityList(generatedEntities);
-        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract);
+        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract, campaign);
         scenario.addBotForce(generatedForce, forceTemplate, campaign);
 
         return (int) floor(generatedEntities.size() / 4.0);
@@ -462,7 +462,7 @@ public class AtBDynamicScenarioFactory {
 
         BotForce generatedForce = new BotForce();
         generatedForce.setFixedEntityList(generatedEntities);
-        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract);
+        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract, campaign);
         scenario.addBotForce(generatedForce, forceTemplate, campaign);
 
         return (int) floor(generatedEntities.size() / 4.0);
@@ -511,7 +511,7 @@ public class AtBDynamicScenarioFactory {
 
         BotForce generatedForce = new BotForce();
         generatedForce.setFixedEntityList(generatedEntities);
-        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract);
+        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract, campaign);
         scenario.addBotForce(generatedForce, forceTemplate, campaign);
 
         return generatedEntities.size() / 4;
@@ -1230,7 +1230,7 @@ public class AtBDynamicScenarioFactory {
         // Generate the force
         BotForce generatedForce = new BotForce();
         generatedForce.setFixedEntityList(generatedEntities);
-        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract);
+        setBotForceParameters(generatedForce, forceTemplate, forceAlignment, contract, campaign);
         if (unidentifiedThirdPartyPresent) {
             generatedForce.setCamouflage(pickRandomCamouflage(currentDate.getYear(), factionCode));
         }
@@ -4476,9 +4476,10 @@ public class AtBDynamicScenarioFactory {
      * @param generatedForce The force for which to set parameters
      * @param forceTemplate  The force template from which to set parameters
      * @param contract       The contract from which to set parameters
+     * @param campaign       The campaign, for options that shape opposing forces
      */
     private static void setBotForceParameters(BotForce generatedForce, ScenarioForceTemplate forceTemplate,
-          ForceAlignment forceAlignment, AbstractContract contract) {
+          ForceAlignment forceAlignment, AbstractContract contract, Campaign campaign) {
         if (forceAlignment == ForceAlignment.Allied) {
             generatedForce.setName(java.lang.String.format("%s %s",
                   contract.getEmployerDisplayName(),
@@ -4491,6 +4492,7 @@ public class AtBDynamicScenarioFactory {
                   forceTemplate.getForceName()));
             generatedForce.setColour(contract.getEnemyColour());
             generatedForce.setCamouflage(contract.getEnemyCamouflage().clone());
+            OpposingForceSurrender.apply(generatedForce, contract, campaign);
         } else {
             generatedForce.setName("Unknown Hostiles");
         }
