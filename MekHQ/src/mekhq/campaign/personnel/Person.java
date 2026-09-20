@@ -181,6 +181,7 @@ import mekhq.campaign.randomEvents.personalities.PersonalityQuirk;
 import mekhq.campaign.randomEvents.personalities.PersonalityTraitType;
 import mekhq.campaign.randomEvents.personalities.Reasoning;
 import mekhq.campaign.randomEvents.personalities.Social;
+import mekhq.campaign.randomEvents.prisoners.PrisonerRecruitmentManager;
 import mekhq.campaign.randomEvents.prisoners.PrisonerStatus;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
@@ -330,6 +331,13 @@ public class Person implements ILocatable {
     private Unit unit;
     private UUID doctorId;
     private List<Unit> techUnits;
+
+    // prisoner recruitment (see PrisonerRecruitmentManager)
+    private UUID recruiterId;
+    private int recruitmentMinutesThisWeek;
+    private LocalDate recruitmentBlockedUntil;
+    private LocalDate captureDate;
+    private List<UUID> recruitmentAssignments = new ArrayList<>();
 
     private int vocationalXPTimer;
 
@@ -579,6 +587,11 @@ public class Person implements ILocatable {
         setManeiDominiRankDirect(ManeiDominiRank.NONE);
         nTasks = 0;
         doctorId = null;
+        recruiterId = null;
+        recruitmentMinutesThisWeek = 0;
+        recruitmentBlockedUntil = null;
+        captureDate = null;
+        recruitmentAssignments = new ArrayList<>();
         salary = Money.of(-1);
         totalEarnings = Money.of(0);
         status = PersonnelStatus.ACTIVE;
@@ -813,6 +826,7 @@ public class Person implements ILocatable {
         // used during recruitment
 
         final boolean freed = !getPrisonerStatus().isFree();
+        final boolean wasCurrentPrisoner = getPrisonerStatus().isCurrentPrisoner();
         final boolean isPrisoner = prisonerStatus.isCurrentPrisoner();
         setPrisonerStatusDirect(prisonerStatus);
 
@@ -821,6 +835,9 @@ public class Person implements ILocatable {
             case PRISONER:
             case PRISONER_DEFECTOR:
             case BECOMING_BONDSMAN:
+                if (isPrisoner && !wasCurrentPrisoner) {
+                    setCaptureDate(campaign.getLocalDate());
+                }
                 setRecruitment(null);
                 setLastRankChangeDate(null);
                 if (log) {
@@ -856,6 +873,11 @@ public class Person implements ILocatable {
             if (getUnit() != null) {
                 getUnit().remove(this, true);
             }
+        }
+
+        // Leaving prisoner status ends any recruitment effort on this person; entering it ends any they were running.
+        if (isPrisoner != wasCurrentPrisoner) {
+            clearRecruitmentLinks(campaign);
         }
 
         MekHQ.triggerEvent(new PersonChangedEvent(this));
@@ -1861,6 +1883,9 @@ public class Person implements ILocatable {
 
             // Clear Tech Setup
             removeAllTechJobs(campaign);
+
+            // Clear prisoner recruitment links in both directions
+            clearRecruitmentLinks(campaign);
         }
 
         // release the commander flag.
@@ -3755,6 +3780,30 @@ public class Person implements ILocatable {
                 MHQXMLUtility.writeSimpleXMLTag(pw, indent, "prisonerStatus", prisonerStatus.name());
             }
 
+            if (recruiterId != null) {
+                MHQXMLUtility.writeSimpleXMLTag(pw, indent, "recruiterId", recruiterId);
+            }
+
+            if (recruitmentMinutesThisWeek > 0) {
+                MHQXMLUtility.writeSimpleXMLTag(pw, indent, "recruitmentMinutesThisWeek", recruitmentMinutesThisWeek);
+            }
+
+            if (recruitmentBlockedUntil != null) {
+                MHQXMLUtility.writeSimpleXMLTag(pw, indent, "recruitmentBlockedUntil", recruitmentBlockedUntil);
+            }
+
+            if (captureDate != null) {
+                MHQXMLUtility.writeSimpleXMLTag(pw, indent, "captureDate", captureDate);
+            }
+
+            if (!recruitmentAssignments.isEmpty()) {
+                MHQXMLUtility.writeSimpleXMLOpenTag(pw, indent++, "recruitmentAssignments");
+                for (UUID prisonerId : recruitmentAssignments) {
+                    MHQXMLUtility.writeSimpleXMLTag(pw, indent, "id", prisonerId);
+                }
+                MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "recruitmentAssignments");
+            }
+
             if (hits > 0) {
                 MHQXMLUtility.writeSimpleXMLTag(pw, indent, "hits", hits);
             }
@@ -4367,6 +4416,31 @@ public class Person implements ILocatable {
                     person.setStatus(PersonnelStatus.fromString(wn2.getTextContent().trim()));
                 } else if (nodeName.equalsIgnoreCase("prisonerStatus")) {
                     person.prisonerStatus = PrisonerStatus.parseFromString(wn2.getTextContent().trim());
+                } else if (nodeName.equalsIgnoreCase("recruiterId")) {
+                    if (!wn2.getTextContent().equals("null")) {
+                        person.recruiterId = UUID.fromString(wn2.getTextContent().trim());
+                    }
+                } else if (nodeName.equalsIgnoreCase("recruitmentMinutesThisWeek")) {
+                    person.recruitmentMinutesThisWeek = MathUtility.parseInt(wn2.getTextContent().trim());
+                } else if (nodeName.equalsIgnoreCase("recruitmentBlockedUntil")) {
+                    person.recruitmentBlockedUntil = MHQXMLUtility.parseDate(wn2.getTextContent().trim());
+                } else if (nodeName.equalsIgnoreCase("captureDate")) {
+                    person.captureDate = MHQXMLUtility.parseDate(wn2.getTextContent().trim());
+                } else if (nodeName.equalsIgnoreCase("recruitmentAssignments")) {
+                    NodeList nl2 = wn2.getChildNodes();
+                    for (int y = 0; y < nl2.getLength(); y++) {
+                        Node wn3 = nl2.item(y);
+                        if (wn3.getNodeType() != Node.ELEMENT_NODE) {
+                            continue;
+                        }
+
+                        if (!wn3.getNodeName().equalsIgnoreCase("id")) {
+                            LOGGER.error("(recruitmentAssignments) Unknown node type not loaded: {}",
+                                  wn3.getNodeName());
+                            continue;
+                        }
+                        person.addRecruitmentAssignment(UUID.fromString(wn3.getTextContent().trim()));
+                    }
                 } else if (nodeName.equalsIgnoreCase("salary")) {
                     person.salary = Money.fromXmlString(wn2.getTextContent().trim());
                 } else if (nodeName.equalsIgnoreCase("totalEarnings")) {
@@ -6979,6 +7053,104 @@ public class Person implements ILocatable {
     public List<Unit> getTechUnits() {
         return Collections.unmodifiableList(techUnits);
     }
+
+    // region Prisoner Recruitment
+
+    /**
+     * @return the id of the person working on recruiting this prisoner, or {@code null} if nobody is
+     */
+    public @Nullable UUID getRecruiterId() {
+        return recruiterId;
+    }
+
+    public void setRecruiterId(final @Nullable UUID recruiterId) {
+        this.recruiterId = recruiterId;
+    }
+
+    /**
+     * @return the minutes a recruiter has spent on this prisoner since the last weekly recruitment check
+     */
+    public int getRecruitmentMinutesThisWeek() {
+        return recruitmentMinutesThisWeek;
+    }
+
+    public void setRecruitmentMinutesThisWeek(final int minutes) {
+        recruitmentMinutesThisWeek = Math.max(0, minutes);
+    }
+
+    public void addRecruitmentMinutesThisWeek(final int minutes) {
+        setRecruitmentMinutesThisWeek(recruitmentMinutesThisWeek + minutes);
+    }
+
+    /**
+     * @return the last day this prisoner refuses to talk to recruiters, or {@code null} if they are not refusing
+     */
+    public @Nullable LocalDate getRecruitmentBlockedUntil() {
+        return recruitmentBlockedUntil;
+    }
+
+    public void setRecruitmentBlockedUntil(final @Nullable LocalDate recruitmentBlockedUntil) {
+        this.recruitmentBlockedUntil = recruitmentBlockedUntil;
+    }
+
+    /**
+     * @param today the current campaign date
+     *
+     * @return true if this prisoner is currently refusing contact with recruiters
+     */
+    public boolean isRecruitmentBlocked(final LocalDate today) {
+        return (recruitmentBlockedUntil != null) && !today.isAfter(recruitmentBlockedUntil);
+    }
+
+    /**
+     * @return the date this person most recently became a prisoner, or {@code null} if unknown (older saves)
+     */
+    public @Nullable LocalDate getCaptureDate() {
+        return captureDate;
+    }
+
+    public void setCaptureDate(final @Nullable LocalDate captureDate) {
+        this.captureDate = captureDate;
+    }
+
+    /**
+     * @return the ids of the prisoners this person is working on recruiting, highest priority first
+     */
+    public List<UUID> getRecruitmentAssignments() {
+        return Collections.unmodifiableList(recruitmentAssignments);
+    }
+
+    public void addRecruitmentAssignment(final UUID prisonerId) {
+        if (!recruitmentAssignments.contains(prisonerId)) {
+            recruitmentAssignments.add(prisonerId);
+        }
+    }
+
+    public void removeRecruitmentAssignment(final UUID prisonerId) {
+        recruitmentAssignments.remove(prisonerId);
+    }
+
+    public void moveRecruitmentAssignmentToTop(final UUID prisonerId) {
+        if (recruitmentAssignments.remove(prisonerId)) {
+            recruitmentAssignments.addFirst(prisonerId);
+        }
+    }
+
+    public void clearRecruitmentAssignments() {
+        recruitmentAssignments.clear();
+    }
+
+    /**
+     * Drops every prisoner recruitment link touching this person, both as a prisoner being worked on and as a
+     * recruiter working on others.
+     *
+     * @param campaign the campaign the person is a part of
+     */
+    public void clearRecruitmentLinks(final Campaign campaign) {
+        PrisonerRecruitmentManager.unlinkAll(campaign, this);
+    }
+
+    // endregion Prisoner Recruitment
 
     // region Chassis Familiarity
 

@@ -80,6 +80,7 @@ class PrisonersAndDependentsPage {
     private MMComboBox<PrisonerCaptureStyle> comboPrisonerCaptureStyle;
     private JCheckBox chkResetTemporaryPrisonerCapacity;
     private JCheckBox chkUseFunctionalEscapeArtist;
+    private JCheckBox chkUsePrisonerRecruitment;
     private JCheckBox chkUseRandomDependentAddition;
     private JCheckBox chkUseRandomDependentRemoval;
     private JLabel lblDependentProfessionDieSize;
@@ -157,6 +158,10 @@ class PrisonersAndDependentsPage {
                 getMetadata(LEGACY_RULE_BEFORE_METADATA, CampaignOptionFlag.CUSTOM_SYSTEM));
         chkUseFunctionalEscapeArtist.addMouseListener(createTipPanelUpdater("UseFunctionalEscapeArtist"));
 
+        chkUsePrisonerRecruitment = new CampaignOptionsCheckBox("UsePrisonerRecruitment",
+                getMetadata(LEGACY_RULE_BEFORE_METADATA, CampaignOptionFlag.CUSTOM_SYSTEM));
+        chkUsePrisonerRecruitment.addMouseListener(createTipPanelUpdater("UsePrisonerRecruitment"));
+
         // Layout the Panel
         final SettingsFormPanel panel = new SettingsFormPanel("PrisonersPanel",
                 LABEL_COLUMN_WIDTH,
@@ -164,7 +169,8 @@ class PrisonersAndDependentsPage {
         panel.addRow(lblPrisonerCaptureStyle, comboPrisonerCaptureStyle);
         panel.addCheckBoxGrid(2,
                 chkUseFunctionalEscapeArtist,
-                chkResetTemporaryPrisonerCapacity);
+                chkResetTemporaryPrisonerCapacity,
+                chkUsePrisonerRecruitment);
 
         return panel;
     }
@@ -222,6 +228,7 @@ class PrisonersAndDependentsPage {
 
         comboPrisonerCaptureStyle.setSelectedItem(model.prisonerCaptureStyle);
         chkUseFunctionalEscapeArtist.setSelected(model.useFunctionalEscapeArtist);
+        chkUsePrisonerRecruitment.setSelected(model.usePrisonerRecruitment);
         chkResetTemporaryPrisonerCapacity.setSelected(model.resetTemporaryPrisonerCapacity);
         chkUseRandomDependentAddition.setSelected(model.useRandomDependentAddition);
         chkUseRandomDependentRemoval.setSelected(model.useRandomDependentRemoval);
@@ -242,6 +249,7 @@ class PrisonersAndDependentsPage {
 
         model.prisonerCaptureStyle = comboPrisonerCaptureStyle.getSelectedItem();
         model.useFunctionalEscapeArtist = chkUseFunctionalEscapeArtist.isSelected();
+        model.usePrisonerRecruitment = chkUsePrisonerRecruitment.isSelected();
         model.resetTemporaryPrisonerCapacity = chkResetTemporaryPrisonerCapacity.isSelected();
         model.useRandomDependentAddition = chkUseRandomDependentAddition.isSelected();
         model.useRandomDependentRemoval = chkUseRandomDependentRemoval.isSelected();

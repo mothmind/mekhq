@@ -126,6 +126,7 @@ class PersonnelOptionsModel {
     int mashTheatreCapacity;
     PrisonerCaptureStyle prisonerCaptureStyle;
     boolean useFunctionalEscapeArtist;
+    boolean usePrisonerRecruitment;
     boolean resetTemporaryPrisonerCapacity;
     boolean useRandomDependentAddition;
     boolean useRandomDependentRemoval;
@@ -232,6 +233,7 @@ class PersonnelOptionsModel {
         mashTheatreCapacity = options.get(CampaignOption.MASH_THEATRE_CAPACITY);
         prisonerCaptureStyle = options.get(CampaignOption.PRISONER_CAPTURE_STYLE);
         useFunctionalEscapeArtist = options.get(CampaignOption.USE_FUNCTIONAL_ESCAPE_ARTIST);
+        usePrisonerRecruitment = options.get(CampaignOption.USE_PRISONER_RECRUITMENT);
         resetTemporaryPrisonerCapacity = false;
         useRandomDependentAddition = options.get(CampaignOption.USE_RANDOM_DEPENDENT_ADDITION);
         useRandomDependentRemoval = options.get(CampaignOption.USE_RANDOM_DEPENDENT_REMOVAL);
@@ -340,6 +342,7 @@ class PersonnelOptionsModel {
         options.set(CampaignOption.MASH_THEATRE_CAPACITY, mashTheatreCapacity);
         options.set(CampaignOption.PRISONER_CAPTURE_STYLE, prisonerCaptureStyle);
         options.set(CampaignOption.USE_FUNCTIONAL_ESCAPE_ARTIST, useFunctionalEscapeArtist);
+        options.set(CampaignOption.USE_PRISONER_RECRUITMENT, usePrisonerRecruitment);
         if (resetTemporaryPrisonerCapacity) {
             campaign.getPlayerForce().setTemporaryPrisonerCapacity(DEFAULT_TEMPORARY_CAPACITY);
         }

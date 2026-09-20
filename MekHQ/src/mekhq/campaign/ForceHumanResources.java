@@ -2591,6 +2591,7 @@ public class ForceHumanResources {
         person.setDoctorId(null, 0);
         removeAllPatientsFor(person, campaign.getCampaignOptions());
         person.removeAllTechJobs(campaign);
+        person.clearRecruitmentLinks(campaign);
         campaign.removeKillsFor(person.getId());
         getRetirementDefectionTracker().removePerson(person);
         if (log) {

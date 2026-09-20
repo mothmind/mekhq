@@ -153,6 +153,7 @@ import mekhq.campaign.personnel.skills.Skill;
 import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 import mekhq.campaign.randomEvents.personalities.PersonalityController;
+import mekhq.campaign.randomEvents.prisoners.PrisonerRecruitmentManager;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.PlanetarySystem;
@@ -3539,6 +3540,26 @@ public class PersonViewPanel extends JScrollablePanel {
             lblLoyalty.setToolTipText(wordWrap(resourceMap.getString("lblLoyalty.tooltip")));
         }
 
+        JLabel lblRecruiter = null;
+        if (campaignOptions.get(CampaignOption.USE_PRISONER_RECRUITMENT)) {
+            if (person.getPrisonerStatus().isCurrentPrisoner() && (person.getRecruiterId() != null)) {
+                Person recruiter = campaign.getPlayerForce().getHumanResources().getPerson(person.getRecruiterId());
+                if (recruiter != null) {
+                    String value = String.format(resourceMap.getString("lblRecruiter.value"),
+                          recruiter.getFullTitle(), person.getRecruitmentMinutesThisWeek() / 60.0);
+                    lblRecruiter = new JLabel(String.format(resourceMap.getString("format.traitValue"),
+                          resourceMap.getString("lblRecruiter.text"), value, ""));
+                    lblRecruiter.setToolTipText(wordWrap(resourceMap.getString("lblRecruiter.tooltip")));
+                }
+            } else if (!person.getRecruitmentAssignments().isEmpty()) {
+                String value = person.getRecruitmentAssignments().size() + "/" +
+                                     PrisonerRecruitmentManager.getMaxAssignments(person);
+                lblRecruiter = new JLabel(String.format(resourceMap.getString("format.traitValue"),
+                      resourceMap.getString("lblRecruiting.text"), value, ""));
+                lblRecruiter.setToolTipText(wordWrap(resourceMap.getString("lblRecruiting.tooltip")));
+            }
+        }
+
         JLabel lblFatigue = null;
         int baseFatigue = person.getAdjustedFatigue();
         int effectiveFatigue = getEffectiveFatigue(person, campaign);
@@ -3651,6 +3672,9 @@ public class PersonViewPanel extends JScrollablePanel {
         }
         if (lblLoyalty != null) {
             components.add(lblLoyalty);
+        }
+        if (lblRecruiter != null) {
+            components.add(lblRecruiter);
         }
         if (lblFatigue != null) {
             components.add(lblFatigue);

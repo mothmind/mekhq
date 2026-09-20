@@ -71,6 +71,7 @@ import static mekhq.campaign.personnel.medical.advancedMedical.InjuryTypes.REPLA
 import static mekhq.campaign.personnel.skills.Attributes.MINIMUM_ATTRIBUTE_SCORE;
 import static mekhq.campaign.personnel.skills.Attributes.MINIMUM_EDGE_SCORE;
 import static mekhq.campaign.personnel.skills.SkillType.S_ARTILLERY;
+import static mekhq.campaign.personnel.skills.SkillType.S_NEGOTIATION;
 import static mekhq.campaign.personnel.skills.SkillType.S_SURGERY;
 import static mekhq.campaign.personnel.skills.SkillType.getType;
 import static mekhq.campaign.personnel.skills.enums.SkillAttribute.WILLPOWER;
@@ -177,6 +178,7 @@ import mekhq.campaign.personnel.skills.TechnicianSkills;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 import mekhq.campaign.personnel.skills.enums.SkillSubType;
 import mekhq.campaign.randomEvents.personalities.PersonalityController;
+import mekhq.campaign.randomEvents.prisoners.PrisonerRecruitmentManager;
 import mekhq.campaign.randomEvents.prisoners.PrisonerStatus;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
@@ -295,6 +297,9 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
     private static final String CMD_EXECUTE = "EXECUTE";
     private static final String CMD_JETTISON = "JETTISON";
     private static final String CMD_RECRUIT = "RECRUIT";
+    private static final String CMD_ASSIGN_RECRUITER = "ASSIGN_RECRUITER";
+    private static final String CMD_UNASSIGN_RECRUITER = "UNASSIGN_RECRUITER";
+    private static final String CMD_RECRUITER_QUEUE_TOP = "RECRUITER_QUEUE_TOP";
     private static final String CMD_ABTAKHA = "ABTAKHA";
     private static final String CMD_ADOPTION = "ADOPTION";
     private static final String CMD_ADD_PARENT = "CMD_ADD_PARENT";
@@ -1087,6 +1092,29 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
                         person.setPrisonerStatus(getCampaign(), PrisonerStatus.FREE, true);
                     }
                 }
+                break;
+            }
+            case CMD_ASSIGN_RECRUITER: {
+                Campaign campaign = getCampaign();
+                Person recruiter = campaign.getPlayerForce().getHumanResources().getPerson(UUID.fromString(data[1]));
+                if (recruiter == null) {
+                    LOGGER.error("Could not find recruiter with UUID {}. No changes will be made.", data[1]);
+                    return;
+                }
+
+                for (Person prisoner : people) {
+                    PrisonerRecruitmentManager.assign(campaign, recruiter, prisoner);
+                }
+                break;
+            }
+            case CMD_UNASSIGN_RECRUITER: {
+                for (Person prisoner : people) {
+                    PrisonerRecruitmentManager.unassign(getCampaign(), prisoner);
+                }
+                break;
+            }
+            case CMD_RECRUITER_QUEUE_TOP: {
+                PrisonerRecruitmentManager.moveToTop(getCampaign(), selectedPerson);
                 break;
             }
             case CMD_ADOPTION: {
@@ -2506,6 +2534,11 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
 
             if (StaticChecks.areAnyWillingToDefect(selected)) {
                 popup.add(newMenuItem(resources.getString("recruit.text"), CMD_RECRUIT));
+            }
+
+            if (getCampaignOptions().get(CampaignOption.USE_PRISONER_RECRUITMENT) &&
+                      StaticChecks.areAllPrisoners(selected)) {
+                addRecruiterMenuItems(popup, selected, oneSelected ? person : null);
             }
 
             if ((getCampaign().getPlayerForce().isClanForce()) && (StaticChecks.areAnyBondsmen(selected))) {
@@ -5978,6 +6011,61 @@ public class PersonnelTableMouseAdapter extends JPopupMenuAdapter {
         menuItem.setActionCommand(makeCommand(CMD_ADD_AWARD, award.getSet(), award.getName()));
         menuItem.addActionListener(this);
         return menuItem;
+    }
+
+    /**
+     * Adds the prisoner-recruitment items for a selection of prisoners: a submenu of eligible recruiters, an unassign
+     * item when any selected prisoner has a recruiter, and a queue-priority item for a single selection.
+     */
+    private void addRecruiterMenuItems(JPopupMenu popup, Person[] selected, @Nullable Person single) {
+        Campaign campaign = getCampaign();
+        LocalDate today = campaign.getLocalDate();
+
+        boolean allBlocked = Arrays.stream(selected).allMatch(prisoner -> prisoner.isRecruitmentBlocked(today));
+        List<Person> alreadyWilling = Arrays.stream(selected)
+                                            .filter(prisoner -> prisoner.getPrisonerStatus().isPrisonerDefector())
+                                            .toList();
+
+        JScrollableMenu recruiterMenu = new JScrollableMenu("assignRecruiter",
+              resources.getString("assignRecruiter.text"));
+        for (Person recruiter : PrisonerRecruitmentManager.getEligibleRecruiters(campaign)) {
+            int load = PrisonerRecruitmentManager.getCurrentLoad(recruiter);
+            int max = PrisonerRecruitmentManager.getMaxAssignments(recruiter);
+            String skill = recruiter.getSkill(S_NEGOTIATION).toString(recruiter.getSkillModifierData());
+
+            JMenuItem item = new JMenuItem(String.format(resources.getString("recruiterOption.description"),
+                  recruiter.getFullTitle(), skill, load, max));
+            item.setActionCommand(makeCommand(CMD_ASSIGN_RECRUITER, recruiter.getId().toString()));
+            item.addActionListener(this);
+
+            long newAssignments = Arrays.stream(selected)
+                                        .filter(prisoner -> !recruiter.getId().equals(prisoner.getRecruiterId()))
+                                        .count();
+            item.setEnabled(load + newAssignments <= max);
+            recruiterMenu.add(item);
+        }
+
+        if (allBlocked) {
+            recruiterMenu.setEnabled(false);
+            LocalDate latest = Arrays.stream(selected)
+                                     .map(Person::getRecruitmentBlockedUntil)
+                                     .filter(Objects::nonNull)
+                                     .max(Comparator.naturalOrder())
+                                     .orElse(today);
+            recruiterMenu.setToolTipText(String.format(resources.getString("recruiterBlocked.tooltip"),
+                  MekHQ.getMHQOptions().getDisplayFormattedDate(latest)));
+        } else if (alreadyWilling.size() == selected.length) {
+            recruiterMenu.setEnabled(false);
+        }
+        JMenuHelpers.addMenuIfNonEmpty(popup, recruiterMenu);
+
+        if (Arrays.stream(selected).anyMatch(prisoner -> prisoner.getRecruiterId() != null)) {
+            popup.add(newMenuItem(resources.getString("unassignRecruiter.text"), CMD_UNASSIGN_RECRUITER));
+        }
+
+        if ((single != null) && (single.getRecruiterId() != null)) {
+            popup.add(newMenuItem(resources.getString("moveToTopOfRecruiterQueue.text"), CMD_RECRUITER_QUEUE_TOP));
+        }
     }
 
     private JMenuItem newMenuItem(String text, String command) {

@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -216,6 +217,15 @@ public enum PersonnelTableModelColumn implements MHQTableColumn {
           skillModelExtractor(SkillType.S_ADMIN), PersonnelTableModelColumn::skillToText),
     NEGOTIATION("Column.NEGOTIATION.title", Comparators.SKILL_COMPARATOR,
           skillModelExtractor(SkillType.S_NEGOTIATION), PersonnelTableModelColumn::skillToText),
+    RECRUITER("Column.RECRUITER.title", Comparators.NATURAL_ORDER_STRING_COMPARATOR,
+          (person, campaign) -> {
+              UUID recruiterId = person.getRecruiterId();
+              if (recruiterId == null) {
+                  return "";
+              }
+              Person recruiter = campaign.getPlayerForce().getHumanResources().getPerson(recruiterId);
+              return (recruiter == null) ? "" : recruiter.getFullTitle();
+          }),
     REMAINING_TECH_MINUTES("Column.REMAINING_TECH_MINUTES.title", Comparators.INT_COMPARATOR,
           person -> person.isTechExpanded() ? person.getMinutesLeft() : 0, Object::toString),
     MAINTENANCE_TECH_MINUTES("Column.MAINTENANCE_TECH_MINUTES.title", Comparators.INT_COMPARATOR,

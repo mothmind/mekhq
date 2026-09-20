@@ -187,6 +187,7 @@ import mekhq.campaign.randomEvents.other.GrayMonday;
 import mekhq.campaign.randomEvents.other.RiotScenario;
 import mekhq.campaign.randomEvents.other.VoiceOfKerensky;
 import mekhq.campaign.randomEvents.prisoners.PrisonerEventManager;
+import mekhq.campaign.randomEvents.prisoners.PrisonerRecruitmentManager;
 import mekhq.campaign.randomEvents.prisoners.RecoverMIAPersonnel;
 import mekhq.campaign.reputation.chaosReputation.ChaosReputation;
 import mekhq.campaign.unit.Maintenance;
@@ -487,6 +488,10 @@ public class CampaignNewDayManager {
         if (campaignOptions.get(CampaignOption.ENABLE_AUTO_AWARDS) && isFirstOfMonth) {
             AutoAwardsController autoAwardsController = new AutoAwardsController();
             autoAwardsController.ManualController(campaign, false);
+        }
+
+        if (campaignOptions.get(CampaignOption.USE_PRISONER_RECRUITMENT)) {
+            PrisonerRecruitmentManager.processNewDay(campaign, isMonday);
         }
 
         // Prisoner events can occur on Monday or the 1st of the month depending on the

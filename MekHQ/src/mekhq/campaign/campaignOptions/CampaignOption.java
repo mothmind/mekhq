@@ -418,6 +418,8 @@ public final class CampaignOption<T> {
           of(PrisonerCaptureStyle.class, PrisonerCaptureStyle.NONE, "prisonerCaptureStyle");
     public static final CampaignOption<Boolean> USE_FUNCTIONAL_ESCAPE_ARTIST =
           of(Boolean.class, false, "useFunctionalEscapeArtist");
+    public static final CampaignOption<Boolean> USE_PRISONER_RECRUITMENT =
+          of(Boolean.class, false, "usePrisonerRecruitment");
     public static final CampaignOption<Boolean> USE_RANDOM_DEPENDENT_ADDITION =
           of(Boolean.class, false, "useRandomDependentAddition");
     public static final CampaignOption<Boolean> USE_RANDOM_DEPENDENT_REMOVAL =
