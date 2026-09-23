@@ -52,6 +52,9 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ResourceBundle;
+import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
+import megamek.common.OrbitalSupport;
+import megamek.common.OrbitalBay;
 import java.util.UUID;
 import java.util.Vector;
 import javax.swing.*;
@@ -459,6 +462,55 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
                 panStats.add(new JLabel(loot.getShortDescription()), gridBagConstraints);
             }
         }
+
+        addOrbitalSupportWarning(gridBagConstraints);
+    }
+
+    /**
+     * Warns that orbital bombardment is in play for this scenario, and which sides can call it.
+     *
+     * <p>A blast covers the target hex and four rings around it and does not distinguish friend from foe, so a
+     * commander needs to know before deployment rather than when the first strike lands. The player's own package is
+     * read from the hangar exactly as it will be at launch; the opposing force is reported as a chance rather than a
+     * certainty, because that roll happens per scenario when the game starts.</p>
+     */
+    private void addOrbitalSupportWarning(GridBagConstraints gridBagConstraints) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
+            return;
+        }
+
+        OrbitalSupport playerSupport = OrbitalSupportCalculator.forCampaign(campaign);
+        int enemyChance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+
+        List<String> sides = new ArrayList<>();
+        if (playerSupport.isAvailable()) {
+            int heaviest = playerSupport.heaviestAvailableBay().map(OrbitalBay::damage).orElse(0);
+            sides.add(String.format("you (%s, %d bay(s), heaviest %d damage, gunnery %d)",
+                  playerSupport.shipName(),
+                  playerSupport.strikesRemaining(),
+                  heaviest,
+                  playerSupport.gunnery()));
+        }
+        if (enemyChance > 0) {
+            sides.add(String.format("the opposing force (%d%% chance)", enemyChance));
+        }
+
+        if (sides.isEmpty()) {
+            return;
+        }
+
+        gridBagConstraints.gridx = 0;
+        gridBagConstraints.gridy++;
+        gridBagConstraints.gridwidth = 2;
+        gridBagConstraints.weightx = 1.0;
+        gridBagConstraints.weighty = 0.0;
+        gridBagConstraints.insets = new Insets(10, 0, 5, 0);
+        gridBagConstraints.fill = GridBagConstraints.NONE;
+        gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
+        panStats.add(new JLabel("<html><b>Orbital Bombardment available to:</b> "
+              + String.join(", ", sides)
+              + "<br><i>The blast covers the target hex and 4 hexes around it, and hits your units too.</i></html>"),
+              gridBagConstraints);
     }
 
     private int addForceTrees(int row) {

@@ -973,6 +973,18 @@ public final class CampaignOption<T> {
           of(Double.class, 1.0, "stratConSectorSizeMultiplier");
     public static final CampaignOption<Boolean> NO_SEED_FORCES =
           of(Boolean.class, false, "noSeedForces");
+    /**
+     * Lets a JumpShip or WarShip in the force support a surface battle with its naval weapons without being deployed
+     * to it. Requires the matching MegaMek rule to be switched on for the scenario, which MekHQ does for you.
+     */
+    public static final CampaignOption<Boolean> USE_ORBITAL_BOMBARDMENT_SUPPORT =
+          of(Boolean.class, false, "useOrbitalBombardmentSupport");
+    /**
+     * The percentage chance, per scenario, that the opposing force also has a ship overhead willing to fire. Zero
+     * keeps orbital support a player-only advantage.
+     */
+    public static final CampaignOption<Integer> ORBITAL_BOMBARDMENT_ENEMY_CHANCE =
+          of(Integer.class, 0, "orbitalBombardmentEnemyChance");
     public static final CampaignOption<SkillLevel> SKILL_LEVEL =
           of(SkillLevel.class, SkillLevel.REGULAR, "skillLevel");
     public static final CampaignOption<BoardScalingType> BOARD_SCALING_TYPE =

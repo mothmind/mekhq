@@ -59,15 +59,21 @@ import megamek.client.ui.clientGUI.ClientGUI;
 import megamek.client.ui.clientGUI.CommanderGUI;
 import megamek.client.ui.clientGUI.ILocalBots;
 import megamek.common.Player;
+import megamek.common.OrbitalBay;
+import megamek.common.OrbitalSupport;
+import megamek.common.compute.Compute;
 import megamek.common.annotations.Nullable;
 import megamek.common.equipment.Minefield;
 import megamek.common.loaders.MapSettings;
+import megamek.common.options.IOption;
+import megamek.common.options.OptionsConstants;
 import megamek.common.units.Entity;
 import megamek.common.units.IAero;
 import megamek.common.units.Infantry;
 import megamek.common.units.UnitType;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConGMs;
 import mekhq.campaign.enums.CampaignTransportType;
 import mekhq.campaign.force.CombatTeam;
@@ -78,6 +84,7 @@ import mekhq.campaign.mission.scenarios.AtBDynamicScenarioFactory;
 import mekhq.campaign.mission.scenarios.AtBScenario;
 import mekhq.campaign.mission.scenarios.BotForce;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.ITransportAssignment;
 import mekhq.campaign.unit.Unit;
@@ -99,6 +106,18 @@ public class AtBGameThread extends GameThread {
     private final AtBScenario scenario;
     private final BehaviorSettings autoResolveBehaviorSettings;
     private final boolean minimalGUI;
+
+    /** The team the player's own force fights on; every other team is hostile. */
+    private static final int PLAYER_TEAM = 1;
+
+    /**
+     * Whether the opposing force has a ship overhead this scenario. Rolled once, lazily, so that a battle with
+     * several hostile bot forces does not get a fresh chance for each of them.
+     */
+    private Boolean enemyOrbitalSupportRolled = null;
+
+    /** Set once the enemy's orbital support has been handed to a bot, so only one hostile force receives it. */
+    private boolean enemyOrbitalSupportAssigned = false;
 
     /**
      * Constructor for AtBGameThread
@@ -180,6 +199,7 @@ public class AtBGameThread extends GameThread {
 
                 if (started) {
                     client.getGame().getOptions().loadOptions();
+                    syncOrbitalBombardmentRule();
                     client.sendGameOptions(password, app.getCampaign().getGameOptionsVector());
                     Thread.sleep(MekHQ.getMHQOptions().getStartGameDelay());
                 }
@@ -346,6 +366,8 @@ public class AtBGameThread extends GameThread {
                 }
                 logPlayerDeployment(entities);
                 client.sendAddEntity(entities);
+                // Must precede sendPlayerInfo: the support rides along inside the player object being transmitted.
+                assignPlayerOrbitalSupport();
                 client.sendPlayerInfo();
                 var botClients = new ArrayList<BotClient>();
                 var botName = new HashSet<String>();
@@ -837,6 +859,9 @@ public class AtBGameThread extends GameThread {
                 botClient.getLocalPlayer().setCamouflage(botForce.getCamouflage().clone());
                 botClient.getLocalPlayer().setColour(botForce.getColour());
 
+                // Must precede sendPlayerInfo: the support rides along inside the player object being transmitted.
+                assignEnemyOrbitalSupport(botClient, botForce);
+
                 botClient.sendPlayerInfo();
 
                 List<Entity> entities = setupBotEntities(botClient, botForce, scenario);
@@ -846,6 +871,83 @@ public class AtBGameThread extends GameThread {
             Sentry.captureException(ex);
             LOGGER.error("", ex);
         }
+    }
+
+    /**
+     * Switches MegaMek's orbital bombardment rule to match the campaign option, so the server and the campaign always
+     * agree. Without this a player could enable support in MekHQ and then find every strike refused by a server that
+     * was never told the rule was in play.
+     */
+    private void syncOrbitalBombardmentRule() {
+        IOption rule = campaign.getGameOptions().getOption(OptionsConstants.ADVANCED_ORBITAL_BOMBARDMENT_SUPPORT);
+        if (rule != null) {
+            rule.setValue(campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT));
+        }
+    }
+
+    /**
+     * Grants the player whatever orbital fire support their own hangar can provide. A force with no naval-armed
+     * JumpShip or WarShip on hand simply gets nothing, which is the same as the rule being switched off.
+     */
+    private void assignPlayerOrbitalSupport() {
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
+            return;
+        }
+
+        Player player = client.getLocalPlayer();
+        if (player == null) {
+            return;
+        }
+
+        OrbitalSupport support = OrbitalSupportCalculator.forCampaign(campaign);
+        player.setOrbitalSupport(support);
+
+        if (support.isAvailable()) {
+            LOGGER.info("{} is providing orbital support: {} bay(s), heaviest {} damage, blast radius {}.",
+                  support.shipName(),
+                  support.strikesRemaining(),
+                  support.heaviestAvailableBay().map(OrbitalBay::damage).orElse(0),
+                  OrbitalSupport.BLAST_RADIUS);
+        }
+    }
+
+    /**
+     * Gives the opposing force a ship of its own overhead, on a single roll against the campaign's configured chance.
+     *
+     * <p>The roll happens once per scenario and the result goes to the first hostile bot force, so a battle split
+     * across several enemy commands does not roll again for each of them, nor end up with two ships bombarding the
+     * same field. Allied bots never receive it: they fight on the player's team and the player already has whatever
+     * their own hangar provides.</p>
+     *
+     * @param botClient The bot being configured
+     * @param botForce  The force that bot is commanding
+     */
+    private void assignEnemyOrbitalSupport(BotClient botClient, BotForce botForce) {
+        if (enemyOrbitalSupportAssigned || (botForce.getTeam() == PLAYER_TEAM)) {
+            return;
+        }
+
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
+            return;
+        }
+
+        if (enemyOrbitalSupportRolled == null) {
+            int chance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+            enemyOrbitalSupportRolled = (chance > 0) && (Compute.randomInt(100) < chance);
+        }
+
+        if (!enemyOrbitalSupportRolled) {
+            return;
+        }
+
+        Player botPlayer = botClient.getLocalPlayer();
+        if (botPlayer == null) {
+            return;
+        }
+
+        botPlayer.setOrbitalSupport(OrbitalSupportCalculator.forOpposingForce(botForce.getName()));
+        enemyOrbitalSupportAssigned = true;
+        LOGGER.info("{} has orbital support this scenario.", botForce.getName());
     }
 
     @Override

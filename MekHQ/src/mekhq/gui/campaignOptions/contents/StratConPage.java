@@ -110,6 +110,9 @@ class StratConPage {
 
     private JCheckBox chkAutoGenerateOpForCallSigns;
     private JCheckBox chkEnemyForcesMaySurrender;
+    private JCheckBox chkUseOrbitalBombardmentSupport;
+    private JLabel lblOrbitalBombardmentEnemyChance;
+    private JSpinner spnOrbitalBombardmentEnemyChance;
     private JLabel lblMinimumCallsignSkillLevel;
     private MMComboBox<SkillLevel> comboMinimumCallsignSkillLevel;
 
@@ -298,6 +301,9 @@ class StratConPage {
         comboBoardScalingType.addMouseListener(createTipPanelUpdater("BoardScalingType"));
         chkAutoGenerateOpForCallSigns.addMouseListener(createTipPanelUpdater("AutoGenerateOpForCallSigns"));
         chkEnemyForcesMaySurrender.addMouseListener(createTipPanelUpdater("EnemyForcesMaySurrender"));
+        chkUseOrbitalBombardmentSupport.addMouseListener(createTipPanelUpdater("UseOrbitalBombardmentSupport"));
+        lblOrbitalBombardmentEnemyChance.addMouseListener(createTipPanelUpdater("OrbitalBombardmentEnemyChance"));
+        spnOrbitalBombardmentEnemyChance.addMouseListener(createTipPanelUpdater("OrbitalBombardmentEnemyChance"));
         lblMinimumCallsignSkillLevel.addMouseListener(createTipPanelUpdater("MinimumCallsignSkillLevel"));
         comboMinimumCallsignSkillLevel.addMouseListener(createTipPanelUpdater("MinimumCallsignSkillLevel"));
         chkUseDropShips.addMouseListener(createTipPanelUpdater("UseDropShips"));
@@ -401,6 +407,9 @@ class StratConPage {
         // CallSigns
         chkAutoGenerateOpForCallSigns = new CampaignOptionsCheckBox("AutoGenerateOpForCallSigns");
         chkEnemyForcesMaySurrender = new CampaignOptionsCheckBox("EnemyForcesMaySurrender");
+        chkUseOrbitalBombardmentSupport = new CampaignOptionsCheckBox("UseOrbitalBombardmentSupport");
+        lblOrbitalBombardmentEnemyChance = new CampaignOptionsLabel("OrbitalBombardmentEnemyChance");
+        spnOrbitalBombardmentEnemyChance = new CampaignOptionsSpinner("OrbitalBombardmentEnemyChance", 0, 0, 100, 5);
         lblMinimumCallsignSkillLevel = new CampaignOptionsLabel("MinimumCallsignSkillLevel");
         comboMinimumCallsignSkillLevel = new MMComboBox<>("comboMinimumCallsignSkillLevel", getSkillLevelOptions());
 
@@ -549,7 +558,9 @@ class StratConPage {
               chkUseAdvancedBuildingGunEmplacements,
               chkAutoConfigMunitions,
               chkAutoGenerateOpForCallSigns,
-              chkEnemyForcesMaySurrender);
+              chkEnemyForcesMaySurrender,
+              chkUseOrbitalBombardmentSupport);
+        panel.addRow(lblOrbitalBombardmentEnemyChance, spnOrbitalBombardmentEnemyChance);
         panel.addRow(lblSPAUpgradeIntensity, spnSPAUpgradeIntensity);
         panel.addRow(lblReinforcementBaseTargetNumber, spnReinforcementBaseTargetNumber);
         panel.addRow(lblMinimumCallsignSkillLevel, comboMinimumCallsignSkillLevel);
@@ -639,6 +650,8 @@ class StratConPage {
         spnOpForLanceTypeVehicles.setValue(model.opForLanceTypeVehicles);
         chkAutoGenerateOpForCallSigns.setSelected(model.autoGenerateOpForCallSigns);
         chkEnemyForcesMaySurrender.setSelected(model.enemyForcesMaySurrender);
+        chkUseOrbitalBombardmentSupport.setSelected(model.useOrbitalBombardmentSupport);
+        spnOrbitalBombardmentEnemyChance.setValue(model.orbitalBombardmentEnemyChance);
         comboMinimumCallsignSkillLevel.setSelectedItem(model.minimumCallsignSkillLevel);
         chkUseDropShips.setSelected(model.useDropShips);
         chkRestrictScenariosToFleetCapability.setSelected(model.restrictScenariosToFleetCapability);
@@ -699,6 +712,8 @@ class StratConPage {
         model.opForLanceTypeVehicles = (int) spnOpForLanceTypeVehicles.getValue();
         model.autoGenerateOpForCallSigns = chkAutoGenerateOpForCallSigns.isSelected();
         model.enemyForcesMaySurrender = chkEnemyForcesMaySurrender.isSelected();
+        model.useOrbitalBombardmentSupport = chkUseOrbitalBombardmentSupport.isSelected();
+        model.orbitalBombardmentEnemyChance = (int) spnOrbitalBombardmentEnemyChance.getValue();
         model.minimumCallsignSkillLevel = comboMinimumCallsignSkillLevel.getSelectedItem();
         model.useDropShips = chkUseDropShips.isSelected();
         model.restrictScenariosToFleetCapability = chkRestrictScenariosToFleetCapability.isSelected();
