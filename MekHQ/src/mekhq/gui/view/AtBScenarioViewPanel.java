@@ -244,6 +244,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
 
         int y = 0;
 
+        y = addOrbitalSupportWarning(gridBagConstraints, y);
+
         lblStatus.setName("lblStatus");
         lblStatus.setText(resourceMap.getString("lblStatus.text"));
         gridBagConstraints.gridx = 0;
@@ -463,7 +465,6 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             }
         }
 
-        addOrbitalSupportWarning(gridBagConstraints);
     }
 
     /**
@@ -473,10 +474,20 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
      * commander needs to know before deployment rather than when the first strike lands. The player's own package is
      * read from the hangar exactly as it will be at launch; the opposing force is reported as a chance rather than a
      * certainty, because that roll happens per scenario when the game starts.</p>
+     *
+     * <p>Placed at the top of the briefing rather than the end: the deployment controls sit over the bottom of this
+     * panel and hid it there, and a warning that the blast will land on your own units is not much use unread.</p>
+     *
+     * @param y The next free row
+     *
+     * @return The next free row after this warning, unchanged when there is nothing to warn about
      */
-    private void addOrbitalSupportWarning(GridBagConstraints gridBagConstraints) {
+    /** Width the orbital warning wraps at, so a long line cannot run past the edge of the briefing panel. */
+    private static final int ORBITAL_WARNING_WIDTH = 380;
+
+    private int addOrbitalSupportWarning(GridBagConstraints gridBagConstraints, int y) {
         if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
-            return;
+            return y;
         }
 
         OrbitalSupport playerSupport = OrbitalSupportCalculator.forCampaign(campaign);
@@ -496,21 +507,25 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         }
 
         if (sides.isEmpty()) {
-            return;
+            return y;
         }
 
         gridBagConstraints.gridx = 0;
-        gridBagConstraints.gridy++;
+        gridBagConstraints.gridy = y++;
         gridBagConstraints.gridwidth = 2;
         gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 0.0;
         gridBagConstraints.insets = new Insets(10, 0, 5, 0);
-        gridBagConstraints.fill = GridBagConstraints.NONE;
+        // Fill horizontally and wrap at a fixed width: unfilled, this row is as wide as its one long line of text
+        // and runs off the panel, where the deployment controls clip it.
+        gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
-        panStats.add(new JLabel("<html><b>Orbital Bombardment available to:</b> "
-              + String.join(", ", sides)
-              + "<br><i>The blast covers the target hex and 4 hexes around it, and hits your units too.</i></html>"),
-              gridBagConstraints);
+
+        JLabel warning = new JLabel("<html><div style='width:%dpx'><b>Orbital Bombardment available to:</b> %s"
+              .formatted(ORBITAL_WARNING_WIDTH, String.join(", ", sides))
+              + "<br><i>The blast covers the target hex and 4 hexes around it, and hits your units too.</i></div></html>");
+        panStats.add(warning, gridBagConstraints);
+        return y;
     }
 
     private int addForceTrees(int row) {
