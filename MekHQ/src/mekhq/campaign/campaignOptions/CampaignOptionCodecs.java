@@ -177,6 +177,8 @@ final class CampaignOptionCodecs {
               enumCodec(StratConPlayType::fromLookupName, StratConPlayType::getLookupName));
         register(CampaignOption.STRAT_CON_SECTOR_COUNT_METHOD,
               enumCodec(StratConSectorCountMethod::fromLookupName, StratConSectorCountMethod::getLookupName));
+        register(CampaignOption.ORBITAL_SUPPORT_METHOD,
+              enumCodec(OrbitalSupportMethod::fromLookupName, OrbitalSupportMethod::getLookupName));
     }
 
     /** The four contract percents clamp on write; their setters enforce the ceiling, so read routes through them. */

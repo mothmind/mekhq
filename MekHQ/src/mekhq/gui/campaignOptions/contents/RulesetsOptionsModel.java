@@ -38,6 +38,7 @@ import mekhq.campaign.autoResolve.AutoResolveMethod;
 import mekhq.campaign.campaignOptions.BoardScalingType;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.campaignOptions.OrbitalSupportMethod;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConPlayType;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.StratConSectorCountMethod;
 
@@ -51,6 +52,7 @@ class RulesetsOptionsModel {
     boolean enemyForcesMaySurrender;
     boolean useOrbitalBombardmentSupport;
     int orbitalBombardmentEnemyChance;
+    OrbitalSupportMethod orbitalSupportMethod;
     SkillLevel minimumCallsignSkillLevel;
     boolean useDropShips;
     boolean restrictScenariosToFleetCapability;
@@ -102,6 +104,7 @@ class RulesetsOptionsModel {
         enemyForcesMaySurrender = options.get(CampaignOption.ENEMY_FORCES_MAY_SURRENDER);
         useOrbitalBombardmentSupport = options.get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT);
         orbitalBombardmentEnemyChance = options.get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+        orbitalSupportMethod = options.get(CampaignOption.ORBITAL_SUPPORT_METHOD);
         minimumCallsignSkillLevel = options.get(CampaignOption.MINIMUM_CALLSIGN_SKILL_LEVEL);
         useDropShips = options.get(CampaignOption.USE_DROP_SHIPS);
         restrictScenariosToFleetCapability = options.get(CampaignOption.RESTRICT_SCENARIOS_TO_FLEET_CAPABILITY);
@@ -154,6 +157,7 @@ class RulesetsOptionsModel {
         options.set(CampaignOption.ENEMY_FORCES_MAY_SURRENDER, enemyForcesMaySurrender);
         options.set(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT, useOrbitalBombardmentSupport);
         options.set(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE, orbitalBombardmentEnemyChance);
+        options.set(CampaignOption.ORBITAL_SUPPORT_METHOD, orbitalSupportMethod);
         options.set(CampaignOption.MINIMUM_CALLSIGN_SKILL_LEVEL, minimumCallsignSkillLevel);
         options.set(CampaignOption.USE_DROP_SHIPS, useDropShips);
         options.set(CampaignOption.RESTRICT_SCENARIOS_TO_FLEET_CAPABILITY, restrictScenariosToFleetCapability);

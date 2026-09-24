@@ -39,6 +39,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.UUID;
+import java.util.Vector;
 
 import megamek.common.OrbitalBay;
 import megamek.common.OrbitalBay.WeaponClass;
@@ -51,6 +53,8 @@ import megamek.common.units.Mek;
 import megamek.common.units.SpaceStation;
 import megamek.common.units.Warship;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.force.Formation;
+import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.unit.Unit;
 import org.junit.jupiter.api.Test;
 
@@ -178,11 +182,58 @@ class OrbitalSupportCalculatorTest {
     }
 
     @Test
-    void theShipWithTheHeaviestBayIsChosen() {
+    void everyShipOnStationContributesItsBays() {
         Unit light = unitFor(warshipWith("Light", bay("Nose", capital(10))));
-        Unit heavy = unitFor(warshipWith("Heavy", bay("Nose", capital(40))));
+        Unit heavy = unitFor(warshipWith("Heavy", bay("Nose", capital(40)), bay("Aft", capital(30))));
 
-        assertEquals("Heavy", OrbitalSupportCalculator.forCampaign(campaignWith(light, heavy)).shipName());
+        OrbitalSupport support = OrbitalSupportCalculator.forCampaign(campaignWith(light, heavy));
+
+        assertEquals(3, support.strikesRemaining());
+        assertEquals(List.of("Light", "Heavy"), support.shipNames());
+    }
+
+    @Test
+    void aShipOutsideAnOrbitalSupportFormationDoesNotFire() {
+        Unit warship = unitFor(warshipWith("Unassigned", bay("Nose", capital(40))));
+
+        assertEquals(OrbitalSupport.NONE,
+              OrbitalSupportCalculator.forCampaign(campaignWith(CombatRole.FRONTLINE, warship)));
+    }
+
+    @Test
+    void aShipCountedTwiceThroughNestedFormationsStillFiresOnce() {
+        Unit warship = unitFor(warshipWith("Invincible", bay("Nose", capital(40))));
+        UUID id = UUID.randomUUID();
+
+        Campaign campaign = mock(Campaign.class);
+        when(campaign.getUnit(id)).thenReturn(warship);
+
+        Vector<UUID> ids = new Vector<>(List.of(id));
+        List<Formation> formations = List.of(orbitalFormation(CombatRole.ORBITAL_SUPPORT, ids),
+              orbitalFormation(CombatRole.ORBITAL_SUPPORT, ids));
+
+        PlayerForce playerForce = mock(PlayerForce.class);
+        when(playerForce.getAllFormations()).thenReturn(formations);
+        when(campaign.getPlayerForce()).thenReturn(playerForce);
+
+        assertEquals(1, OrbitalSupportCalculator.forCampaign(campaign).strikesRemaining());
+    }
+
+    @Test
+    void eachShipsBaysCarryItsOwnNameAndCrew() {
+        Crew keen = mock(Crew.class);
+        when(keen.getGunnery()).thenReturn(1);
+
+        Warship elite = warshipWith("Elite", bay("Nose", capital(40)));
+        when(elite.getCrew()).thenReturn(keen);
+
+        OrbitalSupport support = OrbitalSupportCalculator.forCampaign(campaignWith(unitFor(elite),
+              unitFor(warshipWith("Green", bay("Nose", capital(10))))));
+
+        assertEquals("Elite", support.availableBays().get(0).shipName());
+        assertEquals(1, support.availableBays().get(0).gunnery());
+        assertEquals("Green", support.availableBays().get(1).shipName());
+        assertEquals(OrbitalSupport.DEFAULT_GUNNERY, support.availableBays().get(1).gunnery());
     }
 
     @Test
@@ -230,7 +281,7 @@ class OrbitalSupportCalculatorTest {
         Warship warship = warshipWith("Elite", bay("Nose", capital(20)));
         when(warship.getCrew()).thenReturn(crew);
 
-        assertEquals(2, OrbitalSupportCalculator.forEntity(warship).gunnery());
+        assertEquals(2, OrbitalSupportCalculator.forEntity(warship).bays().get(0).gunnery());
     }
 
     @Test
@@ -238,7 +289,8 @@ class OrbitalSupportCalculatorTest {
         Warship warship = warshipWith("Ghost", bay("Nose", capital(20)));
         when(warship.getCrew()).thenReturn(null);
 
-        assertEquals(OrbitalSupport.DEFAULT_GUNNERY, OrbitalSupportCalculator.forEntity(warship).gunnery());
+        assertEquals(OrbitalSupport.DEFAULT_GUNNERY,
+              OrbitalSupportCalculator.forEntity(warship).bays().get(0).gunnery());
     }
 
     @Test
@@ -246,15 +298,40 @@ class OrbitalSupportCalculatorTest {
         OrbitalSupport support = OrbitalSupportCalculator.forOpposingForce("Kurita Flotilla");
 
         assertTrue(support.isAvailable());
-        assertEquals("Kurita Flotilla", support.shipName());
+        assertEquals("Kurita Flotilla", support.bays().get(0).shipName());
         assertEquals(1, support.strikesRemaining());
         assertEquals(100, support.heaviestAvailableBay().orElseThrow().damage());
     }
 
     private Campaign campaignWith(Unit... units) {
+        return campaignWith(CombatRole.ORBITAL_SUPPORT, units);
+    }
+
+    /** A campaign whose entire TO&E is one formation in the given role, holding these units. */
+    private Campaign campaignWith(CombatRole role, Unit... units) {
         Campaign campaign = mock(Campaign.class);
-        when(campaign.getUnits()).thenReturn(List.of(units));
+
+        Vector<UUID> ids = new Vector<>();
+        for (Unit unit : units) {
+            UUID id = UUID.randomUUID();
+            ids.add(id);
+            when(campaign.getUnit(id)).thenReturn(unit);
+        }
+
+        // Built before the stubbing starts: a mock created inside thenReturn() leaves the outer when() unfinished.
+        List<Formation> formations = List.of(orbitalFormation(role, ids));
+
+        PlayerForce playerForce = mock(PlayerForce.class);
+        when(playerForce.getAllFormations()).thenReturn(formations);
+        when(campaign.getPlayerForce()).thenReturn(playerForce);
         return campaign;
+    }
+
+    private Formation orbitalFormation(CombatRole role, Vector<UUID> unitIds) {
+        Formation formation = mock(Formation.class);
+        when(formation.getCombatRoleInMemory()).thenReturn(role);
+        when(formation.getAllUnits(false)).thenReturn(unitIds);
+        return formation;
     }
 
     private Unit unitFor(Entity entity) {

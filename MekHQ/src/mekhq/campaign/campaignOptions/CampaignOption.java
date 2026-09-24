@@ -985,6 +985,12 @@ public final class CampaignOption<T> {
      */
     public static final CampaignOption<Integer> ORBITAL_BOMBARDMENT_ENEMY_CHANCE =
           of(Integer.class, 0, "orbitalBombardmentEnemyChance");
+    /**
+     * Whether orbital space is contested. Flat chance leaves each side to roll on its own; the orbital contest lets
+     * only one of them hold the sky over a given battle.
+     */
+    public static final CampaignOption<OrbitalSupportMethod> ORBITAL_SUPPORT_METHOD =
+          of(OrbitalSupportMethod.class, OrbitalSupportMethod.FLAT_CHANCE, "orbitalSupportMethod");
     public static final CampaignOption<SkillLevel> SKILL_LEVEL =
           of(SkillLevel.class, SkillLevel.REGULAR, "skillLevel");
     public static final CampaignOption<BoardScalingType> BOARD_SCALING_TYPE =

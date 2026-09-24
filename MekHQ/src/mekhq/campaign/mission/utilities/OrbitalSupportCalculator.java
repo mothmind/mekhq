@@ -33,7 +33,10 @@
 package mekhq.campaign.mission.utilities;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import megamek.common.OrbitalBay;
 import megamek.common.OrbitalBay.WeaponClass;
@@ -44,6 +47,7 @@ import megamek.common.units.Entity;
 import megamek.common.units.Jumpship;
 import megamek.common.units.SpaceStation;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.force.Formation;
 import mekhq.campaign.unit.Unit;
 
 /**
@@ -70,37 +74,50 @@ public class OrbitalSupportCalculator {
     /**
      * Finds the orbital support the campaign's own ships can offer.
      *
+     * <p>Which vessels fire is the commander's decision, not a calculation: a formation given the
+     * {@link CombatRole#ORBITAL_SUPPORT} role stays in orbit and puts its naval bays at the disposal of every
+     * scenario, and nothing outside such a formation contributes. Every qualifying ship in those formations is used,
+     * not merely the heaviest, so a flotilla brings its whole broadside and the player chooses bay by bay which of
+     * it to spend.</p>
+     *
      * <p>Only a JumpShip or WarShip that is present, crewed and not laid up counts; a mothballed hull or one marked
      * for salvage is in no state to fire. Space stations are excluded: they do not accompany a force to a contract.
-     * When several ships qualify, the one bringing the heaviest single bay is used, on the assumption the force would
-     * ask whichever vessel can hit hardest.</p>
+     * Anything else in the formation - a DropShip, a fighter wing parked alongside - simply contributes nothing
+     * rather than being an error.</p>
      *
-     * @param campaign The campaign whose hangar is searched
+     * @param campaign The campaign whose orbital support formations are read
      *
-     * @return The support available, or {@link OrbitalSupport#NONE} when no suitable ship is on hand
+     * @return The pooled support available, or {@link OrbitalSupport#NONE} when no suitable ship is on station
      */
     public static OrbitalSupport forCampaign(Campaign campaign) {
         if (campaign == null) {
             return OrbitalSupport.NONE;
         }
 
-        OrbitalSupport best = OrbitalSupport.NONE;
-        int bestBayDamage = 0;
+        List<OrbitalBay> bays = new ArrayList<>();
+        // A formation nested inside another that is also on orbital support would otherwise be read twice, and its
+        // ships would fire the same bays twice over.
+        Set<UUID> counted = new LinkedHashSet<>();
 
-        for (Unit unit : campaign.getUnits()) {
-            if (!isAvailableSupportShip(unit)) {
+        for (Formation formation : campaign.getPlayerForce().getAllFormations()) {
+            CombatRole role = formation.getCombatRoleInMemory();
+            if ((role == null) || !role.isOrbitalSupport()) {
                 continue;
             }
 
-            OrbitalSupport support = forEntity(unit.getEntity());
-            int heaviest = support.heaviestAvailableBay().map(OrbitalBay::damage).orElse(0);
-            if (heaviest > bestBayDamage) {
-                bestBayDamage = heaviest;
-                best = support;
+            for (UUID unitId : formation.getAllUnits(false)) {
+                if (!counted.add(unitId)) {
+                    continue;
+                }
+
+                Unit unit = campaign.getUnit(unitId);
+                if (isAvailableSupportShip(unit)) {
+                    bays.addAll(forEntity(unit.getEntity()).bays());
+                }
             }
         }
 
-        return best;
+        return bays.isEmpty() ? OrbitalSupport.NONE : new OrbitalSupport(bays);
     }
 
     /**

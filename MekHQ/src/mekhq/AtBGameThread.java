@@ -84,6 +84,9 @@ import mekhq.campaign.mission.scenarios.AtBDynamicScenarioFactory;
 import mekhq.campaign.mission.scenarios.AtBScenario;
 import mekhq.campaign.mission.scenarios.BotForce;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.mission.utilities.OrbitalControlCalculator;
+import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalControl;
+import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalHolder;
 import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.ITransportAssignment;
@@ -115,6 +118,12 @@ public class AtBGameThread extends GameThread {
      * several hostile bot forces does not get a fresh chance for each of them.
      */
     private Boolean enemyOrbitalSupportRolled = null;
+
+    /**
+     * Which side holds the orbital space this scenario under the contested method. Settled once, before anyone is
+     * given their support, since the same roll decides both sides.
+     */
+    private OrbitalHolder orbitalHolder = null;
 
     /** Set once the enemy's orbital support has been handed to a bot, so only one hostile force receives it. */
     private boolean enemyOrbitalSupportAssigned = false;
@@ -886,11 +895,44 @@ public class AtBGameThread extends GameThread {
     }
 
     /**
+     * Settles which side holds the orbital space, under the contested method.
+     *
+     * <p>The roll happens once and both sides read the same answer, so the sky over a battle never holds two
+     * fleets. Under the flat method nothing is contested and this is not consulted at all.</p>
+     *
+     * @return The side that can fire this scenario
+     */
+    private OrbitalHolder orbitalHolder() {
+        if (orbitalHolder == null) {
+            OrbitalControl control = OrbitalControlCalculator.forContract(scenario.getContract(campaign));
+            orbitalHolder = OrbitalControlCalculator.roll(control);
+            LOGGER.info("Orbital control contested at {}% player / {}% enemy / {}% neither: {} holds orbit.",
+                  control.playerChance(),
+                  control.enemyChance(),
+                  control.neitherChance(),
+                  orbitalHolder);
+        }
+        return orbitalHolder;
+    }
+
+    /** @return True when orbital space is contested this campaign rather than each side rolling on its own */
+    private boolean isOrbitalSpaceContested() {
+        return campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD).isContested();
+    }
+
+    /**
      * Grants the player whatever orbital fire support their own hangar can provide. A force with no naval-armed
      * JumpShip or WarShip on hand simply gets nothing, which is the same as the rule being switched off.
+     *
+     * <p>Where orbital space is contested the hangar is not enough on its own: the ship also has to have won the
+     * firing position, which is what {@link #orbitalHolder()} settles.</p>
      */
     private void assignPlayerOrbitalSupport() {
         if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
+            return;
+        }
+
+        if (isOrbitalSpaceContested() && (orbitalHolder() != OrbitalHolder.PLAYER)) {
             return;
         }
 
@@ -903,8 +945,8 @@ public class AtBGameThread extends GameThread {
         player.setOrbitalSupport(support);
 
         if (support.isAvailable()) {
-            LOGGER.info("{} is providing orbital support: {} bay(s), heaviest {} damage, blast radius {}.",
-                  support.shipName(),
+            LOGGER.info("{} providing orbital support: {} bay(s), heaviest {} damage, blast radius {}.",
+                  String.join(", ", support.shipNames()),
                   support.strikesRemaining(),
                   support.heaviestAvailableBay().map(OrbitalBay::damage).orElse(0),
                   OrbitalSupport.BLAST_RADIUS);
@@ -919,6 +961,9 @@ public class AtBGameThread extends GameThread {
      * same field. Allied bots never receive it: they fight on the player's team and the player already has whatever
      * their own hangar provides.</p>
      *
+     * <p>Where orbital space is contested the configured chance is not used: the enemy fires only if they took the
+     * firing position from the player, which {@link #orbitalHolder()} has already settled.</p>
+     *
      * @param botClient The bot being configured
      * @param botForce  The force that bot is commanding
      */
@@ -932,8 +977,12 @@ public class AtBGameThread extends GameThread {
         }
 
         if (enemyOrbitalSupportRolled == null) {
-            int chance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
-            enemyOrbitalSupportRolled = (chance > 0) && (Compute.randomInt(100) < chance);
+            if (isOrbitalSpaceContested()) {
+                enemyOrbitalSupportRolled = orbitalHolder() == OrbitalHolder.OPFOR;
+            } else {
+                int chance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+                enemyOrbitalSupportRolled = (chance > 0) && (Compute.randomInt(100) < chance);
+            }
         }
 
         if (!enemyOrbitalSupportRolled) {

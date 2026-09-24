@@ -60,6 +60,7 @@ import megamek.client.ui.settings.SettingsPairedFieldGridPanel;
 import megamek.common.enums.SkillLevel;
 import mekhq.campaign.autoResolve.AutoResolveMethod;
 import mekhq.campaign.campaignOptions.BoardScalingType;
+import mekhq.campaign.campaignOptions.OrbitalSupportMethod;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConPlayType;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.StratConSectorCountMethod;
 import mekhq.campaign.personnel.skills.Skills;
@@ -111,6 +112,8 @@ class StratConPage {
     private JCheckBox chkAutoGenerateOpForCallSigns;
     private JCheckBox chkEnemyForcesMaySurrender;
     private JCheckBox chkUseOrbitalBombardmentSupport;
+    private JLabel lblOrbitalSupportMethod;
+    private MMComboBox<OrbitalSupportMethod> comboOrbitalSupportMethod;
     private JLabel lblOrbitalBombardmentEnemyChance;
     private JSpinner spnOrbitalBombardmentEnemyChance;
     private JLabel lblMinimumCallsignSkillLevel;
@@ -302,6 +305,8 @@ class StratConPage {
         chkAutoGenerateOpForCallSigns.addMouseListener(createTipPanelUpdater("AutoGenerateOpForCallSigns"));
         chkEnemyForcesMaySurrender.addMouseListener(createTipPanelUpdater("EnemyForcesMaySurrender"));
         chkUseOrbitalBombardmentSupport.addMouseListener(createTipPanelUpdater("UseOrbitalBombardmentSupport"));
+        lblOrbitalSupportMethod.addMouseListener(createTipPanelUpdater("OrbitalSupportMethod"));
+        comboOrbitalSupportMethod.addMouseListener(createTipPanelUpdater("OrbitalSupportMethod"));
         lblOrbitalBombardmentEnemyChance.addMouseListener(createTipPanelUpdater("OrbitalBombardmentEnemyChance"));
         spnOrbitalBombardmentEnemyChance.addMouseListener(createTipPanelUpdater("OrbitalBombardmentEnemyChance"));
         lblMinimumCallsignSkillLevel.addMouseListener(createTipPanelUpdater("MinimumCallsignSkillLevel"));
@@ -408,6 +413,27 @@ class StratConPage {
         chkAutoGenerateOpForCallSigns = new CampaignOptionsCheckBox("AutoGenerateOpForCallSigns");
         chkEnemyForcesMaySurrender = new CampaignOptionsCheckBox("EnemyForcesMaySurrender");
         chkUseOrbitalBombardmentSupport = new CampaignOptionsCheckBox("UseOrbitalBombardmentSupport");
+        lblOrbitalSupportMethod = new CampaignOptionsLabel("OrbitalSupportMethod");
+        comboOrbitalSupportMethod = new MMComboBox<>("comboOrbitalSupportMethod", OrbitalSupportMethod.values());
+        comboOrbitalSupportMethod.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(
+                  JList<?> list,
+                  Object value,
+                  int index,
+                  boolean isSelected,
+                  boolean cellHasFocus) {
+
+                JLabel label = (JLabel) super.getListCellRendererComponent(
+                      list, value, index, isSelected, cellHasFocus);
+
+                if (value instanceof OrbitalSupportMethod method) {
+                    label.setToolTipText(wordWrap(method.getTooltip()));
+                }
+
+                return label;
+            }
+        });
         lblOrbitalBombardmentEnemyChance = new CampaignOptionsLabel("OrbitalBombardmentEnemyChance");
         spnOrbitalBombardmentEnemyChance = new CampaignOptionsSpinner("OrbitalBombardmentEnemyChance", 0, 0, 100, 5);
         lblMinimumCallsignSkillLevel = new CampaignOptionsLabel("MinimumCallsignSkillLevel");
@@ -560,6 +586,7 @@ class StratConPage {
               chkAutoGenerateOpForCallSigns,
               chkEnemyForcesMaySurrender,
               chkUseOrbitalBombardmentSupport);
+        panel.addRow(lblOrbitalSupportMethod, comboOrbitalSupportMethod);
         panel.addRow(lblOrbitalBombardmentEnemyChance, spnOrbitalBombardmentEnemyChance);
         panel.addRow(lblSPAUpgradeIntensity, spnSPAUpgradeIntensity);
         panel.addRow(lblReinforcementBaseTargetNumber, spnReinforcementBaseTargetNumber);
@@ -651,6 +678,7 @@ class StratConPage {
         chkAutoGenerateOpForCallSigns.setSelected(model.autoGenerateOpForCallSigns);
         chkEnemyForcesMaySurrender.setSelected(model.enemyForcesMaySurrender);
         chkUseOrbitalBombardmentSupport.setSelected(model.useOrbitalBombardmentSupport);
+        comboOrbitalSupportMethod.setSelectedItem(model.orbitalSupportMethod);
         spnOrbitalBombardmentEnemyChance.setValue(model.orbitalBombardmentEnemyChance);
         comboMinimumCallsignSkillLevel.setSelectedItem(model.minimumCallsignSkillLevel);
         chkUseDropShips.setSelected(model.useDropShips);
@@ -713,6 +741,7 @@ class StratConPage {
         model.autoGenerateOpForCallSigns = chkAutoGenerateOpForCallSigns.isSelected();
         model.enemyForcesMaySurrender = chkEnemyForcesMaySurrender.isSelected();
         model.useOrbitalBombardmentSupport = chkUseOrbitalBombardmentSupport.isSelected();
+        model.orbitalSupportMethod = comboOrbitalSupportMethod.getSelectedItem();
         model.orbitalBombardmentEnemyChance = (int) spnOrbitalBombardmentEnemyChance.getValue();
         model.minimumCallsignSkillLevel = comboMinimumCallsignSkillLevel.getSelectedItem();
         model.useDropShips = chkUseDropShips.isSelected();

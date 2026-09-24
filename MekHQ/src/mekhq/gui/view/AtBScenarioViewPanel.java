@@ -50,11 +50,15 @@ import java.awt.event.ItemListener;
 import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.ResourceBundle;
+import mekhq.campaign.mission.utilities.OrbitalControlCalculator;
+import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalControl;
 import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
-import megamek.common.OrbitalSupport;
 import megamek.common.OrbitalBay;
+import megamek.common.OrbitalSupport;
 import java.util.UUID;
 import java.util.Vector;
 import javax.swing.*;
@@ -470,10 +474,10 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
     /**
      * Warns that orbital bombardment is in play for this scenario, and which sides can call it.
      *
-     * <p>A blast covers the target hex and four rings around it and does not distinguish friend from foe, so a
-     * commander needs to know before deployment rather than when the first strike lands. The player's own package is
-     * read from the hangar exactly as it will be at launch; the opposing force is reported as a chance rather than a
-     * certainty, because that roll happens per scenario when the game starts.</p>
+     * <p>A commander needs to know orbital fire is in play before deployment rather than when the first strike
+     * lands. The two sides are listed separately because they are different kinds of fact: the force's own vessels
+     * are read from the hangar exactly as they will be at launch, while the opposing force is only ever a chance,
+     * since that roll happens per scenario when the game starts.</p>
      *
      * <p>Placed at the top of the briefing rather than the end: the deployment controls sit over the bottom of this
      * panel and hid it there, and a warning that the blast will land on your own units is not much use unread.</p>
@@ -490,23 +494,15 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             return y;
         }
 
-        OrbitalSupport playerSupport = OrbitalSupportCalculator.forCampaign(campaign);
-        int enemyChance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+        boolean contested = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD).isContested();
+        OrbitalControl control = contested
+              ? OrbitalControlCalculator.forContract(scenario.getContract(campaign))
+              : null;
 
-        List<String> sides = new ArrayList<>();
-        if (playerSupport.isAvailable()) {
-            int heaviest = playerSupport.heaviestAvailableBay().map(OrbitalBay::damage).orElse(0);
-            sides.add(String.format("you (%s, %d bay(s), heaviest %d damage, gunnery %d)",
-                  playerSupport.shipName(),
-                  playerSupport.strikesRemaining(),
-                  heaviest,
-                  playerSupport.gunnery()));
-        }
-        if (enemyChance > 0) {
-            sides.add(String.format("the opposing force (%d%% chance)", enemyChance));
-        }
+        List<String> assets = playerAssetLines(contested, control);
+        List<String> enemyLines = enemyWarningLines(contested, control);
 
-        if (sides.isEmpty()) {
+        if (assets.isEmpty() && enemyLines.isEmpty()) {
             return y;
         }
 
@@ -516,16 +512,110 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.weightx = 1.0;
         gridBagConstraints.weighty = 0.0;
         gridBagConstraints.insets = new Insets(10, 0, 5, 0);
-        // Fill horizontally and wrap at a fixed width: unfilled, this row is as wide as its one long line of text
-        // and runs off the panel, where the deployment controls clip it.
+        // Fill horizontally and wrap at a fixed width: unfilled, this row is as wide as its longest line of text
+        // and runs off the panel, where the deployment controls clip it. The wrapping itself is the table below;
+        // the div this comment was originally written against never wrapped anything.
         gridBagConstraints.fill = GridBagConstraints.HORIZONTAL;
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
 
-        JLabel warning = new JLabel("<html><div style='width:%dpx'><b>Orbital Bombardment available to:</b> %s"
-              .formatted(ORBITAL_WARNING_WIDTH, String.join(", ", sides))
-              + "<br><i>The blast covers the target hex and 4 hexes around it, and hits your units too.</i></div></html>");
+        // SkyEye: a table, not a styled div. Swing's HTML renderer ignores a width style on a div when it measures
+        // the label, so the earlier div wrapped at nothing and reported its full unwrapped width; a table width is
+        // honoured. Measured on this markup: div 493px against a requested 380px, table 380px.
+        StringBuilder text = new StringBuilder(
+              "<html><table width='%d' cellpadding='0' cellspacing='0'><tr><td><b>Orbital Bombardment</b>"
+                    .formatted(ORBITAL_WARNING_WIDTH));
+        appendOrbitalList(text, "Your assets", assets);
+        appendOrbitalList(text, "Opposing force", enemyLines);
+        text.append("</td></tr></table></html>");
+
+        JLabel warning = new JLabel(text.toString());
         panStats.add(warning, gridBagConstraints);
         return y;
+    }
+
+    /**
+     * Lists what the force itself brings to orbit: each supporting vessel and how many bays it has to spend.
+     *
+     * <p>The bays are counted rather than named. Which bay to fire, at what and when is a decision taken at the
+     * targeting phase with the strike window open in front of you, where each one is already listed with its damage
+     * and its arrival time; repeating that roster here only buries the one thing the briefing is for, which is that
+     * there is fire available and roughly how much of it.</p>
+     *
+     * @param contested Whether orbital space is contested this campaign
+     * @param control   The current division of that space, or null when it is not contested
+     *
+     * @return One line per supporting vessel, empty when the force has nothing overhead
+     */
+    private List<String> playerAssetLines(boolean contested, @Nullable OrbitalControl control) {
+        OrbitalSupport playerSupport = OrbitalSupportCalculator.forCampaign(campaign);
+        if (!playerSupport.isAvailable()) {
+            return new ArrayList<>();
+        }
+
+        List<String> lines = new ArrayList<>();
+        // Under the contest the hangar is only half the story: the flotilla still has to win the firing position,
+        // so the odds of it being there at all head the list rather than being left implied. It belongs to the
+        // force rather than to any one ship, which is why it is its own line.
+        if (contested && (control != null)) {
+            lines.add(String.format("%d%% chance of holding orbit this scenario", control.playerChance()));
+        }
+
+        // Grouped by vessel in the order their bays are offered: one line per ship on station, however many of
+        // them the orbital support formations put up there.
+        Map<String, List<OrbitalBay>> byShip = new LinkedHashMap<>();
+        for (OrbitalBay bay : playerSupport.availableBays()) {
+            byShip.computeIfAbsent(bay.shipName(), ship -> new ArrayList<>()).add(bay);
+        }
+
+        for (Map.Entry<String, List<OrbitalBay>> ship : byShip.entrySet()) {
+            int bays = ship.getValue().size();
+            lines.add(String.format("%s (gunnery %d): %d bay%s",
+                  ship.getKey(),
+                  ship.getValue().get(0).gunnery(),
+                  bays,
+                  (bays == 1) ? "" : "s"));
+        }
+
+        return lines;
+    }
+
+    /**
+     * Lists what the other side may have overhead.
+     *
+     * <p>Neither method can promise anything here, since the roll happens when the game starts.</p>
+     *
+     * @param contested Whether orbital space is contested this campaign
+     * @param control   The current division of that space, or null when it is not contested
+     *
+     * @return The lines to warn with, empty when the opposing force cannot have a ship overhead
+     */
+    private List<String> enemyWarningLines(boolean contested, @Nullable OrbitalControl control) {
+        List<String> lines = new ArrayList<>();
+
+        if (contested && (control != null)) {
+            lines.add(String.format("%d%% chance of holding orbit this scenario", control.enemyChance()));
+            return lines;
+        }
+
+        int enemyChance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
+        if (enemyChance > 0) {
+            lines.add(String.format("%d%% chance of a ship overhead willing to fire", enemyChance));
+        }
+
+        return lines;
+    }
+
+    /** Appends one headed bullet list to the warning, or nothing at all when there is nothing to list. */
+    private static void appendOrbitalList(StringBuilder text, String heading, List<String> lines) {
+        if (lines.isEmpty()) {
+            return;
+        }
+
+        text.append("<br><b>").append(heading).append(":</b><ul style='margin-top:0;margin-bottom:0'>");
+        for (String line : lines) {
+            text.append("<li>").append(line).append("</li>");
+        }
+        text.append("</ul>");
     }
 
     private int addForceTrees(int row) {
