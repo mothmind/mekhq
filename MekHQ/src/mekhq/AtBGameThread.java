@@ -67,6 +67,7 @@ import megamek.common.equipment.Minefield;
 import megamek.common.loaders.MapSettings;
 import megamek.common.options.IOption;
 import megamek.common.options.OptionsConstants;
+import megamek.common.enums.SkillLevel;
 import megamek.common.units.Entity;
 import megamek.common.units.IAero;
 import megamek.common.units.Infantry;
@@ -84,9 +85,10 @@ import mekhq.campaign.mission.scenarios.AtBDynamicScenarioFactory;
 import mekhq.campaign.mission.scenarios.AtBScenario;
 import mekhq.campaign.mission.scenarios.BotForce;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.enums.DragoonRating;
 import mekhq.campaign.mission.utilities.OrbitalControlCalculator;
 import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalControl;
-import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalHolder;
+import mekhq.campaign.mission.utilities.OrbitalStrategyCalculator;
 import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.unit.ITransportAssignment;
@@ -120,10 +122,13 @@ public class AtBGameThread extends GameThread {
     private Boolean enemyOrbitalSupportRolled = null;
 
     /**
-     * Which side holds the orbital space this scenario under the contested method. Settled once, before anyone is
-     * given their support, since the same roll decides both sides.
+     * Each side's chance of having a ship overhead this scenario under the contested method. Read once and shared,
+     * so the two sides are rolled against the same figures.
      */
-    private OrbitalHolder orbitalHolder = null;
+    private OrbitalControl orbitalControl = null;
+
+    /** Whether the player's own fleet won a firing position this scenario. Rolled once, lazily. */
+    private Boolean playerHoldsOrbit = null;
 
     /** Set once the enemy's orbital support has been handed to a bot, so only one hostile force receives it. */
     private boolean enemyOrbitalSupportAssigned = false;
@@ -895,24 +900,33 @@ public class AtBGameThread extends GameThread {
     }
 
     /**
-     * Settles which side holds the orbital space, under the contested method.
+     * Reads each side's chance of having a ship overhead, under the contested method.
      *
-     * <p>The roll happens once and both sides read the same answer, so the sky over a battle never holds two
-     * fleets. Under the flat method nothing is contested and this is not consulted at all.</p>
+     * <p>Worked out once per scenario and shared, so the two sides are rolled against the same figures even though
+     * they are rolled separately. Under the flat method nothing is contested and this is not consulted at all.</p>
      *
-     * @return The side that can fire this scenario
+     * @return Each side's chance this scenario
      */
-    private OrbitalHolder orbitalHolder() {
-        if (orbitalHolder == null) {
-            OrbitalControl control = OrbitalControlCalculator.forContract(scenario.getContract(campaign));
-            orbitalHolder = OrbitalControlCalculator.roll(control);
-            LOGGER.info("Orbital control contested at {}% player / {}% enemy / {}% neither: {} holds orbit.",
-                  control.playerChance(),
-                  control.enemyChance(),
-                  control.neitherChance(),
-                  orbitalHolder);
+    private OrbitalControl orbitalControl() {
+        if (orbitalControl == null) {
+            orbitalControl = OrbitalControlCalculator.forContract(scenario.getContract(campaign));
+            LOGGER.info("Orbital support contested: {}% player, {}% enemy.",
+                  orbitalControl.playerChance(),
+                  orbitalControl.enemyChance());
         }
-        return orbitalHolder;
+        return orbitalControl;
+    }
+
+    /**
+     * @return True when the player's own fleet won a firing position this scenario. Rolled once and remembered, so
+     *       a second read does not get a second answer.
+     */
+    private boolean playerHoldsOrbit() {
+        if (playerHoldsOrbit == null) {
+            playerHoldsOrbit = OrbitalControlCalculator.holdsOrbit(orbitalControl().playerChance());
+            LOGGER.info("Player orbital support {} this scenario.", playerHoldsOrbit ? "is on station" : "is not");
+        }
+        return playerHoldsOrbit;
     }
 
     /** @return True when orbital space is contested this campaign rather than each side rolling on its own */
@@ -920,19 +934,47 @@ public class AtBGameThread extends GameThread {
         return campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD).isContested();
     }
 
+    /** @return True when a firing position has to be earned on a Strategy roll this campaign */
+    private boolean isOrbitalStrategyRolled() {
+        return campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD).isStrategyRoll();
+    }
+
+    /**
+     * Asks one flagged vessel's commander whether they got their ship into a firing window.
+     *
+     * <p>Rolled per vessel, so a flotilla can arrive in part: the officer who planned this ship's approach is the
+     * one who answers for it, and a green staff officer on the second hull does not cost the first its window.</p>
+     *
+     * @param unit The flagged vessel
+     *
+     * @return True when this ship is on station this scenario
+     */
+    private boolean vesselMadeItsWindow(Unit unit) {
+        int targetNumber = OrbitalStrategyCalculator.playerTargetNumber(unit.getCommander());
+        int modifier = OrbitalStrategyCalculator.rollModifier(scenario.getContract(campaign), true);
+        boolean onStation = OrbitalStrategyCalculator.rollAgainst(targetNumber, modifier);
+
+        LOGGER.info("{} rolled Strategy {}+ with a {} modifier for its firing window: {}.",
+              unit.getName(),
+              targetNumber,
+              modifier,
+              onStation ? "on station" : "missed it");
+        return onStation;
+    }
+
     /**
      * Grants the player whatever orbital fire support their own hangar can provide. A force with no naval-armed
      * JumpShip or WarShip on hand simply gets nothing, which is the same as the rule being switched off.
      *
-     * <p>Where orbital space is contested the hangar is not enough on its own: the ship also has to have won the
-     * firing position, which is what {@link #orbitalHolder()} settles.</p>
+     * <p>Where orbital space is contested the hangar is not enough on its own: the fleet also has to have won a
+     * firing position, which is what {@link #playerHoldsOrbit()} settles.</p>
      */
     private void assignPlayerOrbitalSupport() {
         if (!campaign.getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
             return;
         }
 
-        if (isOrbitalSpaceContested() && (orbitalHolder() != OrbitalHolder.PLAYER)) {
+        if (isOrbitalSpaceContested() && !playerHoldsOrbit()) {
             return;
         }
 
@@ -941,7 +983,11 @@ public class AtBGameThread extends GameThread {
             return;
         }
 
-        OrbitalSupport support = OrbitalSupportCalculator.forCampaign(campaign);
+        // Under the Strategy method each flagged vessel earns its own window, so the filter runs per ship rather
+        // than gating the whole force above.
+        OrbitalSupport support = isOrbitalStrategyRolled()
+              ? OrbitalSupportCalculator.forCampaign(campaign, this::vesselMadeItsWindow)
+              : OrbitalSupportCalculator.forCampaign(campaign);
         player.setOrbitalSupport(support);
 
         if (support.isAvailable()) {
@@ -961,8 +1007,8 @@ public class AtBGameThread extends GameThread {
      * same field. Allied bots never receive it: they fight on the player's team and the player already has whatever
      * their own hangar provides.</p>
      *
-     * <p>Where orbital space is contested the configured chance is not used: the enemy fires only if they took the
-     * firing position from the player, which {@link #orbitalHolder()} has already settled.</p>
+     * <p>Where orbital space is contested the configured chance is not used: the enemy rolls against their own
+     * track from {@link #orbitalControl()} instead, which the player's fleet neither helps nor hinders.</p>
      *
      * @param botClient The bot being configured
      * @param botForce  The force that bot is commanding
@@ -977,8 +1023,10 @@ public class AtBGameThread extends GameThread {
         }
 
         if (enemyOrbitalSupportRolled == null) {
-            if (isOrbitalSpaceContested()) {
-                enemyOrbitalSupportRolled = orbitalHolder() == OrbitalHolder.OPFOR;
+            if (isOrbitalStrategyRolled()) {
+                enemyOrbitalSupportRolled = enemyMadeItsWindow();
+            } else if (isOrbitalSpaceContested()) {
+                enemyOrbitalSupportRolled = OrbitalControlCalculator.holdsOrbit(orbitalControl().enemyChance());
             } else {
                 int chance = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
                 enemyOrbitalSupportRolled = (chance > 0) && (Compute.randomInt(100) < chance);
@@ -994,9 +1042,60 @@ public class AtBGameThread extends GameThread {
             return;
         }
 
-        botPlayer.setOrbitalSupport(OrbitalSupportCalculator.forOpposingForce(botForce.getName()));
+        botPlayer.setOrbitalSupport(opposingForceSupport(botForce.getName()));
         enemyOrbitalSupportAssigned = true;
         LOGGER.info("{} has orbital support this scenario.", botForce.getName());
+    }
+
+    /**
+     * Asks whether the opposing force both has a ship overhead and got it into a firing window.
+     *
+     * <p>Two separate questions under this method, and the first is decided by money: a force that cannot afford a
+     * capital ship never rolls for one, while an A*-rated fleet always has a hull on station and only has to make
+     * the window.</p>
+     *
+     * @return True when the enemy can fire this scenario
+     */
+    private boolean enemyMadeItsWindow() {
+        AbstractContract contract = scenario.getContract(campaign);
+        if (!OrbitalStrategyCalculator.enemyShipPresent(contract)) {
+            LOGGER.info("The opposing force has no capital ship overhead this scenario ({}% chance).",
+                  OrbitalStrategyCalculator.enemyShipChance(contract));
+            return false;
+        }
+
+        SkillLevel forceSkill = (contract == null) || (contract.getEnemyData() == null)
+              ? null
+              : contract.getEnemyData().forceSkill();
+        int targetNumber = OrbitalStrategyCalculator.enemyTargetNumber(forceSkill);
+        int modifier = OrbitalStrategyCalculator.rollModifier(contract, false);
+        boolean onStation = OrbitalStrategyCalculator.rollAgainst(targetNumber, modifier);
+
+        LOGGER.info("The opposing force rolled {}+ with a {} modifier for its firing window: {}.",
+              targetNumber,
+              modifier,
+              onStation ? "on station" : "missed it");
+        return onStation;
+    }
+
+    /**
+     * @param forceName The bot force being credited with the bombardment
+     *
+     * @return The support an opposing force receives, sized from its equipment rating under every method but the
+     *       flat chance, which keeps the single token bay it has always had
+     */
+    private OrbitalSupport opposingForceSupport(String forceName) {
+        AbstractContract contract = scenario.getContract(campaign);
+        boolean rated = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD)
+              .usesRatedEnemyFleet();
+
+        if (!rated || (contract == null) || (contract.getEnemyData() == null)) {
+            return OrbitalSupportCalculator.forOpposingForce(forceName);
+        }
+
+        return OrbitalSupportCalculator.forOpposingForce(forceName,
+              DragoonRating.fromRating(contract.getEnemyData().equipmentRating()),
+              contract.getEnemyData().forceSkill());
     }
 
     @Override

@@ -196,6 +196,12 @@ public class Unit implements ITechnology, ILocatable {
     protected Entity entity;
     private int site;
     private boolean salvaged;
+    /**
+     * {@code true} when this vessel stays in orbit and supports ground battles with its naval weapon bays instead of
+     * deploying to them. Set per unit from the TO&E, because which of a force's ships is on station is the
+     * commander's decision and can change from one contract to the next.
+     */
+    private boolean orbitalSupport;
     private UUID id;
     private final LocationNode locationNode = new LocationNode(this);
     private String fluffName;
@@ -823,6 +829,15 @@ public class Unit implements ITechnology, ILocatable {
 
     public void setSalvage(boolean b) {
         this.salvaged = b;
+    }
+
+    /** @return {@code true} when this vessel is flagged to bombard from orbit rather than deploy */
+    public boolean isOrbitalSupport() {
+        return orbitalSupport;
+    }
+
+    public void setOrbitalSupport(boolean orbitalSupport) {
+        this.orbitalSupport = orbitalSupport;
     }
 
     public String getHistory() {
@@ -3009,6 +3024,10 @@ public class Unit implements ITechnology, ILocatable {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "salvaged", true);
         }
 
+        if (orbitalSupport) {
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "orbitalSupport", true);
+        }
+
         if (carrier) {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "carrier", true);
         }
@@ -3270,6 +3289,8 @@ public class Unit implements ITechnology, ILocatable {
                     retVal.scenarioId = Integer.parseInt(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("salvaged")) {
                     retVal.salvaged = wn2.getTextContent().equalsIgnoreCase("true");
+                } else if (wn2.getNodeName().equalsIgnoreCase("orbitalSupport")) {
+                    retVal.orbitalSupport = wn2.getTextContent().equalsIgnoreCase("true");
                 } else if (wn2.getNodeName().equalsIgnoreCase("mothballed")) {
                     retVal.mothballed = wn2.getTextContent().equalsIgnoreCase("true");
                 } else if (wn2.getNodeName().equalsIgnoreCase("entity")) {

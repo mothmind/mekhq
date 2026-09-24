@@ -33,6 +33,7 @@
 package mekhq.campaign.mission.utilities;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -40,12 +41,14 @@ import static org.mockito.Mockito.when;
 import java.util.ArrayList;
 import java.util.List;
 
+import megamek.common.enums.SkillLevel;
+import mekhq.campaign.enums.DragoonRating;
 import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.contractData.EnemyData;
 import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
 import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.mission.scenarios.ScenarioStatus;
 import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalControl;
-import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalHolder;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -60,7 +63,6 @@ class OrbitalControlCalculatorTest {
 
         assertEquals(40, control.playerChance());
         assertEquals(40, control.enemyChance());
-        assertEquals(20, control.neitherChance());
     }
 
     @Test
@@ -69,7 +71,6 @@ class OrbitalControlCalculatorTest {
 
         assertEquals(40, control.playerChance());
         assertEquals(40, control.enemyChance());
-        assertEquals(20, control.neitherChance());
     }
 
     @Test
@@ -99,21 +100,114 @@ class OrbitalControlCalculatorTest {
     }
 
     @Test
-    void aRoutedEnemyWidensTheGapTheyCannotFireThrough() {
+    void aRoutedEnemyIsLessLikelyToHoldOrbit() {
         OrbitalControl control = OrbitalControlCalculator.forContract(contract(ContractMoraleLevel.ROUTED));
 
         assertEquals(40, control.playerChance());
         assertEquals(20, control.enemyChance());
-        assertEquals(40, control.neitherChance());
     }
 
     @Test
-    void overwhelmingMoraleLeavesNoNeutralShare() {
+    void overwhelmingMoraleLiftsTheEnemyWithoutTouchingThePlayer() {
         OrbitalControl control = OrbitalControlCalculator.forContract(contract(ContractMoraleLevel.OVERWHELMING));
 
         assertEquals(40, control.playerChance());
         assertEquals(60, control.enemyChance());
-        assertEquals(0, control.neitherChance());
+    }
+
+    @Test
+    void equipmentRatingMovesTheEnemyByItsOwnScale() {
+        assertEquals(-50, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_F));
+        assertEquals(-20, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_D));
+        assertEquals(-10, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_C));
+        assertEquals(0, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_B));
+        assertEquals(20, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_A));
+        assertEquals(40, OrbitalControlCalculator.equipmentModifier(DragoonRating.DRAGOON_ASTAR));
+    }
+
+    @Test
+    void anUnknownRatingMovesNothing() {
+        assertEquals(0, OrbitalControlCalculator.equipmentModifier((DragoonRating) null));
+        assertEquals(0, OrbitalControlCalculator.equipmentModifier((AbstractContract) null));
+    }
+
+    @Test
+    void aContractWithNoEnemyRecordedMovesNothing() {
+        AbstractContract contract = mock(AbstractContract.class);
+        when(contract.getMoraleLevel()).thenReturn(ContractMoraleLevel.STALEMATE);
+        when(contract.getEnemyData()).thenReturn(null);
+        when(contract.getScenarios()).thenReturn(List.of());
+
+        assertEquals(40, OrbitalControlCalculator.forContract(contract).enemyChance());
+    }
+
+    @Test
+    void anFRatedEnemyHasNothingOverhead() {
+        // -50 against a base of 40: a force that cannot keep its BattleMechs running has no WarShip either.
+        OrbitalControl control = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_F));
+
+        assertEquals(0, control.enemyChance());
+        assertEquals(40, control.playerChance());
+    }
+
+    @Test
+    void anFRatedEnemyOnAWinningStreakScrapesSomethingTogether() {
+        // The modifiers add rather than F being a veto: 40 - 50 + 20 leaves a tenth of the sky to a force whose
+        // campaign is going well enough to have borrowed a hull from someone.
+        assertEquals(10,
+              OrbitalControlCalculator.forContract(
+                          contract(ContractMoraleLevel.OVERWHELMING, DragoonRating.DRAGOON_F))
+                    .enemyChance());
+    }
+
+    @Test
+    void aPoorlyEquippedEnemyIsLessLikelyToHoldOrbit() {
+        assertEquals(20,
+              OrbitalControlCalculator.forContract(contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_D))
+                    .enemyChance());
+        assertEquals(30,
+              OrbitalControlCalculator.forContract(contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_C))
+                    .enemyChance());
+    }
+
+    @Test
+    void aWellEquippedEnemyIsMoreLikelyToHoldOrbit() {
+        OrbitalControl control = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_A));
+
+        assertEquals(60, control.enemyChance());
+    }
+
+    @Test
+    void equipmentAndMoraleAddTogether() {
+        // D is -20 and Advancing is +7, so a well-motivated but poorly equipped enemy still ends up behind.
+        assertEquals(27,
+              OrbitalControlCalculator.forContract(contract(ContractMoraleLevel.ADVANCING, DragoonRating.DRAGOON_D))
+                    .enemyChance());
+    }
+
+    @Test
+    void theEnemysChanceStopsShortOfCertainty() {
+        // A* is +40 and Overwhelming is +20, which would ask for 100. Orbit is never a certainty for either side.
+        OrbitalControl control = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.OVERWHELMING, DragoonRating.DRAGOON_ASTAR));
+
+        assertEquals(OrbitalControlCalculator.MAXIMUM_CHANCE, control.enemyChance());
+        // The two tracks are independent, so nothing the enemy does moves the player's.
+        assertEquals(40, control.playerChance());
+    }
+
+    @Test
+    void aWellEquippedEnemyIsWorthMoreThanAMerelyGoodOne() {
+        // Under the old contested sky both of these hit the same ceiling; on their own track they no longer do.
+        int rated_A = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_A)).enemyChance();
+        int rated_ASTAR = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_ASTAR)).enemyChance();
+
+        assertEquals(60, rated_A);
+        assertEquals(80, rated_ASTAR);
     }
 
     @Test
@@ -125,7 +219,6 @@ class OrbitalControlCalculatorTest {
 
         assertEquals(50, control.playerChance());
         assertEquals(30, control.enemyChance());
-        assertEquals(20, control.neitherChance());
     }
 
     @Test
@@ -137,7 +230,6 @@ class OrbitalControlCalculatorTest {
 
         assertEquals(30, control.playerChance());
         assertEquals(50, control.enemyChance());
-        assertEquals(20, control.neitherChance());
     }
 
     @Test
@@ -187,53 +279,58 @@ class OrbitalControlCalculatorTest {
         AbstractContract contract = contract(ContractMoraleLevel.OVERWHELMING, wins.toArray(new Scenario[0]));
         OrbitalControl control = OrbitalControlCalculator.forContract(contract);
 
-        assertEquals(100, control.playerChance());
+        assertEquals(OrbitalControlCalculator.MAXIMUM_CHANCE, control.playerChance());
         assertEquals(0, control.enemyChance());
-        assertEquals(0, control.neitherChance());
     }
 
     @Test
-    void sharesNeverExceedTheWholeSky() {
-        AbstractContract contract = contract(ContractMoraleLevel.OVERWHELMING,
-              spaceScenario(ScenarioStatus.DECISIVE_VICTORY));
-        OrbitalControl control = OrbitalControlCalculator.forContract(contract);
+    void bothSidesCanBeOverheadAtOnce() {
+        // A well-equipped enemy in good spirits reaches 80 while the player keeps their own 40. Under the old
+        // contested sky that was impossible; on separate tracks it is an ordinary scenario.
+        OrbitalControl control = OrbitalControlCalculator.forContract(
+              contract(ContractMoraleLevel.OVERWHELMING, DragoonRating.DRAGOON_A));
 
-        assertTrue(control.playerChance() + control.enemyChance() <= 100,
-              "player %d%% and enemy %d%% together claim more than the whole sky".formatted(control.playerChance(),
-                    control.enemyChance()));
+        assertEquals(40, control.playerChance());
+        assertEquals(80, control.enemyChance());
+        assertTrue(control.playerChance() + control.enemyChance() > 100,
+              "expected the two independent tracks to be free to exceed 100 between them");
     }
 
     @Test
-    void aSkyBelongingEntirelyToThePlayerIsAlwaysRolledTheirWay() {
-        assertEquals(OrbitalHolder.PLAYER, OrbitalControlCalculator.roll(new OrbitalControl(100, 0)));
+    void neitherSideCanEverBeCertainOfOrbit() {
+        assertEquals(95, OrbitalControlCalculator.MAXIMUM_CHANCE);
+        assertEquals(95, OrbitalControlCalculator.chance(100));
+        assertEquals(95, OrbitalControlCalculator.chance(500));
+        assertEquals(0, OrbitalControlCalculator.chance(-500));
+        assertEquals(40, OrbitalControlCalculator.chance(40));
     }
 
     @Test
-    void aSkyBelongingEntirelyToTheEnemyIsAlwaysRolledTheirWay() {
-        assertEquals(OrbitalHolder.OPFOR, OrbitalControlCalculator.roll(new OrbitalControl(0, 100)));
+    void aCertainChanceAlwaysHoldsOrbit() {
+        assertTrue(OrbitalControlCalculator.holdsOrbit(100));
     }
 
     @Test
-    void anEmptySkyBelongsToNeitherSide() {
-        assertEquals(OrbitalHolder.NEITHER, OrbitalControlCalculator.roll(new OrbitalControl(0, 0)));
+    void aZeroChanceNeverHoldsOrbit() {
+        assertFalse(OrbitalControlCalculator.holdsOrbit(0));
+        assertFalse(OrbitalControlCalculator.holdsOrbit(-10));
     }
 
     @Test
-    void aContestedSkyEventuallyFallsToBothSidesAndNeither() {
-        boolean player = false;
-        boolean opfor = false;
-        boolean neither = false;
+    void anEvenChanceEventuallyFallsBothWays() {
+        boolean held = false;
+        boolean missed = false;
 
-        // 40/40/20 over a thousand rolls: a run that misses any of the three is a bug, not bad luck.
+        // A 40% chance over a thousand rolls: a run that never lands on one side is a bug, not bad luck.
         for (int i = 0; i < 1000; i++) {
-            switch (OrbitalControlCalculator.roll(new OrbitalControl(40, 40))) {
-                case PLAYER -> player = true;
-                case OPFOR -> opfor = true;
-                case NEITHER -> neither = true;
+            if (OrbitalControlCalculator.holdsOrbit(40)) {
+                held = true;
+            } else {
+                missed = true;
             }
         }
 
-        assertTrue(player && opfor && neither, "a 40/40/20 sky never fell to one of its three outcomes");
+        assertTrue(held && missed, "a 40% chance never produced one of its two outcomes");
     }
 
     private static Scenario spaceScenario(ScenarioStatus status) {
@@ -243,10 +340,26 @@ class OrbitalControlCalculatorTest {
         return scenario;
     }
 
+    /** A contract whose enemy is equipment rating B, so only the morale and space-battle terms are in play. */
     private static AbstractContract contract(ContractMoraleLevel moraleLevel, Scenario... scenarios) {
+        return contract(moraleLevel, DragoonRating.DRAGOON_B, scenarios);
+    }
+
+    private static AbstractContract contract(ContractMoraleLevel moraleLevel, DragoonRating rating,
+          Scenario... scenarios) {
+        // Built before the stubbing starts: a value created inside thenReturn() can leave the outer when() unfinished.
+        EnemyData enemy = enemyRated(rating);
+        List<Scenario> fought = List.of(scenarios);
+
         AbstractContract contract = mock(AbstractContract.class);
         when(contract.getMoraleLevel()).thenReturn(moraleLevel);
-        when(contract.getScenarios()).thenReturn(List.of(scenarios));
+        when(contract.getEnemyData()).thenReturn(enemy);
+        when(contract.getScenarios()).thenReturn(fought);
         return contract;
+    }
+
+    private static EnemyData enemyRated(DragoonRating rating) {
+        EnemyData enemy = new EnemyData("LA", null, "Opposing Force", null, null);
+        return new EnemyData(enemy, SkillLevel.REGULAR, rating.getRating());
     }
 }

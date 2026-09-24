@@ -45,10 +45,7 @@ public enum CombatRole {
     TRAINING("CombatRole.TRAINING.text", "CombatRole.TRAINING.toolTipText"),
     AUXILIARY("CombatRole.AUXILIARY.text", "CombatRole.AUXILIARY.toolTipText"),
     CADRE("CombatRole.CADRE.text", "CombatRole.CADRE.toolTipText"),
-    RESERVE("CombatRole.RESERVE.text", "CombatRole.RESERVE.toolTipText"),
-    // SkyEye: appended rather than slotted in beside the other support roles on purpose - parseFromString reads a
-    // saved role by ordinal first, so inserting here would silently re-label every existing campaign's formations.
-    ORBITAL_SUPPORT("CombatRole.ORBITAL_SUPPORT.text", "CombatRole.ORBITAL_SUPPORT.toolTipText");
+    RESERVE("CombatRole.RESERVE.text", "CombatRole.RESERVE.toolTipText");
     // endregion Enum Declarations
 
     // region Variable Declarations
@@ -98,14 +95,6 @@ public enum CombatRole {
 
     public boolean isReserve() {
         return this == RESERVE;
-    }
-
-    /**
-     * @return {@code true} when this formation stays in orbit and supports the battle with its naval weapons rather
-     *       than deploying to it.
-     */
-    public boolean isOrbitalSupport() {
-        return this == ORBITAL_SUPPORT;
     }
 
     /**

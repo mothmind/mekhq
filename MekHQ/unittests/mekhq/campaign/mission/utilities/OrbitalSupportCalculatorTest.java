@@ -38,13 +38,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.HashSet;
 import java.util.List;
-import java.util.UUID;
-import java.util.Vector;
+import java.util.Map;
+import java.util.Set;
 
 import megamek.common.OrbitalBay;
 import megamek.common.OrbitalBay.WeaponClass;
 import megamek.common.OrbitalSupport;
+import megamek.common.enums.SkillLevel;
 import megamek.common.equipment.WeaponMounted;
 import megamek.common.equipment.WeaponType;
 import megamek.common.units.Crew;
@@ -53,8 +55,7 @@ import megamek.common.units.Mek;
 import megamek.common.units.SpaceStation;
 import megamek.common.units.Warship;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.force.Formation;
-import mekhq.campaign.force.PlayerForce;
+import mekhq.campaign.enums.DragoonRating;
 import mekhq.campaign.unit.Unit;
 import org.junit.jupiter.api.Test;
 
@@ -193,30 +194,31 @@ class OrbitalSupportCalculatorTest {
     }
 
     @Test
-    void aShipOutsideAnOrbitalSupportFormationDoesNotFire() {
+    void anUnflaggedShipDoesNotFire() {
         Unit warship = unitFor(warshipWith("Unassigned", bay("Nose", capital(40))));
+        when(warship.isOrbitalSupport()).thenReturn(false);
 
-        assertEquals(OrbitalSupport.NONE,
-              OrbitalSupportCalculator.forCampaign(campaignWith(CombatRole.FRONTLINE, warship)));
+        Campaign campaign = mock(Campaign.class);
+        List<Unit> hangar = List.of(warship);
+        when(campaign.getUnits()).thenReturn(hangar);
+
+        assertEquals(OrbitalSupport.NONE, OrbitalSupportCalculator.forCampaign(campaign));
     }
 
     @Test
-    void aShipCountedTwiceThroughNestedFormationsStillFiresOnce() {
-        Unit warship = unitFor(warshipWith("Invincible", bay("Nose", capital(40))));
-        UUID id = UUID.randomUUID();
+    void onlyTheFlaggedShipsOfAHangarFire() {
+        Unit onStation = unitFor(warshipWith("Invincible", bay("Nose", capital(40))));
+        Unit inDock = unitFor(warshipWith("Vigilant", bay("Nose", capital(30))));
+        when(inDock.isOrbitalSupport()).thenReturn(false);
 
         Campaign campaign = mock(Campaign.class);
-        when(campaign.getUnit(id)).thenReturn(warship);
+        List<Unit> hangar = List.of(onStation, inDock);
+        when(campaign.getUnits()).thenReturn(hangar);
 
-        Vector<UUID> ids = new Vector<>(List.of(id));
-        List<Formation> formations = List.of(orbitalFormation(CombatRole.ORBITAL_SUPPORT, ids),
-              orbitalFormation(CombatRole.ORBITAL_SUPPORT, ids));
+        OrbitalSupport support = OrbitalSupportCalculator.forCampaign(campaign);
 
-        PlayerForce playerForce = mock(PlayerForce.class);
-        when(playerForce.getAllFormations()).thenReturn(formations);
-        when(campaign.getPlayerForce()).thenReturn(playerForce);
-
-        assertEquals(1, OrbitalSupportCalculator.forCampaign(campaign).strikesRemaining());
+        assertEquals(1, support.strikesRemaining());
+        assertEquals(List.of("Invincible"), support.shipNames());
     }
 
     @Test
@@ -294,6 +296,144 @@ class OrbitalSupportCalculatorTest {
     }
 
     @Test
+    void aRatedEnemyFleetIsSizedByItsEquipment() {
+        assertBayCountWithin(DragoonRating.DRAGOON_F, 1, 1);
+        assertBayCountWithin(DragoonRating.DRAGOON_D, 1, 1);
+        assertBayCountWithin(DragoonRating.DRAGOON_C, 1, 1);
+        assertBayCountWithin(DragoonRating.DRAGOON_B, 2, 6);
+        assertBayCountWithin(DragoonRating.DRAGOON_A, 4, 10);
+        assertBayCountWithin(DragoonRating.DRAGOON_ASTAR, 8, 20);
+    }
+
+    @Test
+    void aPoorlyEquippedEnemyFieldsLightGunsAndAWellEquippedOneFieldsWarshipArmament() {
+        assertTrue(heaviestBayOver(DragoonRating.DRAGOON_F) <= 10,
+              "an F-rated force fielded something heavier than a light naval gun");
+        assertTrue(heaviestBayOver(DragoonRating.DRAGOON_ASTAR) >= 30,
+              "an A*-rated force never fielded warship-grade armament");
+
+        // Each rating's heaviest gun is at least as heavy as the one below it: the ladder never goes backwards.
+        int previous = 0;
+        for (DragoonRating rating : new DragoonRating[] { DragoonRating.DRAGOON_F, DragoonRating.DRAGOON_D,
+                                                          DragoonRating.DRAGOON_C, DragoonRating.DRAGOON_B,
+                                                          DragoonRating.DRAGOON_A, DragoonRating.DRAGOON_ASTAR }) {
+            int heaviest = heaviestBayOver(rating);
+            assertTrue(heaviest >= previous, rating + " fields lighter guns than the rating below it");
+            previous = heaviest;
+        }
+    }
+
+    @Test
+    void everyRatingCanStillFieldAllThreeWeaponClasses() {
+        // The single bay a low-rated force gets is meant to be an even chance between the three, so no tier may
+        // quietly lose one.
+        for (DragoonRating rating : DragoonRating.values()) {
+            Set<WeaponClass> seen = new HashSet<>();
+            for (int draw = 0; draw < 300; draw++) {
+                OrbitalSupportCalculator.forOpposingForce("Fleet", rating)
+                      .bays()
+                      .forEach(bay -> seen.add(bay.weaponClass()));
+            }
+            assertEquals(Set.of(WeaponClass.ENERGY, WeaponClass.BALLISTIC, WeaponClass.CAPITAL_MISSILE), seen,
+                  rating + " cannot field all three weapon classes");
+        }
+    }
+
+    @Test
+    void enemyGunneryFollowsTheForceSkillAndScatters() {
+        int lowest = Integer.MAX_VALUE;
+        int highest = 0;
+        for (int draw = 0; draw < 500; draw++) {
+            int gunnery = OrbitalSupportCalculator.opposingGunnery(SkillLevel.REGULAR);
+            lowest = Math.min(lowest, gunnery);
+            highest = Math.max(highest, gunnery);
+        }
+
+        // Regular is Gunnery 4 in MegaMek's own table, scattered two either way.
+        assertEquals(2, lowest);
+        assertEquals(6, highest);
+    }
+
+    @Test
+    void enemyGunneryIsNeverBetterThanTwo() {
+        for (int draw = 0; draw < 500; draw++) {
+            assertTrue(OrbitalSupportCalculator.opposingGunnery(SkillLevel.LEGENDARY) >= 2,
+              "a Legendary force scattered into a better gunner than the cap allows");
+        }
+    }
+
+    @Test
+    void anUnskilledEnemyCrewFallsBackToRegular() {
+        assertEquals(OrbitalSupport.DEFAULT_GUNNERY, OrbitalSupportCalculator.opposingGunnery(null));
+        assertEquals(OrbitalSupport.DEFAULT_GUNNERY, OrbitalSupportCalculator.opposingGunnery(SkillLevel.NONE));
+    }
+
+    private int heaviestBayOver(DragoonRating rating) {
+        int heaviest = 0;
+        for (int draw = 0; draw < 300; draw++) {
+            for (OrbitalBay bay : OrbitalSupportCalculator.forOpposingForce("Fleet", rating).bays()) {
+                heaviest = Math.max(heaviest, bay.attackValue());
+            }
+        }
+        return heaviest;
+    }
+
+    @Test
+    void aRatedEnemyFleetIsArmedWithRealCapitalWeapons() {
+        // Every bay generated over many draws must be a gun a player could look up, at the Attack Value MegaMek
+        // gives it. An invented number here would be invisible until someone checked the damage in play.
+        Map<String, Integer> canon = Map.ofEntries(Map.entry("Naval Laser 35", 3),
+              Map.entry("Naval Laser 45", 4),
+              Map.entry("Naval Laser 55", 5),
+              Map.entry("Naval PPC (Light)", 7),
+              Map.entry("Naval PPC (Medium)", 9),
+              Map.entry("Naval PPC (Heavy)", 15),
+              Map.entry("Naval Autocannon (NAC/10)", 10),
+              Map.entry("Naval Autocannon (NAC/20)", 20),
+              Map.entry("Naval Autocannon (NAC/25)", 25),
+              Map.entry("Naval Autocannon (NAC/30)", 30),
+              Map.entry("Naval Autocannon (NAC/40)", 40),
+              Map.entry("Naval Gauss (Light)", 15),
+              Map.entry("Naval Gauss (Medium)", 25),
+              Map.entry("Naval Gauss (Heavy)", 30),
+              Map.entry("Capital Missile Launcher (Barracuda)", 2),
+              Map.entry("Capital Missile Launcher (White Shark)", 3),
+              Map.entry("Capital Missile Launcher (Killer Whale)", 4),
+              Map.entry("Capital Missile Launcher (Kraken)", 10));
+
+        for (DragoonRating rating : DragoonRating.values()) {
+            for (int draw = 0; draw < 100; draw++) {
+                for (OrbitalBay bay : OrbitalSupportCalculator.forOpposingForce("Fleet", rating).bays()) {
+                    assertTrue(canon.containsKey(bay.name()), "not a canon capital weapon: " + bay.name());
+                    assertEquals(canon.get(bay.name()), bay.attackValue(), bay.name());
+                }
+            }
+        }
+    }
+
+    @Test
+    void anUnratedEnemyGetsNoFleet() {
+        assertEquals(OrbitalSupport.NONE, OrbitalSupportCalculator.forOpposingForce("Fleet", null));
+    }
+
+    private void assertBayCountWithin(DragoonRating rating, int fewest, int most) {
+        int lowest = Integer.MAX_VALUE;
+        int highest = 0;
+
+        for (int draw = 0; draw < 500; draw++) {
+            int bays = OrbitalSupportCalculator.forOpposingForce("Fleet", rating).bays().size();
+            assertTrue((bays >= fewest) && (bays <= most),
+                  "%s produced %d bays, outside %d-%d".formatted(rating, bays, fewest, most));
+            lowest = Math.min(lowest, bays);
+            highest = Math.max(highest, bays);
+        }
+
+        // Over 500 draws a range that never reaches its own ends is a generator bug, not luck.
+        assertEquals(fewest, lowest, rating + " never produced its smallest fleet");
+        assertEquals(most, highest, rating + " never produced its largest fleet");
+    }
+
+    @Test
     void theOpposingForcePackageIsUsableAndModest() {
         OrbitalSupport support = OrbitalSupportCalculator.forOpposingForce("Kurita Flotilla");
 
@@ -303,35 +443,13 @@ class OrbitalSupportCalculatorTest {
         assertEquals(100, support.heaviestAvailableBay().orElseThrow().damage());
     }
 
+    /** A campaign whose hangar holds these units, every one of them flagged for orbital support. */
     private Campaign campaignWith(Unit... units) {
-        return campaignWith(CombatRole.ORBITAL_SUPPORT, units);
-    }
-
-    /** A campaign whose entire TO&E is one formation in the given role, holding these units. */
-    private Campaign campaignWith(CombatRole role, Unit... units) {
         Campaign campaign = mock(Campaign.class);
-
-        Vector<UUID> ids = new Vector<>();
-        for (Unit unit : units) {
-            UUID id = UUID.randomUUID();
-            ids.add(id);
-            when(campaign.getUnit(id)).thenReturn(unit);
-        }
-
         // Built before the stubbing starts: a mock created inside thenReturn() leaves the outer when() unfinished.
-        List<Formation> formations = List.of(orbitalFormation(role, ids));
-
-        PlayerForce playerForce = mock(PlayerForce.class);
-        when(playerForce.getAllFormations()).thenReturn(formations);
-        when(campaign.getPlayerForce()).thenReturn(playerForce);
+        List<Unit> hangar = List.of(units);
+        when(campaign.getUnits()).thenReturn(hangar);
         return campaign;
-    }
-
-    private Formation orbitalFormation(CombatRole role, Vector<UUID> unitIds) {
-        Formation formation = mock(Formation.class);
-        when(formation.getCombatRoleInMemory()).thenReturn(role);
-        when(formation.getAllUnits(false)).thenReturn(unitIds);
-        return formation;
     }
 
     private Unit unitFor(Entity entity) {
@@ -341,6 +459,7 @@ class OrbitalSupportCalculatorTest {
         when(unit.isFunctional()).thenReturn(true);
         when(unit.isMothballed()).thenReturn(false);
         when(unit.isSalvage()).thenReturn(false);
+        when(unit.isOrbitalSupport()).thenReturn(true);
         return unit;
     }
 

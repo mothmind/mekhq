@@ -63,11 +63,15 @@ import megamek.client.ui.dialogs.iconChooser.CamoChooserDialog;
 import megamek.common.annotations.Nullable;
 import megamek.common.enums.SkillLevel;
 import megamek.common.equipment.GunEmplacement;
+import megamek.common.units.Entity;
 import megamek.common.units.EntityWeightClass;
+import megamek.common.units.Jumpship;
+import megamek.common.units.SpaceStation;
 import megamek.common.units.UnitType;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.enums.CampaignTransportType;
 import mekhq.campaign.events.DeploymentChangedEvent;
 import mekhq.campaign.events.NetworkChangedEvent;
@@ -132,6 +136,7 @@ public class TOEMouseAdapter extends JPopupMenuAdapter {
     private static final String ASSIGN_TO_SHIP = "ASSIGN_TO_SHIP";
     private static final String DEPLOY_UNIT = "DEPLOY_UNIT";
     private static final String GOTO_UNIT = "GOTO_UNIT";
+    private static final String TOGGLE_ORBITAL_SUPPORT = "TOGGLE_ORBITAL_SUPPORT";
     private static final String REMOVE_UNIT = "REMOVE_UNIT";
     private static final String UNDEPLOY_UNIT = "UNDEPLOY_UNIT";
 
@@ -141,6 +146,7 @@ public class TOEMouseAdapter extends JPopupMenuAdapter {
     private static final String COMMAND_DEPLOY_UNIT = "DEPLOY_UNIT|UNIT|";
     private static final String COMMAND_UNDEPLOY_UNIT = "UNDEPLOY_UNIT|UNIT|empty|";
     private static final String COMMAND_GOTO_UNIT = "GOTO_UNIT|UNIT|empty|";
+    private static final String COMMAND_TOGGLE_ORBITAL_SUPPORT = "TOGGLE_ORBITAL_SUPPORT|UNIT|empty|";
 
     // Tech-Related
     private static final String ADD_LANCE_TECH = "ADD_LANCE_TECH";
@@ -622,6 +628,16 @@ public class TOEMouseAdapter extends JPopupMenuAdapter {
             for (Unit unit : units) {
                 gui.undeployUnit(unit);
                 // Event triggered from undeployUnit
+            }
+        } else if (command.contains(TOEMouseAdapter.TOGGLE_ORBITAL_SUPPORT)) {
+            if (null != singleUnit) {
+                // Toggled against the first unit's state rather than each unit's own, so a mixed selection lands on
+                // one answer instead of inverting into a different mix.
+                boolean provideSupport = !singleUnit.isOrbitalSupport();
+                for (Unit unit : units) {
+                    unit.setOrbitalSupport(provideSupport);
+                    MekHQ.triggerEvent(new UnitChangedEvent(unit));
+                }
             }
         } else if (command.contains(TOEMouseAdapter.GOTO_UNIT)) {
             if (null != singleUnit) {
@@ -1620,6 +1636,8 @@ public class TOEMouseAdapter extends JPopupMenuAdapter {
 
             TransportAssignmentMenus.addTransportMenus(gui.getFrame(), popup, gui.getCampaign(), units);
 
+            addOrbitalSupportMenuItem(popup, units, unitIds);
+
             if (!multipleSelection) {
                 popup.add(new ExportUnitSpriteMenu(gui.getFrame(), gui.getCampaign(), unit));
 
@@ -1638,6 +1656,56 @@ public class TOEMouseAdapter extends JPopupMenuAdapter {
         }
 
         return Optional.of(popup);
+    }
+
+    /**
+     * Offers to put a vessel on orbital support, or take it off again.
+     *
+     * <p>Only shown for a JumpShip or WarShip, and only while the campaign option is on: it is meaningless anywhere
+     * else, and a menu full of entries that do nothing is worse than a shorter menu. A check mark marks a vessel
+     * already on station, so the state can be read without opening anything.</p>
+     *
+     * @param popup   The unit popup being built
+     * @param units   The selected units
+     * @param unitIds The selected units' ids, joined as the action command expects them
+     */
+    private void addOrbitalSupportMenuItem(JPopupMenu popup, Vector<Unit> units, StringBuilder unitIds) {
+        if (!gui.getCampaign().getCampaignOptions().get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT)) {
+            return;
+        }
+
+        if (units.isEmpty()) {
+            return;
+        }
+
+        for (Unit unit : units) {
+            if (!canProvideOrbitalSupport(unit)) {
+                return;
+            }
+        }
+
+        String text = "Providing Orbital Support";
+        if (units.getFirst().isOrbitalSupport()) {
+            text = "✓ " + text;
+        }
+
+        JMenuItem menuItem = new JMenuItem(text);
+        menuItem.setToolTipText("This vessel stays in orbit and supports your ground battles with its naval weapon "
+              + "bays instead of deploying. Each of its bays can fire once per scenario.");
+        menuItem.setActionCommand(TOEMouseAdapter.COMMAND_TOGGLE_ORBITAL_SUPPORT + unitIds);
+        menuItem.addActionListener(this);
+        menuItem.setEnabled(true);
+        popup.add(menuItem);
+    }
+
+    /** @return True when this unit is the kind of vessel that could bombard from orbit at all */
+    private static boolean canProvideOrbitalSupport(Unit unit) {
+        if ((unit == null) || (unit.getEntity() == null)) {
+            return false;
+        }
+
+        Entity entity = unit.getEntity();
+        return (entity instanceof Jumpship) && !(entity instanceof SpaceStation);
     }
 
     /**

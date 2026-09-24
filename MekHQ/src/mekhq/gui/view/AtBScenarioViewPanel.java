@@ -54,10 +54,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
+import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.utilities.OrbitalControlCalculator;
 import mekhq.campaign.mission.utilities.OrbitalControlCalculator.OrbitalControl;
+import mekhq.campaign.mission.utilities.OrbitalStrategyCalculator;
 import mekhq.campaign.mission.utilities.OrbitalSupportCalculator;
 import megamek.common.OrbitalBay;
+import megamek.common.enums.SkillLevel;
 import megamek.common.OrbitalSupport;
 import java.util.UUID;
 import java.util.Vector;
@@ -81,6 +84,9 @@ import mekhq.MekHQ;
 import mekhq.Utilities;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.OrbitalSupportMethod;
+import mekhq.campaign.enums.DragoonRating;
+import mekhq.campaign.unit.Unit;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.force.FormationStub;
 import mekhq.campaign.force.UnitStub;
@@ -248,8 +254,6 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
 
         int y = 0;
 
-        y = addOrbitalSupportWarning(gridBagConstraints, y);
-
         lblStatus.setName("lblStatus");
         lblStatus.setText(resourceMap.getString("lblStatus.text"));
         gridBagConstraints.gridx = 0;
@@ -375,6 +379,8 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         gridBagConstraints.anchor = GridBagConstraints.NORTHWEST;
         panStats.add(txtDesc, gridBagConstraints);
 
+        y = addOrbitalSupportWarning(gridBagConstraints, y);
+
         StringBuilder objectiveBuilder = new StringBuilder();
 
         String disclaimer = getTextAt(RESOURCE_BUNDLE, "AtBScenarioViewPanel.scenarioDescription.disclaimer");
@@ -479,8 +485,10 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
      * are read from the hangar exactly as they will be at launch, while the opposing force is only ever a chance,
      * since that roll happens per scenario when the game starts.</p>
      *
-     * <p>Placed at the top of the briefing rather than the end: the deployment controls sit over the bottom of this
-     * panel and hid it there, and a warning that the blast will land on your own units is not much use unread.</p>
+     * <p>Placed between the scenario's setting and the operation details: it is neither a condition of the
+     * battlefield nor an objective, but it changes how the objectives are approached, so it reads where the
+     * briefing turns from what the ground is to what is to be done on it. It is emphatically not at the end, where
+     * the deployment controls sit over the bottom of this panel and hid it entirely.</p>
      *
      * @param y The next free row
      *
@@ -494,13 +502,14 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             return y;
         }
 
-        boolean contested = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD).isContested();
-        OrbitalControl control = contested
+        OrbitalSupportMethod method = campaign.getCampaignOptions().get(CampaignOption.ORBITAL_SUPPORT_METHOD);
+        // Each side is rolled on its own track, so both of these can come up in the same scenario.
+        OrbitalControl control = method.isContested()
               ? OrbitalControlCalculator.forContract(scenario.getContract(campaign))
               : null;
 
-        List<String> assets = playerAssetLines(contested, control);
-        List<String> enemyLines = enemyWarningLines(contested, control);
+        List<String> assets = playerAssetLines(method, control);
+        List<String> enemyLines = enemyWarningLines(method, control);
 
         if (assets.isEmpty() && enemyLines.isEmpty()) {
             return y;
@@ -541,39 +550,45 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
      * and its arrival time; repeating that roster here only buries the one thing the briefing is for, which is that
      * there is fire available and roughly how much of it.</p>
      *
-     * @param contested Whether orbital space is contested this campaign
-     * @param control   The current division of that space, or null when it is not contested
+     * @param method  How this campaign decides who has a ship overhead
+     * @param control Each side's current chance, or null unless the campaign rolls percentages
      *
      * @return One line per supporting vessel, empty when the force has nothing overhead
      */
-    private List<String> playerAssetLines(boolean contested, @Nullable OrbitalControl control) {
-        OrbitalSupport playerSupport = OrbitalSupportCalculator.forCampaign(campaign);
-        if (!playerSupport.isAvailable()) {
-            return new ArrayList<>();
-        }
-
+    private List<String> playerAssetLines(OrbitalSupportMethod method, @Nullable OrbitalControl control) {
         List<String> lines = new ArrayList<>();
-        // Under the contest the hangar is only half the story: the flotilla still has to win the firing position,
-        // so the odds of it being there at all head the list rather than being left implied. It belongs to the
-        // force rather than to any one ship, which is why it is its own line.
-        if (contested && (control != null)) {
-            lines.add(String.format("%d%% chance of holding orbit this scenario", control.playerChance()));
+
+        // The force-wide odds under the percentage method belong to the force, not to any one ship, so they head
+        // the list. Under the Strategy method every ship answers for itself and the odds go on its own line.
+        if (method.isContested() && (control != null)) {
+            lines.add(String.format("%d%% chance of being on station this scenario", control.playerChance()));
         }
 
-        // Grouped by vessel in the order their bays are offered: one line per ship on station, however many of
-        // them the orbital support formations put up there.
-        Map<String, List<OrbitalBay>> byShip = new LinkedHashMap<>();
-        for (OrbitalBay bay : playerSupport.availableBays()) {
-            byShip.computeIfAbsent(bay.shipName(), ship -> new ArrayList<>()).add(bay);
-        }
+        int modifier = OrbitalStrategyCalculator.rollModifier(scenario.getContract(campaign), true);
 
-        for (Map.Entry<String, List<OrbitalBay>> ship : byShip.entrySet()) {
-            int bays = ship.getValue().size();
-            lines.add(String.format("%s (gunnery %d): %d bay%s",
-                  ship.getKey(),
-                  ship.getValue().get(0).gunnery(),
+        for (Unit unit : OrbitalSupportCalculator.supportingUnits(campaign)) {
+            OrbitalSupport vessel = OrbitalSupportCalculator.forEntity(unit.getEntity());
+            if (!vessel.isAvailable()) {
+                continue;
+            }
+
+            int bays = vessel.availableBays().size();
+            String tail = String.format("gunnery %d, %d bay%s",
+                  vessel.availableBays().get(0).gunnery(),
                   bays,
-                  (bays == 1) ? "" : "s"));
+                  (bays == 1) ? "" : "s");
+
+            if (method.isStrategyRoll()) {
+                int target = OrbitalStrategyCalculator.playerTargetNumber(unit.getCommander());
+                lines.add(String.format("%s: %d+ (%+d) %d%%, %s",
+                      unit.getName(),
+                      target,
+                      modifier,
+                      OrbitalStrategyCalculator.oddsOf(target, modifier),
+                      tail));
+            } else {
+                lines.add(String.format("%s: %s", unit.getName(), tail));
+            }
         }
 
         return lines;
@@ -584,16 +599,36 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
      *
      * <p>Neither method can promise anything here, since the roll happens when the game starts.</p>
      *
-     * @param contested Whether orbital space is contested this campaign
-     * @param control   The current division of that space, or null when it is not contested
+     * @param method  How this campaign decides who has a ship overhead
+     * @param control Each side's current chance, or null unless the campaign rolls percentages
      *
      * @return The lines to warn with, empty when the opposing force cannot have a ship overhead
      */
-    private List<String> enemyWarningLines(boolean contested, @Nullable OrbitalControl control) {
+    private List<String> enemyWarningLines(OrbitalSupportMethod method, @Nullable OrbitalControl control) {
         List<String> lines = new ArrayList<>();
 
-        if (contested && (control != null)) {
-            lines.add(String.format("%d%% chance of holding orbit this scenario", control.enemyChance()));
+        if (method.isContested() && (control != null)) {
+            lines.add(String.format("%d%% chance of a ship overhead willing to fire", control.enemyChance()));
+            addEnemyBayLine(lines, scenario.getContract(campaign));
+            return lines;
+        }
+
+        if (method.isStrategyRoll()) {
+            AbstractContract contract = scenario.getContract(campaign);
+            int shipChance = OrbitalStrategyCalculator.enemyShipChance(contract);
+            if (shipChance <= 0) {
+                return lines;
+            }
+
+            SkillLevel forceSkill = (contract.getEnemyData() == null) ? null : contract.getEnemyData().forceSkill();
+            int target = OrbitalStrategyCalculator.enemyTargetNumber(forceSkill);
+            int modifier = OrbitalStrategyCalculator.rollModifier(contract, false);
+            lines.add(String.format("%d%% chance of having a capital ship at all", shipChance));
+            lines.add(String.format("Rolls %d+ (%+d) %d%% to make its firing window",
+                  target,
+                  modifier,
+                  OrbitalStrategyCalculator.oddsOf(target, modifier)));
+            addEnemyBayLine(lines, contract);
             return lines;
         }
 
@@ -603,6 +638,31 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
         }
 
         return lines;
+    }
+
+    /**
+     * Adds what the opposing force could be bringing, where its fleet is sized from its equipment rating.
+     *
+     * <p>How many guns are pointed back is the difference between spreading out and not bothering, and it is not
+     * something a commander could work out from the odds of the enemy turning up at all.</p>
+     *
+     * @param lines    The enemy's warning lines, appended to
+     * @param contract The contract being fought
+     */
+    private static void addEnemyBayLine(List<String> lines, AbstractContract contract) {
+        if (contract.getEnemyData() == null) {
+            return;
+        }
+
+        DragoonRating rating = DragoonRating.fromRating(contract.getEnemyData().equipmentRating());
+        int[] range = OrbitalSupportCalculator.bayCountRange(rating);
+        if (range == null) {
+            return;
+        }
+
+        lines.add((range[0] == range[1])
+              ? String.format("%d bay if it does", range[0])
+              : String.format("%d-%d bays if it does", range[0], range[1]));
     }
 
     /** Appends one headed bullet list to the warning, or nothing at all when there is nothing to list. */
