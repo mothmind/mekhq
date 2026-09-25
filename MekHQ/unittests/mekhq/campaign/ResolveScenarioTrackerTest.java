@@ -34,6 +34,7 @@ package mekhq.campaign;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -361,5 +362,110 @@ class ResolveScenarioTrackerTest {
         tracker.assignKills();
 
         verify(unit, times(1)).addKillLogEntry(any());
+    }
+
+    /**
+     * Gives a crew member a person status carrying the given scenario XP, as processing the game would.
+     */
+    private ResolveScenarioTracker.PersonStatus statusFor(ResolveScenarioTracker tracker, Person person, int xp) {
+        ResolveScenarioTracker.PersonStatus status = new ResolveScenarioTracker.PersonStatus(person.getFullName(),
+              "Locust LCT-1V", 0, person.getId());
+        status.setXP(xp);
+        tracker.peopleStatus.put(person.getId(), status);
+        return status;
+    }
+
+    /**
+     * A pilot whose unit posed in the round it made a kill earns the pose bonus on top of their scenario XP.
+     */
+    @Test
+    void assignKillsAddsPoseBonusXPForAPosedKill() {
+        ResolveScenarioTracker tracker = createTracker();
+        Person pilot = mockCrewMember("Natasha Kerensky");
+        Unit unit = unitCreditedWithAKill(tracker, List.of(pilot));
+        ResolveScenarioTracker.PersonStatus status = statusFor(tracker, pilot, 2);
+        tracker.posedKills.put("Atlas AS7-D", unit.getId().toString());
+
+        tracker.assignKills();
+
+        assertEquals(2 + ResolveScenarioTracker.POSE_KILL_XP, status.getXP());
+    }
+
+    /**
+     * An ordinary kill earns no pose bonus.
+     */
+    @Test
+    void assignKillsAddsNoPoseBonusForAnOrdinaryKill() {
+        ResolveScenarioTracker tracker = createTracker();
+        Person pilot = mockCrewMember("Natasha Kerensky");
+        unitCreditedWithAKill(tracker, List.of(pilot));
+        ResolveScenarioTracker.PersonStatus status = statusFor(tracker, pilot, 2);
+
+        tracker.assignKills();
+
+        assertEquals(2, status.getXP());
+    }
+
+    /**
+     * The bonus belongs to the unit that posed. When the player hands the kill to another unit in the resolution
+     * wizard, the new owner gets the kill but not the bonus.
+     */
+    @Test
+    void assignKillsAddsNoPoseBonusWhenTheKillIsReassigned() {
+        ResolveScenarioTracker tracker = createTracker();
+        Person pilot = mockCrewMember("Natasha Kerensky");
+        unitCreditedWithAKill(tracker, List.of(pilot));
+        ResolveScenarioTracker.PersonStatus status = statusFor(tracker, pilot, 2);
+        tracker.posedKills.put("Atlas AS7-D", UUID.randomUUID().toString());
+
+        tracker.assignKills();
+
+        assertEquals(2, status.getXP());
+        assertEquals(1, status.getKills().size(), "the kill itself still counts");
+    }
+
+    /**
+     * A kill the game recorded as made while posing is picked up as a posed kill, credited to the posing unit.
+     */
+    @Test
+    void processGameRecordsAKillMadeWhilePosing() {
+        Entity poser = createPlayerEntity("Locust LCT-1V");
+        poser.setId(7);
+        poser.setPosing(true);
+        Entity victim = createEnemyEntity("Champion CHP-3P");
+        poser.addKill(victim);
+
+        when(victoryEvent.getEntity(7)).thenReturn(poser);
+        when(victoryEvent.getDevastatedEntities())
+              .thenReturn(Collections.enumeration(List.of(victim)))
+              .thenReturn(Collections.enumeration(List.of(victim)));
+
+        ResolveScenarioTracker tracker = createTracker();
+        tracker.processGame();
+
+        assertEquals(poser.getExternalIdAsString(), tracker.killCredits.get(victim.getDisplayName()));
+        assertEquals(poser.getExternalIdAsString(), tracker.posedKills.get(victim.getDisplayName()));
+    }
+
+    /**
+     * A kill made without posing is credited as usual and not recorded as posed.
+     */
+    @Test
+    void processGameDoesNotRecordAnOrdinaryKillAsPosed() {
+        Entity killer = createPlayerEntity("Locust LCT-1V");
+        killer.setId(7);
+        Entity victim = createEnemyEntity("Champion CHP-3P");
+        killer.addKill(victim);
+
+        when(victoryEvent.getEntity(7)).thenReturn(killer);
+        when(victoryEvent.getDevastatedEntities())
+              .thenReturn(Collections.enumeration(List.of(victim)))
+              .thenReturn(Collections.enumeration(List.of(victim)));
+
+        ResolveScenarioTracker tracker = createTracker();
+        tracker.processGame();
+
+        assertEquals(killer.getExternalIdAsString(), tracker.killCredits.get(victim.getDisplayName()));
+        assertNull(tracker.posedKills.get(victim.getDisplayName()));
     }
 }

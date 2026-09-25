@@ -35,6 +35,7 @@ package mekhq.campaign;
 
 import static java.lang.Math.ceil;
 import static mekhq.campaign.enums.DailyReportType.FINANCES;
+import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
 import static mekhq.campaign.enums.DailyReportType.TECHNICAL;
 import static mekhq.campaign.mission.scenarios.Scenario.T_SPACE;
 import static mekhq.campaign.parts.enums.PartQuality.QUALITY_D;
@@ -111,6 +112,7 @@ import mekhq.utilities.ReportingUtilities;
 public class ResolveScenarioTracker {
     private static final String RESOURCE_BUNDLE = "mekhq.resources.ResolveScenarioTracker";
     public static final double DAMANGED_PART_COMPENSATION_MODIFIER = 0.2;
+    public static final int POSE_KILL_XP = 1;
 
     Map<UUID, Entity> entities;
     Map<UUID, List<Entity>> bayLoadedEntities;
@@ -132,6 +134,7 @@ public class ResolveScenarioTracker {
     Hashtable<UUID, PersonStatus> peopleStatus;
     Hashtable<UUID, OppositionPersonnelStatus> oppositionPersonnel;
     Hashtable<String, String> killCredits;
+    Hashtable<String, String> posedKills;
     Hashtable<UUID, EjectedCrew> ejections;
     Hashtable<UUID, EjectedCrew> enemyEjections;
 
@@ -171,6 +174,7 @@ public class ResolveScenarioTracker {
         peopleStatus = new Hashtable<>();
         oppositionPersonnel = new Hashtable<>();
         killCredits = new Hashtable<>();
+        posedKills = new Hashtable<>();
         ejections = new Hashtable<>();
         enemyEjections = new Hashtable<>();
         entities = new HashMap<>();
@@ -594,6 +598,9 @@ public class ResolveScenarioTracker {
 
         if ((null != killer) && !"-1".equals(killer.getExternalIdAsString())) {
             killCredits.put(e.getDisplayName(), killer.getExternalIdAsString());
+            if (e.wasKilledByPosingUnit()) {
+                posedKills.put(e.getDisplayName(), killer.getExternalIdAsString());
+            }
         } else {
             killCredits.put(e.getDisplayName(), "None");
         }
@@ -676,6 +683,7 @@ public class ResolveScenarioTracker {
                     // one unit history entry per kill, regardless of how many named crew the unit has - a unit run
                     // entirely by temporary crew still scored the kill
                     Person commander = unit.getCommander();
+                    boolean posed = unit.getId().toString().equals(posedKills.get(killed));
                     UnitLogger.scoredKill(unit,
                           campaign.getLocalDate(),
                           killed,
@@ -699,6 +707,13 @@ public class ResolveScenarioTracker {
                               getScenarioId(),
                               formationId,
                               unit.getEntity().getEntityType()));
+
+                        if (posed && !status.isDead()) {
+                            status.setXP(status.getXP() + POSE_KILL_XP);
+                            campaign.addReport(PERSONNEL, getFormattedTextAt(RESOURCE_BUNDLE,
+                                  "ResolveScenarioTracker.poseKillReport",
+                                  person.getHyperlinkedFullTitle(), killed, POSE_KILL_XP));
+                        }
                     }
                 }
             }
@@ -1403,6 +1418,12 @@ public class ResolveScenarioTracker {
         }
 
         killCredits = parser.getKills();
+        posedKills = new Hashtable<>();
+        for (String killed : parser.getPosedKills()) {
+            if (killCredits.containsKey(killed)) {
+                posedKills.put(killed, killCredits.get(killed));
+            }
+        }
 
         // Map everyone's ID to External ID
         for (Entity e : parser.getEntities()) {
