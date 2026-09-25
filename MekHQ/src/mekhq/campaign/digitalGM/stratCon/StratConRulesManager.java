@@ -357,6 +357,8 @@ public class StratConRulesManager {
                     // path in deployForceToCoords so auto-generated ambushes get the same post-finalization state.
                     scenario.getBackingScenario().setIsCrisis(true);
                     scenario.setTurningPoint(false);
+
+                    StratConAmbushPlanner.considerAmbush(track, scenarioCoords, true, scenario);
                 }
             }
         }
@@ -1219,6 +1221,7 @@ public class StratConRulesManager {
                     StratConGMs.opForGeneration(campaignOptions)
                           .generateOpFor(revealedScenario.getBackingScenario(), contract, campaign);
                 }
+                StratConAmbushPlanner.considerAmbush(track, coords, !deployedToUnexploredHex, revealedScenario);
             }
             return;
         }
@@ -1304,6 +1307,10 @@ public class StratConRulesManager {
 
             if (scenario != null) {
                 finalizeBackingScenario(campaign, contract, track, autoAssignLances, scenario);
+
+                if (autoAssignLances) {
+                    StratConAmbushPlanner.considerAmbush(track, coords, !deployedToUnexploredHex, scenario);
+                }
 
                 if (isAmbushed) {
                     // Ambushes are always Crisis scenarios, this stop

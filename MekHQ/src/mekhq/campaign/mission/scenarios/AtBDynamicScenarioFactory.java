@@ -1807,6 +1807,9 @@ public class AtBDynamicScenarioFactory {
 
         for (int x = 0; x < scenario.getNumBots(); x++) {
             BotForce botForce = scenario.getBotForce(x);
+            if (botForce.isSecretAmbush()) {
+                continue;
+            }
 
             ScenarioForceTemplate forceTemplate = scenario.getBotForceTemplates().get(botForce);
             boolean botForceIsHostile = botForce.getTeam() == ForceAlignment.Opposing.ordinal() ||

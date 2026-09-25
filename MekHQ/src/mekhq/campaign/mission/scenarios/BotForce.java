@@ -81,6 +81,7 @@ public class BotForce implements IPlayerSettings {
     private int startingAnySEx = Entity.STARTING_ANY_NONE;
     private int startingAnySEy = Entity.STARTING_ANY_NONE;
     private int deployRound;
+    private boolean secretAmbush;
     private Camouflage camouflage = new Camouflage(Camouflage.COLOUR_CAMOUFLAGE, PlayerColour.BLUE.name());
     private PlayerColour colour = PlayerColour.BLUE;
     private BehaviorSettings behaviorSettings;
@@ -151,6 +152,7 @@ public class BotForce implements IPlayerSettings {
         copy.setStartingAnySEx(this.getStartingAnySEx());
         copy.setStartingAnySEy(this.getStartingAnySEy());
         copy.setDeployRound(this.getDeployRound());
+        copy.setSecretAmbush(this.isSecretAmbush());
         copy.setCamouflage(this.getCamouflage().clone());
         copy.setColour(this.getColour());
         copy.setTemplateName(this.getTemplateName());
@@ -325,6 +327,18 @@ public class BotForce implements IPlayerSettings {
 
     public void setDeployRound(int round) {
         this.deployRound = round;
+    }
+
+    /**
+     * @return true if this force is a secret ambush: it is kept off the battlefield and out of the briefing, and the
+     *       host brings it in mid-battle
+     */
+    public boolean isSecretAmbush() {
+        return secretAmbush;
+    }
+
+    public void setSecretAmbush(boolean secretAmbush) {
+        this.secretAmbush = secretAmbush;
     }
 
     public String getTemplateName() {
@@ -504,6 +518,9 @@ public class BotForce implements IPlayerSettings {
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "startingAnySEx", startingAnySEx);
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "startingAnySEy", startingAnySEy);
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "deployRound", deployRound);
+        if (secretAmbush) {
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "secretAmbush", true);
+        }
         getCamouflage().writeToXML(pw, indent);
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "colour", getColour().name());
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "templateName", templateName);
@@ -567,6 +584,8 @@ public class BotForce implements IPlayerSettings {
                     startingAnySEy = Integer.parseInt(wn2.getTextContent());
                 } else if (wn2.getNodeName().equalsIgnoreCase("deployRound")) {
                     deployRound = Integer.parseInt(wn2.getTextContent());
+                } else if (wn2.getNodeName().equalsIgnoreCase("secretAmbush")) {
+                    secretAmbush = Boolean.parseBoolean(wn2.getTextContent().trim());
                 } else if (wn2.getNodeName().equalsIgnoreCase(Camouflage.XML_TAG)) {
                     setCamouflage(Camouflage.parseFromXML(wn2));
                 } else if (wn2.getNodeName().equalsIgnoreCase("templateName")) {

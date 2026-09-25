@@ -107,6 +107,7 @@ public class AtBDynamicScenario extends AtBScenario {
     private List<UUID> friendlyDelayedReinforcements;
     private List<UUID> friendlyInstantReinforcements;
     private int hostileReinforcementDelayReduction;
+    private int secretAmbushRound;
 
     // derived fields used for various calculations
     private SkillLevel effectiveOpForSkill;
@@ -435,6 +436,17 @@ public class AtBDynamicScenario extends AtBScenario {
     }
 
     /**
+     * @return the round in which a secret ambush springs on the players, or 0 if this scenario has none
+     */
+    public int getSecretAmbushRound() {
+        return secretAmbushRound;
+    }
+
+    public void setSecretAmbushRound(int secretAmbushRound) {
+        this.secretAmbushRound = secretAmbushRound;
+    }
+
+    /**
      * This is used to indicate that player forces have been assigned to this scenario and that
      * AtBDynamicScenarioFactory.finalizeScenario() has been called on this scenario to generate opposing forces and
      * their bots, apply any present scenario modifiers, set up deployment turns, calculate which units belong to which
@@ -617,6 +629,9 @@ public class AtBDynamicScenario extends AtBScenario {
                   indent,
                   "hostileReinforcementDelayReduction",
                   getHostileReinforcementDelayReduction());
+            if (getSecretAmbushRound() > 0) {
+                MHQXMLUtility.writeSimpleXMLTag(pw, indent, "secretAmbushRound", getSecretAmbushRound());
+            }
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "effectiveOpForSkill", getEffectiveOpForSkill().name());
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "effectiveOpForQuality", getEffectiveOpForQuality());
 
@@ -681,6 +696,8 @@ public class AtBDynamicScenario extends AtBScenario {
                 }
             } else if (wn2.getNodeName().equalsIgnoreCase("hostileReinforcementDelayReduction")) {
                 setHostileReinforcementDelayReduction(MathUtility.parseInt(wn2.getTextContent().trim()));
+            } else if (wn2.getNodeName().equalsIgnoreCase("secretAmbushRound")) {
+                setSecretAmbushRound(MathUtility.parseInt(wn2.getTextContent().trim()));
             } else if (wn2.getNodeName().equalsIgnoreCase("effectiveOpForSkill")) {
                 setEffectiveOpForSkill(SkillLevel.valueOf(wn2.getTextContent().trim()));
             } else if (wn2.getNodeName().equalsIgnoreCase("effectiveOpForQuality")) {

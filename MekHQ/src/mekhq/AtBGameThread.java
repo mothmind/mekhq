@@ -388,6 +388,9 @@ public class AtBGameThread extends GameThread {
                 /* Add bots */
                 for (int i = 0; i < scenario.getNumBots(); i++) {
                     BotForce bf = scenario.getBotForce(i);
+                    if (bf.isSecretAmbush()) {
+                        continue;
+                    }
                     String name = bf.getName();
                     if (botName.contains(name)) {
                         int append = 2;

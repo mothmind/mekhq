@@ -100,7 +100,6 @@ import megamek.common.net.marshalling.SanityInputFilter;
 import megamek.common.planetaryConditions.PlanetaryConditions;
 import megamek.logging.MMLogger;
 import megamek.server.Server;
-import megamek.server.totalWarfare.TWGameManager;
 import megameklab.MegaMekLab;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.CampaignController;
@@ -555,7 +554,7 @@ public class MekHQ implements GameListener {
         hostDialog.dispose();
 
         try {
-            myServer = new Server(password, port, new TWGameManager(), register, metaServer);
+            myServer = new Server(password, port, new CampaignGameManager(), register, metaServer);
             if (loadSaveGame) {
                 FileDialog f = new FileDialog(campaignGUI.getFrame(), "Load Save Game");
                 f.setDirectory(System.getProperty("user.dir") + "/savegames");
@@ -579,6 +578,8 @@ public class MekHQ implements GameListener {
                   getText("startHost.serverStartFailed.title"));
             return;
         }
+        SecretAmbushSpringer.attach(myServer, getCampaign(), scenario);
+
         // Refactor this into a factory
         var useExperimentalPacarGui = getCampaign().getCampaignOptions().get(CampaignOption.AUTO_RESOLVE_EXPERIMENTAL_PACAR_GUI_ENABLED);
         if (autoResolveBehaviorSettings != null && useExperimentalPacarGui) {

@@ -108,7 +108,9 @@ public class ScenarioViewPanel extends JScrollablePanel {
         botStubs = new ArrayList<>();
         if (scenario.getStatus().isCurrent()) {
             for (int i = 0; i < scenario.getNumBots(); i++) {
-                botStubs.add(scenario.getBotForce(i).generateStub(this.campaign));
+                if (!scenario.getBotForce(i).isSecretAmbush()) {
+                    botStubs.add(scenario.getBotForce(i).generateStub(this.campaign));
+                }
             }
         } else {
             botStubs = scenario.getBotForcesStubs();

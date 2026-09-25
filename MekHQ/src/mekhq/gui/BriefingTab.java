@@ -109,6 +109,7 @@ import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.mission.scenarios.ScenarioForceTemplate;
 import mekhq.campaign.mission.scenarios.ScenarioObjective;
 import mekhq.campaign.mission.scenarios.ScenarioTemplate;
+import mekhq.campaign.mission.scenarios.SecretAmbush;
 import mekhq.campaign.mission.scenarios.camOpsSalvage.CamOpsSalvageUtilities;
 import mekhq.campaign.mission.scenarios.camOpsSalvage.SalvageFormationData;
 import mekhq.campaign.mission.scenarios.camOpsSalvage.SalvageTechData;
@@ -1843,6 +1844,10 @@ public final class BriefingTab extends CampaignGuiTab {
 
         if (getCampaignOptions().isUseStratCon() && (scenario instanceof AtBScenario atBScenario)) {
             atBScenario.refresh(getCampaign());
+
+            if (atBScenario instanceof AtBDynamicScenario dynamicScenario) {
+                SecretAmbush.prepare(getCampaign(), dynamicScenario);
+            }
 
             // Autoconfigure munitions for all non-player forces once more, using finalized
             // forces

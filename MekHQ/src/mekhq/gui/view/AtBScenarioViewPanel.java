@@ -92,6 +92,7 @@ import mekhq.campaign.force.FormationStub;
 import mekhq.campaign.force.UnitStub;
 import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
 import mekhq.campaign.mission.scenarios.AtBScenario;
+import mekhq.campaign.mission.scenarios.BotForce;
 import mekhq.campaign.mission.scenarios.BotForceStub;
 import mekhq.campaign.mission.scenarios.Loot;
 import mekhq.campaign.mission.scenarios.Scenario;
@@ -109,6 +110,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
     private final Campaign campaign;
     private final List<String> attachedAllyStub;
     private List<BotForceStub> botStubs;
+    private final List<BotForce> visibleBotForces = new ArrayList<>();
     private final JFrame frame;
 
     private JPanel panStats;
@@ -179,7 +181,10 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
             playerForces = new FormationStub(s.getForces(campaign), campaign);
             attachedAllyStub = Utilities.generateEntityStub(s.getAlliesPlayer());
             for (int i = 0; i < s.getNumBots(); i++) {
-                botStubs.add(s.getBotForce(i).generateStub(campaign));
+                if (!s.getBotForce(i).isSecretAmbush()) {
+                    visibleBotForces.add(s.getBotForce(i));
+                    botStubs.add(s.getBotForce(i).generateStub(campaign));
+                }
             }
         } else {
             playerForces = s.getForceStub();
@@ -737,7 +742,7 @@ public class AtBScenarioViewPanel extends JScrollablePanel {
                 for (int unitIndex = 0; unitIndex < allEntries.size(); unitIndex++) {
                     String entityString = allEntries.get(unitIndex);
                     if (hideInformation) {
-                        Entity entity = scenario.getBotForce(botIndex).getFullEntityList(campaign).get(unitIndex);
+                        Entity entity = visibleBotForces.get(botIndex).getFullEntityList(campaign).get(unitIndex);
 
                         if (entity == null) {
                             top.add(new DefaultMutableTreeNode("???"));
