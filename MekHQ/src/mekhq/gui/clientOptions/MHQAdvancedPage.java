@@ -38,17 +38,22 @@ import static mekhq.utilities.MHQInternationalization.getText;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.util.Objects;
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JTextField;
 
 import megamek.client.ui.Messages;
+import megamek.client.ui.comboBoxes.MMComboBox;
 import megamek.client.ui.dialogs.buttonDialogs.CommonSettingsDialog;
 import megamek.client.ui.dialogs.helpDialogs.HelpDialog;
 import megamek.client.ui.settings.SettingsCheckBox;
@@ -57,6 +62,8 @@ import megamek.client.ui.settings.SettingsLabel;
 import megamek.client.ui.settings.SettingsSpinner;
 import megamek.client.ui.util.UIUtil;
 import megamek.logging.MMLogger;
+import mekhq.pilotChatter.Chattiness;
+import mekhq.utilities.MHQInternationalization;
 
 /**
  * The Advanced page of the MekHQ Client Options dialog: the user-data directory (with chooser and help buttons), the
@@ -78,6 +85,13 @@ class MHQAdvancedPage extends MHQOptionsPage {
     private SettingsSpinner spinnerStartGameBotClientRetryCount;
     private SettingsCheckBox chkEnableAbstractCombatAutoResolve;
     private SettingsCheckBox chkDefaultPlayerForcesOffBoard;
+    private SettingsCheckBox chkPilotChatterEnabled;
+    private JTextField pilotChatterEndpointField;
+    private JTextField pilotChatterModelField;
+    private JPasswordField pilotChatterApiKeyField;
+    private MMComboBox<Chattiness> comboPilotChatterChattiness;
+    private SettingsCheckBox chkPilotChatterEnemyChatter;
+    private SettingsSpinner spinnerPilotChatterLoreChance;
 
     MHQAdvancedPage(MHQOptionsModel model, JFrame frame) {
         super(model);
@@ -162,6 +176,33 @@ class MHQAdvancedPage extends MHQOptionsPage {
               model.defaultPlayerForcesOffBoard);
         panel.addCheckBoxGrid(1, chkEnableAbstractCombatAutoResolve, chkDefaultPlayerForcesOffBoard);
 
+        chkPilotChatterEnabled = checkBox("optionPilotChatterEnabled", model.pilotChatterEnabled);
+        panel.addCheckBoxGrid(1, chkPilotChatterEnabled);
+        pilotChatterEndpointField = textRow(panel, "lblPilotChatterEndpoint",
+              new JTextField(model.pilotChatterEndpoint, 20));
+        pilotChatterModelField = textRow(panel, "lblPilotChatterModel", new JTextField(model.pilotChatterModel, 20));
+        pilotChatterApiKeyField = textRow(panel, "lblPilotChatterApiKey",
+              new JPasswordField(model.pilotChatterApiKey, 20));
+        comboPilotChatterChattiness = new MMComboBox<>("comboPilotChatterChattiness", Chattiness.values());
+        comboPilotChatterChattiness.setSelectedItem(model.pilotChatterChattiness);
+        comboPilotChatterChattiness.setToolTipText(getText("lblPilotChatterChattiness.toolTipText"));
+        comboPilotChatterChattiness.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(final JList<?> list, final Object value, final int index,
+                  final boolean isSelected, final boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value instanceof Chattiness chattiness) {
+                    setText(MHQInternationalization.getText("lblPilotChatterChattiness." + chattiness.name()));
+                }
+                return this;
+            }
+        });
+        panel.addRow(new SettingsLabel(TEXT_PROVIDER, "lblPilotChatterChattiness"), comboPilotChatterChattiness);
+        chkPilotChatterEnemyChatter = checkBox("optionPilotChatterEnemyChatter", model.pilotChatterEnemyChatter);
+        panel.addCheckBoxGrid(1, chkPilotChatterEnemyChatter);
+        spinnerPilotChatterLoreChance = advancedSpinner(panel, "lblPilotChatterLoreChance", 15, 0, 100, 5,
+              model.pilotChatterLoreChance);
+
         Component page = buildMHQPage("MHQAdvancedPage", "lblMHQAdvancedSection.text", "lblMHQAdvancedSection.summary",
               panel);
         created = true;
@@ -182,6 +223,16 @@ class MHQAdvancedPage extends MHQOptionsPage {
         return spinner;
     }
 
+    /**
+     * Adds a labelled text field to {@code panel} as a row and returns it.
+     */
+    private <T extends JTextField> T textRow(SettingsFormPanel panel, String labelKey, T field) {
+        field.setName("txt" + labelKey.substring(3));
+        field.setToolTipText(getText(labelKey + ".toolTipText"));
+        panel.addRow(new SettingsLabel(TEXT_PROVIDER, labelKey), field);
+        return field;
+    }
+
     @Override
     void writeToModel() {
         if (!created) {
@@ -195,5 +246,12 @@ class MHQAdvancedPage extends MHQOptionsPage {
         model.startGameBotClientRetryCount = (int) spinnerStartGameBotClientRetryCount.getValue();
         model.enableAbstractCombatAutoResolve = chkEnableAbstractCombatAutoResolve.isSelected();
         model.defaultPlayerForcesOffBoard = chkDefaultPlayerForcesOffBoard.isSelected();
+        model.pilotChatterEnabled = chkPilotChatterEnabled.isSelected();
+        model.pilotChatterEndpoint = pilotChatterEndpointField.getText().strip();
+        model.pilotChatterModel = pilotChatterModelField.getText().strip();
+        model.pilotChatterApiKey = new String(pilotChatterApiKeyField.getPassword()).strip();
+        model.pilotChatterChattiness = Objects.requireNonNull(comboPilotChatterChattiness.getSelectedItem());
+        model.pilotChatterEnemyChatter = chkPilotChatterEnemyChatter.isSelected();
+        model.pilotChatterLoreChance = (int) spinnerPilotChatterLoreChance.getValue();
     }
 }

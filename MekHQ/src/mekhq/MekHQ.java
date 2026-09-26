@@ -128,6 +128,7 @@ import mekhq.gui.dialog.ResolveScenarioWizardDialog;
 import mekhq.gui.panels.StartupScreenPanel;
 import mekhq.gui.preferences.StringPreference;
 import mekhq.gui.utilities.ObservableString;
+import mekhq.pilotChatter.PilotChatter;
 import mekhq.service.AutosaveService;
 import mekhq.service.IAutosaveService;
 import mekhq.utilities.ScenarioUtils;
@@ -579,6 +580,9 @@ public class MekHQ implements GameListener {
             return;
         }
         SecretAmbushSpringer.attach(myServer, getCampaign(), scenario);
+        if (autoResolveBehaviorSettings == null) {
+            PilotChatter.attach(myServer, getCampaign(), scenario);
+        }
 
         // Refactor this into a factory
         var useExperimentalPacarGui = getCampaign().getCampaignOptions().get(CampaignOption.AUTO_RESOLVE_EXPERIMENTAL_PACAR_GUI_ENABLED);

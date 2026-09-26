@@ -307,6 +307,15 @@ public final class MHQConstants extends SuiteConstants {
     public static final String ENABLE_ABSTRACT_COMBAT_AUTO_RESOLVE = "enableAbstractCombatAutoResolve";
     public static final String DEFAULT_PLAYER_FORCES_OFF_BOARD = "defaultPlayerForcesOffBoard";
 
+    public static final String PILOT_CHATTER_NODE = "mekhq/prefs/pilotChatter";
+    public static final String PILOT_CHATTER_ENABLED = "enabled";
+    public static final String PILOT_CHATTER_ENDPOINT = "endpoint";
+    public static final String PILOT_CHATTER_MODEL = "model";
+    public static final String PILOT_CHATTER_API_KEY = "apiKey";
+    public static final String PILOT_CHATTER_CHATTINESS = "chattiness";
+    public static final String PILOT_CHATTER_ENEMY_CHATTER = "enemyChatter";
+    public static final String PILOT_CHATTER_LORE_CHANCE = "loreChance";
+
     // The augmentation rules last chosen in the Command Generator, remembered so a new campaign
     // starts from the player's own answer rather than from the all-off defaults every time.
     public static final String LAST_USE_IMPLANTS = "lastUseImplants";

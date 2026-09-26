@@ -43,6 +43,7 @@ import mekhq.MHQOptions;
 import mekhq.MekHQ;
 import mekhq.gui.enums.FormationIconOperationalStatusStyle;
 import mekhq.gui.enums.PersonnelFilterStyle;
+import mekhq.pilotChatter.Chattiness;
 
 /**
  * Plain data-transfer object holding an editable snapshot of every MekHQ client option shown by {@link MHQOptionsPane},
@@ -211,6 +212,13 @@ class MHQOptionsModel {
     int startGameBotClientRetryCount;
     boolean enableAbstractCombatAutoResolve;
     boolean defaultPlayerForcesOffBoard;
+    boolean pilotChatterEnabled;
+    String pilotChatterEndpoint;
+    String pilotChatterModel;
+    String pilotChatterApiKey;
+    Chattiness pilotChatterChattiness;
+    boolean pilotChatterEnemyChatter;
+    int pilotChatterLoreChance;
     // endregion Advanced
 
     MHQOptionsModel(MHQOptions options) {
@@ -385,6 +393,13 @@ class MHQOptionsModel {
         startGameBotClientRetryCount = options.getStartGameBotClientRetryCount();
         enableAbstractCombatAutoResolve = options.getEnableAbstractCombatAutoResolve();
         defaultPlayerForcesOffBoard = options.getDefaultPlayerForcesOffBoard();
+        pilotChatterEnabled = options.getPilotChatterEnabled();
+        pilotChatterEndpoint = options.getPilotChatterEndpoint();
+        pilotChatterModel = options.getPilotChatterModel();
+        pilotChatterApiKey = options.getPilotChatterApiKey();
+        pilotChatterChattiness = options.getPilotChatterChattiness();
+        pilotChatterEnemyChatter = options.getPilotChatterEnemyChatter();
+        pilotChatterLoreChance = options.getPilotChatterLoreChance();
     }
 
     /**
@@ -571,5 +586,12 @@ class MHQOptionsModel {
         options.setStartGameBotClientRetryCount(startGameBotClientRetryCount);
         options.setEnableAbstractCombatAutoResolve(enableAbstractCombatAutoResolve);
         options.setDefaultPlayerForcesOffBoard(defaultPlayerForcesOffBoard);
+        options.setPilotChatterEnabled(pilotChatterEnabled);
+        options.setPilotChatterEndpoint(pilotChatterEndpoint);
+        options.setPilotChatterModel(pilotChatterModel);
+        options.setPilotChatterApiKey(pilotChatterApiKey);
+        options.setPilotChatterChattiness(pilotChatterChattiness);
+        options.setPilotChatterEnemyChatter(pilotChatterEnemyChatter);
+        options.setPilotChatterLoreChance(pilotChatterLoreChance);
     }
 }

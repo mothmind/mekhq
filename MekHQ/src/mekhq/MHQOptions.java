@@ -43,6 +43,9 @@ import megamek.common.enums.NeuralInterfaceMode;
 import mekhq.gui.enums.FormationIconOperationalStatusStyle;
 import mekhq.gui.enums.PersonnelFilterStyle;
 import mekhq.gui.utilities.ComponentColors;
+import mekhq.pilotChatter.ChatterSettings;
+import mekhq.pilotChatter.ChatterTuning;
+import mekhq.pilotChatter.Chattiness;
 
 public final class MHQOptions extends SuiteOptions {
     // region Display Tab
@@ -1568,6 +1571,71 @@ public final class MHQOptions extends SuiteOptions {
     public int getStartGameBotClientRetryCount() {
         return userPreferences.node(MHQConstants.MISCELLANEOUS_NODE)
                      .getInt(MHQConstants.START_GAME_BOT_CLIENT_RETRY_COUNT, 250);
+    }
+
+    public boolean getPilotChatterEnabled() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                     .getBoolean(MHQConstants.PILOT_CHATTER_ENABLED, true);
+    }
+
+    public void setPilotChatterEnabled(final boolean enabled) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE).putBoolean(MHQConstants.PILOT_CHATTER_ENABLED, enabled);
+    }
+
+    public String getPilotChatterEndpoint() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                     .get(MHQConstants.PILOT_CHATTER_ENDPOINT, ChatterSettings.DEFAULT_ENDPOINT);
+    }
+
+    public void setPilotChatterEndpoint(final String endpoint) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE).put(MHQConstants.PILOT_CHATTER_ENDPOINT, endpoint);
+    }
+
+    public String getPilotChatterModel() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                     .get(MHQConstants.PILOT_CHATTER_MODEL, ChatterSettings.DEFAULT_MODEL);
+    }
+
+    public void setPilotChatterModel(final String model) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE).put(MHQConstants.PILOT_CHATTER_MODEL, model);
+    }
+
+    public String getPilotChatterApiKey() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE).get(MHQConstants.PILOT_CHATTER_API_KEY, "");
+    }
+
+    public void setPilotChatterApiKey(final String apiKey) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE).put(MHQConstants.PILOT_CHATTER_API_KEY, apiKey);
+    }
+
+    public Chattiness getPilotChatterChattiness() {
+        return Chattiness.parse(userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                                      .get(MHQConstants.PILOT_CHATTER_CHATTINESS, Chattiness.CHATTY.name()));
+    }
+
+    public void setPilotChatterChattiness(final Chattiness chattiness) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+              .put(MHQConstants.PILOT_CHATTER_CHATTINESS, chattiness.name());
+    }
+
+    public boolean getPilotChatterEnemyChatter() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                     .getBoolean(MHQConstants.PILOT_CHATTER_ENEMY_CHATTER, true);
+    }
+
+    public void setPilotChatterEnemyChatter(final boolean enemyChatter) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+              .putBoolean(MHQConstants.PILOT_CHATTER_ENEMY_CHATTER, enemyChatter);
+    }
+
+    public int getPilotChatterLoreChance() {
+        return userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+                     .getInt(MHQConstants.PILOT_CHATTER_LORE_CHANCE, ChatterTuning.DEFAULT_LORE_CHANCE);
+    }
+
+    public void setPilotChatterLoreChance(final int loreChance) {
+        userPreferences.node(MHQConstants.PILOT_CHATTER_NODE)
+              .putInt(MHQConstants.PILOT_CHATTER_LORE_CHANCE, loreChance);
     }
 
     public void setStartGameBotClientRetryCount(final int startGameBotClientRetryCount) {
