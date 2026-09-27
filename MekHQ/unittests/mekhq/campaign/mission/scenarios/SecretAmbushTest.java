@@ -40,6 +40,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Element;
 import org.xml.sax.InputSource;
+import megamek.common.units.EntityWeightClass;
+import megamek.common.units.Entity;
+import megamek.common.units.CrewType;
+import megamek.common.units.Crew;
+import megamek.common.units.BipedMek;
+import java.util.Set;
+import java.util.HashSet;
 
 /**
  * Tests for the secret ambush force: where it comes from, how big it is, and that the secret survives a campaign
@@ -68,13 +75,54 @@ class SecretAmbushTest {
     }
 
     @Test
-    @DisplayName("the ambush is budgeted at about one enemy formation's share of the players' strength")
-    void aboutOneLance() {
-        assertEquals(1.0 / 3.0, SecretAmbush.forceMultiplier(4, 12), 1e-9, "a lance sprung on a company");
-        assertEquals(0.5, SecretAmbush.forceMultiplier(4, 8), 1e-9);
-        assertEquals(1.0, SecretAmbush.forceMultiplier(4, 4), 1e-9, "a lance sprung on a lance matches it");
-        assertEquals(1.0, SecretAmbush.forceMultiplier(5, 3), 1e-9, "never more than the players' own strength");
-        assertEquals(1.0, SecretAmbush.forceMultiplier(4, 0), 1e-9);
+    @DisplayName("the ambush is built at the players' average weight class")
+    void mirrorsPlayerTonnage() {
+        // A company of mediums is mirrored by a medium lance.
+        assertEquals(EntityWeightClass.WEIGHT_MEDIUM,
+              SecretAmbush.averageWeightClass(EntityWeightClass.WEIGHT_MEDIUM * 12, 12));
+        // Two lights and two assaults average to a heavy, rounding to nearest.
+        assertEquals(EntityWeightClass.WEIGHT_HEAVY,
+              SecretAmbush.averageWeightClass(
+                    (EntityWeightClass.WEIGHT_LIGHT * 2) + (EntityWeightClass.WEIGHT_ASSAULT * 2), 4));
+        // Nothing to read falls back to medium rather than to nothing at all.
+        assertEquals(EntityWeightClass.WEIGHT_MEDIUM, SecretAmbush.averageWeightClass(0, 0));
+    }
+
+    @Test
+    @DisplayName("the average is clamped to the light-to-assault band")
+    void weightClassIsClamped() {
+        assertEquals(EntityWeightClass.WEIGHT_LIGHT,
+              SecretAmbush.averageWeightClass(EntityWeightClass.WEIGHT_ULTRA_LIGHT * 4, 4),
+              "ultra-lights still draw a light ambush, not an ultra-light one");
+        assertEquals(EntityWeightClass.WEIGHT_ASSAULT,
+              SecretAmbush.averageWeightClass(EntityWeightClass.WEIGHT_COLOSSAL * 4, 4),
+              "nothing heavier than assault");
+    }
+
+    @Test
+    @DisplayName("ambushers are reskilled to ordinary line pilots, rolled per pilot")
+    void ambushersAreOrdinaryPilots() {
+        Set<String> seen = new HashSet<>();
+        for (int trial = 0; trial < 200; trial++) {
+            Entity entity = new BipedMek();
+            entity.setCrew(new Crew(CrewType.SINGLE));
+            SecretAmbush.normaliseCrew(entity);
+
+            int gunnery = entity.getCrew().getGunnery();
+            int piloting = entity.getCrew().getPiloting();
+            assertTrue(((gunnery == 3) && (piloting == 4)) || ((gunnery == 4) && (piloting == 5)),
+                  "expected 3/4 or 4/5, got " + gunnery + "/" + piloting);
+            seen.add(gunnery + "/" + piloting);
+        }
+        assertEquals(Set.of("3/4", "4/5"), seen, "both skill levels should come up across 200 rolls");
+    }
+
+    @Test
+    @DisplayName("a crewless entity is reskilled without complaint")
+    void crewlessIsSafe() {
+        SecretAmbush.normaliseCrew(null);
+        Entity entity = new BipedMek();
+        SecretAmbush.normaliseCrew(entity);
     }
 
     @Test

@@ -24,12 +24,15 @@ import java.util.List;
 import java.util.UUID;
 
 import megamek.common.board.Board;
+import megamek.common.units.Crew;
 import megamek.common.units.Entity;
 import megamek.common.units.EntityWeightClass;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.force.CombatTeam;
+import mekhq.campaign.force.Formation;
 import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.unit.Unit;
 import mekhq.campaign.mission.scenarios.ScenarioForceTemplate.ForceAlignment;
 import mekhq.campaign.mission.scenarios.ScenarioForceTemplate.ForceGenerationMethod;
 import mekhq.campaign.mission.scenarios.ScenarioForceTemplate.SynchronizedDeploymentType;
@@ -44,6 +47,13 @@ public final class SecretAmbush {
     private static final MMLogger LOGGER = MMLogger.create(SecretAmbush.class);
 
     static final String FORCE_NAME = "Ambushers";
+
+    /** Veteran line skill, 3/4. */
+    static final int VETERAN_GUNNERY = 3;
+    static final int VETERAN_PILOTING = 4;
+    /** Regular line skill, 4/5. */
+    static final int REGULAR_GUNNERY = 4;
+    static final int REGULAR_PILOTING = 5;
 
     private SecretAmbush() {}
 
@@ -71,12 +81,13 @@ public final class SecretAmbush {
         int effectiveBV = AtBDynamicScenarioFactory.calculateEffectiveBV(scenario, campaign, false);
         int effectiveUnitCount = AtBDynamicScenarioFactory.calculateEffectiveUnitCount(scenario, campaign, false);
         int lanceSize = CombatTeam.getStandardFormationSize(contract.getEnemyFaction());
+        int weightClass = playerWeightClass(scenario, campaign);
         int zone = ambushEdge(scenario.getStartingPos(), randomInt(3));
 
-        ScenarioForceTemplate template = template(forceMultiplier(lanceSize, effectiveUnitCount), zone, round);
+        ScenarioForceTemplate template = template(lanceSize, weightClass, zone, round);
         int numBotsBefore = scenario.getNumBots();
         AtBDynamicScenarioFactory.generateForce(scenario, contract, campaign, effectiveBV, effectiveUnitCount,
-              AtBDynamicScenarioFactory.randomForceWeight(), template, true);
+              weightClass, template, true);
         if (scenario.getNumBots() == numBotsBefore) {
             LOGGER.warn("Secret ambush for scenario {} generated no force", scenario.getId());
             return null;
@@ -90,6 +101,7 @@ public final class SecretAmbush {
             if ("-1".equals(entity.getExternalIdAsString())) {
                 entity.setExternalIdAsString(UUID.randomUUID().toString());
             }
+            normaliseCrew(entity);
         }
         LOGGER.info("Secret ambush for scenario {} ready: {} units arriving in round {}",
               scenario.getId(), ambush.getFixedEntityList().size(), round);
@@ -109,19 +121,75 @@ public final class SecretAmbush {
     }
 
     /**
-     * The share of the players' strength the ambush is budgeted at: about one enemy formation's worth, so a lance
-     * sprung on a company is a third of its BV, and on a lone lance, a match for it.
+     * Rerolls an ambusher's crew to ordinary line skill. The ambush is a fixed lance rather than a battle-value
+     * match, so nothing else keeps it in proportion: without this the generator hands the ambushers whatever skill
+     * the contract's opposing force uses, which against an elite company is a second elite company.
      *
-     * @param lanceSize          the size of the enemy's standard formation
-     * @param effectiveUnitCount the number of player units in the battle
+     * <p>Each pilot is rolled independently, so a lance comes out mixed rather than uniformly good or bad.</p>
      *
-     * @return the BV multiplier, never above 1
+     * @param entity the ambusher to reskill
      */
-    static double forceMultiplier(int lanceSize, int effectiveUnitCount) {
-        if (effectiveUnitCount <= 0) {
-            return 1.0;
+    static void normaliseCrew(Entity entity) {
+        if ((entity == null) || (entity.getCrew() == null)) {
+            return;
         }
-        return Math.min(1.0, (double) lanceSize / effectiveUnitCount);
+        Crew crew = entity.getCrew();
+        for (int slot = 0; slot < crew.getSlotCount(); slot++) {
+            boolean veteran = randomInt(2) == 0;
+            crew.setGunnery(veteran ? VETERAN_GUNNERY : REGULAR_GUNNERY, slot);
+            crew.setPiloting(veteran ? VETERAN_PILOTING : REGULAR_PILOTING, slot);
+        }
+    }
+
+    /**
+     * The weight class the ambush is built at: the average of the player units committed to the scenario, so the
+     * ambushers roughly mirror what they are jumping.
+     *
+     * @param scenario the scenario the force was committed to
+     * @param campaign the campaign, for looking up the player's units
+     *
+     * @return an {@link EntityWeightClass} constant, defaulting to medium when nothing can be read
+     */
+    static int playerWeightClass(AtBDynamicScenario scenario, Campaign campaign) {
+        int total = 0;
+        int counted = 0;
+
+        for (int forceId : scenario.getForceIDs()) {
+            Formation formation = campaign.getPlayerForce().getFormation(forceId);
+            if (formation == null) {
+                continue;
+            }
+            for (UUID unitId : formation.getAllUnits(false)) {
+                Unit unit = campaign.getUnit(unitId);
+                if ((unit != null) && (unit.getEntity() != null)) {
+                    total += unit.getEntity().getWeightClass();
+                    counted++;
+                }
+            }
+        }
+        for (UUID unitId : scenario.getIndividualUnitIDs()) {
+            Unit unit = campaign.getUnit(unitId);
+            if ((unit != null) && (unit.getEntity() != null)) {
+                total += unit.getEntity().getWeightClass();
+                counted++;
+            }
+        }
+
+        return (counted == 0) ? EntityWeightClass.WEIGHT_MEDIUM : averageWeightClass(total, counted);
+    }
+
+    /**
+     * @param totalWeightClass the summed weight classes of the player's units
+     * @param unitCount        how many units were summed
+     *
+     * @return the average, rounded to nearest and clamped to the light-to-assault band
+     */
+    static int averageWeightClass(int totalWeightClass, int unitCount) {
+        if (unitCount <= 0) {
+            return EntityWeightClass.WEIGHT_MEDIUM;
+        }
+        int average = (int) Math.round((double) totalWeightClass / unitCount);
+        return Math.clamp(average, EntityWeightClass.WEIGHT_LIGHT, EntityWeightClass.WEIGHT_ASSAULT);
     }
 
     /**
@@ -148,20 +216,20 @@ public final class SecretAmbush {
         return Math.floorMod(zone - Board.START_NW + steps, 8) + Board.START_NW;
     }
 
-    private static ScenarioForceTemplate template(double forceMultiplier, int zone, int round) {
+    private static ScenarioForceTemplate template(int lanceSize, int weightClass, int zone, int round) {
         ScenarioForceTemplate template = new ScenarioForceTemplate();
         template.setForceName(FORCE_NAME);
         template.setForceAlignment(ForceAlignment.Opposing.ordinal());
-        template.setGenerationMethod(ForceGenerationMethod.BVScaled.ordinal());
-        template.setForceMultiplier(forceMultiplier);
+        template.setGenerationMethod(ForceGenerationMethod.FixedUnitCount.ordinal());
+        template.setFixedUnitCount(lanceSize);
         template.setAllowedUnitType(ScenarioForceTemplate.SPECIAL_UNIT_TYPE_ATB_MIX);
         template.setDeploymentZones(List.of(zone));
         template.setActualDeploymentZone(zone);
         template.setSyncDeploymentType(SynchronizedDeploymentType.None);
         template.setDestinationZone(ScenarioForceTemplate.DESTINATION_EDGE_OPPOSITE_DEPLOYMENT);
         template.setArrivalTurn(round);
-        template.setMinWeightClass(EntityWeightClass.WEIGHT_ULTRA_LIGHT);
-        template.setMaxWeightClass(EntityWeightClass.WEIGHT_ASSAULT);
+        template.setMinWeightClass(weightClass);
+        template.setMaxWeightClass(weightClass);
         template.setContributesToBV(false);
         template.setContributesToUnitCount(false);
         template.setSubjectToRandomRemoval(false);
