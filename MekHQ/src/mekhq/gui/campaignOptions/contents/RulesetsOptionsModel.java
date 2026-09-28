@@ -50,6 +50,7 @@ class RulesetsOptionsModel {
     int opForLanceTypeVehicles;
     boolean autoGenerateOpForCallSigns;
     boolean enemyForcesMaySurrender;
+    boolean useSecretAmbushes;
     boolean useOrbitalBombardmentSupport;
     int orbitalBombardmentEnemyChance;
     OrbitalSupportMethod orbitalSupportMethod;
@@ -102,6 +103,7 @@ class RulesetsOptionsModel {
         opForLanceTypeVehicles = options.get(CampaignOption.OP_FOR_LANCE_TYPE_VEHICLES);
         autoGenerateOpForCallSigns = options.get(CampaignOption.AUTO_GENERATE_OP_FOR_CALL_SIGNS);
         enemyForcesMaySurrender = options.get(CampaignOption.ENEMY_FORCES_MAY_SURRENDER);
+        useSecretAmbushes = options.get(CampaignOption.USE_SECRET_AMBUSHES);
         useOrbitalBombardmentSupport = options.get(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT);
         orbitalBombardmentEnemyChance = options.get(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE);
         orbitalSupportMethod = options.get(CampaignOption.ORBITAL_SUPPORT_METHOD);
@@ -155,6 +157,7 @@ class RulesetsOptionsModel {
         options.set(CampaignOption.OP_FOR_LANCE_TYPE_VEHICLES, opForLanceTypeVehicles);
         options.set(CampaignOption.AUTO_GENERATE_OP_FOR_CALL_SIGNS, autoGenerateOpForCallSigns);
         options.set(CampaignOption.ENEMY_FORCES_MAY_SURRENDER, enemyForcesMaySurrender);
+        options.set(CampaignOption.USE_SECRET_AMBUSHES, useSecretAmbushes);
         options.set(CampaignOption.USE_ORBITAL_BOMBARDMENT_SUPPORT, useOrbitalBombardmentSupport);
         options.set(CampaignOption.ORBITAL_BOMBARDMENT_ENEMY_CHANCE, orbitalBombardmentEnemyChance);
         options.set(CampaignOption.ORBITAL_SUPPORT_METHOD, orbitalSupportMethod);

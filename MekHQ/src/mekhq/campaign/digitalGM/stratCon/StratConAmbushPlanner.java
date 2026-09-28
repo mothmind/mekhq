@@ -25,6 +25,8 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import megamek.logging.MMLogger;
+import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
 
 /**
@@ -50,13 +52,19 @@ public final class StratConAmbushPlanner {
      * Rolls for a secret ambush on a scenario a force has just been committed to, and records the round it springs
      * in. A scenario that already has an ambush keeps it.
      *
+     * <p>Does nothing unless the campaign has the Secret Ambushes option switched on.</p>
+     *
+     * @param campaign      the campaign, for the Secret Ambushes option
      * @param track         the track the scenario is on
      * @param coords        the hex the force was committed at
      * @param hexWasScouted whether the hex had been scouted before the force went in
      * @param scenario      the scenario the force was committed to
      */
-    public static void considerAmbush(StratConTrackState track, StratConCoords coords, boolean hexWasScouted,
-          StratConScenario scenario) {
+    public static void considerAmbush(Campaign campaign, StratConTrackState track, StratConCoords coords,
+          boolean hexWasScouted, StratConScenario scenario) {
+        if (!ambushesEnabled(campaign)) {
+            return;
+        }
         if ((scenario == null) || (scenario.getBackingScenario() == null)) {
             return;
         }
@@ -77,6 +85,20 @@ public final class StratConAmbushPlanner {
             LOGGER.info("Secret ambush planned for scenario {} in round {} ({}% chance)",
                   backingScenario.getId(), round, chance);
         }
+    }
+
+    /**
+     * @param campaign the campaign to read the option from, which may be {@code null}
+     *
+     * @return whether secret ambushes are switched on for this campaign
+     */
+    static boolean ambushesEnabled(Campaign campaign) {
+        if ((campaign == null) || (campaign.getCampaignOptions() == null)) {
+            return false;
+        }
+        // The option defaults to on, so anything other than an explicit false leaves ambushes running. Reading it
+        // as a Boolean rather than unboxing keeps a campaign whose options have not been populated from throwing.
+        return !Boolean.FALSE.equals(campaign.getCampaignOptions().get(CampaignOption.USE_SECRET_AMBUSHES));
     }
 
     /**

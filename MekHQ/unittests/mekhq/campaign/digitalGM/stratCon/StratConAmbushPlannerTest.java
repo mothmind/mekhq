@@ -23,6 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.Campaign;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * Tests for the ambush chance and ambush round of forces that rush into engagements.
@@ -77,5 +83,45 @@ class StratConAmbushPlannerTest {
         track.getRevealedCoords().add(new StratConCoords(4, 4));
 
         assertEquals(2, StratConAmbushPlanner.scoutedNeighbours(track, middle));
+    }
+
+    @Test
+    @DisplayName("ambushes are skipped entirely when the campaign option is off")
+    void optionOffDisablesAmbushes() {
+        assertFalse(StratConAmbushPlanner.ambushesEnabled(campaignWithAmbushes(false)));
+    }
+
+    @Test
+    @DisplayName("ambushes run when the campaign option is on")
+    void optionOnEnablesAmbushes() {
+        assertTrue(StratConAmbushPlanner.ambushesEnabled(campaignWithAmbushes(true)));
+    }
+
+    @Test
+    @DisplayName("a campaign that cannot be read never ambushes")
+    void missingCampaignIsSafe() {
+        assertFalse(StratConAmbushPlanner.ambushesEnabled(null), "no campaign, no ambush");
+        Campaign optionless = mock(Campaign.class);
+        when(optionless.getCampaignOptions()).thenReturn(null);
+        assertFalse(StratConAmbushPlanner.ambushesEnabled(optionless), "no options, no ambush");
+    }
+
+    @Test
+    @DisplayName("an unset option falls back to the declared default, which is on")
+    void unsetOptionKeepsAmbushesOn() {
+        Campaign campaign = mock(Campaign.class);
+        CampaignOptions options = mock(CampaignOptions.class);
+        when(options.get(CampaignOption.USE_SECRET_AMBUSHES)).thenReturn(null);
+        when(campaign.getCampaignOptions()).thenReturn(options);
+        assertTrue(StratConAmbushPlanner.ambushesEnabled(campaign),
+              "only an explicit false should switch ambushes off");
+    }
+
+    private static Campaign campaignWithAmbushes(boolean enabled) {
+        Campaign campaign = mock(Campaign.class);
+        CampaignOptions options = mock(CampaignOptions.class);
+        when(options.get(CampaignOption.USE_SECRET_AMBUSHES)).thenReturn(enabled);
+        when(campaign.getCampaignOptions()).thenReturn(options);
+        return campaign;
     }
 }

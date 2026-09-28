@@ -111,6 +111,7 @@ class StratConPage {
 
     private JCheckBox chkAutoGenerateOpForCallSigns;
     private JCheckBox chkEnemyForcesMaySurrender;
+    private JCheckBox chkUseSecretAmbushes;
     private JCheckBox chkUseOrbitalBombardmentSupport;
     private JLabel lblOrbitalSupportMethod;
     private MMComboBox<OrbitalSupportMethod> comboOrbitalSupportMethod;
@@ -304,6 +305,7 @@ class StratConPage {
         comboBoardScalingType.addMouseListener(createTipPanelUpdater("BoardScalingType"));
         chkAutoGenerateOpForCallSigns.addMouseListener(createTipPanelUpdater("AutoGenerateOpForCallSigns"));
         chkEnemyForcesMaySurrender.addMouseListener(createTipPanelUpdater("EnemyForcesMaySurrender"));
+        chkUseSecretAmbushes.addMouseListener(createTipPanelUpdater("UseSecretAmbushes"));
         chkUseOrbitalBombardmentSupport.addMouseListener(createTipPanelUpdater("UseOrbitalBombardmentSupport"));
         lblOrbitalSupportMethod.addMouseListener(createTipPanelUpdater("OrbitalSupportMethod"));
         comboOrbitalSupportMethod.addMouseListener(createTipPanelUpdater("OrbitalSupportMethod"));
@@ -412,6 +414,7 @@ class StratConPage {
         // CallSigns
         chkAutoGenerateOpForCallSigns = new CampaignOptionsCheckBox("AutoGenerateOpForCallSigns");
         chkEnemyForcesMaySurrender = new CampaignOptionsCheckBox("EnemyForcesMaySurrender");
+        chkUseSecretAmbushes = new CampaignOptionsCheckBox("UseSecretAmbushes");
         chkUseOrbitalBombardmentSupport = new CampaignOptionsCheckBox("UseOrbitalBombardmentSupport");
         lblOrbitalSupportMethod = new CampaignOptionsLabel("OrbitalSupportMethod");
         comboOrbitalSupportMethod = new MMComboBox<>("comboOrbitalSupportMethod", OrbitalSupportMethod.values());
@@ -585,6 +588,7 @@ class StratConPage {
               chkAutoConfigMunitions,
               chkAutoGenerateOpForCallSigns,
               chkEnemyForcesMaySurrender,
+              chkUseSecretAmbushes,
               chkUseOrbitalBombardmentSupport);
         panel.addRow(lblOrbitalSupportMethod, comboOrbitalSupportMethod);
         panel.addRow(lblOrbitalBombardmentEnemyChance, spnOrbitalBombardmentEnemyChance);
@@ -677,6 +681,7 @@ class StratConPage {
         spnOpForLanceTypeVehicles.setValue(model.opForLanceTypeVehicles);
         chkAutoGenerateOpForCallSigns.setSelected(model.autoGenerateOpForCallSigns);
         chkEnemyForcesMaySurrender.setSelected(model.enemyForcesMaySurrender);
+        chkUseSecretAmbushes.setSelected(model.useSecretAmbushes);
         chkUseOrbitalBombardmentSupport.setSelected(model.useOrbitalBombardmentSupport);
         comboOrbitalSupportMethod.setSelectedItem(model.orbitalSupportMethod);
         spnOrbitalBombardmentEnemyChance.setValue(model.orbitalBombardmentEnemyChance);
@@ -740,6 +745,7 @@ class StratConPage {
         model.opForLanceTypeVehicles = (int) spnOpForLanceTypeVehicles.getValue();
         model.autoGenerateOpForCallSigns = chkAutoGenerateOpForCallSigns.isSelected();
         model.enemyForcesMaySurrender = chkEnemyForcesMaySurrender.isSelected();
+        model.useSecretAmbushes = chkUseSecretAmbushes.isSelected();
         model.useOrbitalBombardmentSupport = chkUseOrbitalBombardmentSupport.isSelected();
         model.orbitalSupportMethod = comboOrbitalSupportMethod.getSelectedItem();
         model.orbitalBombardmentEnemyChance = (int) spnOrbitalBombardmentEnemyChance.getValue();

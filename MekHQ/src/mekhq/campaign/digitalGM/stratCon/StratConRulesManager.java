@@ -358,7 +358,7 @@ public class StratConRulesManager {
                     scenario.getBackingScenario().setIsCrisis(true);
                     scenario.setTurningPoint(false);
 
-                    StratConAmbushPlanner.considerAmbush(track, scenarioCoords, true, scenario);
+                    StratConAmbushPlanner.considerAmbush(campaign, track, scenarioCoords, true, scenario);
                 }
             }
         }
@@ -1221,7 +1221,7 @@ public class StratConRulesManager {
                     StratConGMs.opForGeneration(campaignOptions)
                           .generateOpFor(revealedScenario.getBackingScenario(), contract, campaign);
                 }
-                StratConAmbushPlanner.considerAmbush(track, coords, !deployedToUnexploredHex, revealedScenario);
+                StratConAmbushPlanner.considerAmbush(campaign, track, coords, !deployedToUnexploredHex, revealedScenario);
             }
             return;
         }
@@ -1309,7 +1309,7 @@ public class StratConRulesManager {
                 finalizeBackingScenario(campaign, contract, track, autoAssignLances, scenario);
 
                 if (autoAssignLances) {
-                    StratConAmbushPlanner.considerAmbush(track, coords, !deployedToUnexploredHex, scenario);
+                    StratConAmbushPlanner.considerAmbush(campaign, track, coords, !deployedToUnexploredHex, scenario);
                 }
 
                 if (isAmbushed) {
