@@ -5940,7 +5940,8 @@ public class Person implements ILocatable {
     /**
      * Retrieves the skills associated with the character's profession. The skills returned depend on whether the
      * personnel's primary or secondary role is being queried and may also vary based on the campaign's configuration
-     * settings, such as whether artillery skills are enabled.
+     * settings, such as whether administrators are given Negotiation. Artillery is never included; see the note in
+     * the body.
      *
      * @param campaignOptions  the current {@link CampaignOptions}
      * @param secondary a boolean indicating whether to retrieve skills for the secondary ({@code true}) or primary
@@ -5955,13 +5956,18 @@ public class Person implements ILocatable {
         final boolean isAdminsHaveNegotiation = campaignOptions.get(CampaignOption.ADMINS_HAVE_NEGOTIATION);
         final boolean isDoctorsUseAdministration = campaignOptions.get(CampaignOption.DOCTORS_USE_ADMINISTRATION);
         final boolean isTechsUseAdministration = campaignOptions.get(CampaignOption.TECHS_USE_ADMINISTRATION);
-        final boolean isUseArtillery = campaignOptions.get(CampaignOption.USE_ARTILLERY);
         final boolean isUseSmallArmsOnly = campaignOptions.get(CampaignOption.USE_SMALL_ARMS_ONLY);
 
+        // SkyEye: Artillery is deliberately excluded, which is why USE_ARTILLERY is not read here. It is the one
+        // profession skill a character is not given along with their role: DefaultSkillGenerator rolls
+        // getArtilleryProb() for it, and generateDefaultSkills leaves it out on purpose as a supplementary skill.
+        // Counting it here made every pilot and vehicle crewman who lost that roll report EXP_NONE - 309 of 945 in
+        // one campaign - while isRole() and the eligible-roles switch both judge qualification against the
+        // artillery-free list. This was the only place the two disagreed.
         List<String> professionSkills = profession.getSkillsForProfession(isAdminsHaveNegotiation,
               isDoctorsUseAdministration,
               isTechsUseAdministration,
-              isUseArtillery,
+              false,
               !isUseSmallArmsOnly);
 
         // Soldiers need a special handler as only their best gunnery skill is used.
