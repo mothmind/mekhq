@@ -43,7 +43,8 @@ sourceSets {
 
 ext {
     mhqJvmOptions = [
-            '-Xmx4096m',
+            '-Xmx8192m',
+            '-Xms2g',
             '--add-opens',
             'java.base/java.util=ALL-UNNAMED',
             '--add-opens',
@@ -110,7 +111,8 @@ dependencies {
 application {
     mainClass = 'mekhq.MekHQ'
     applicationDefaultJvmArgs = [
-            '-Xmx4096m',
+            '-Xmx8192m',
+            '-Xms2g',
             '--add-opens',
             'java.base/java.util=ALL-UNNAMED',
             '--add-opens',
