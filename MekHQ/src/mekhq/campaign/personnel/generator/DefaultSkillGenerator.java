@@ -204,7 +204,7 @@ public class DefaultSkillGenerator extends AbstractSkillGenerator {
         }
     }
 
-    private static void generateCommandUtilitySkills(Person person, int expLvl,
+    static void generateCommandUtilitySkills(Person person, int expLvl,
           RandomSkillPreferences skillPreferences) {
         for (String skillName : SkillType.getSkillsBySkillSubType(List.of(UTILITY_COMMAND), false)) {
             if (person.getSkills().hasSkill(skillName)) {
@@ -212,7 +212,7 @@ public class DefaultSkillGenerator extends AbstractSkillGenerator {
             }
 
             int skillLevel = generateExpLevel(skillPreferences.getCommandSkillsModifier(expLvl));
-            if (skillLevel >= SkillType.EXP_ULTRA_GREEN) {
+            if (skillLevel > SkillType.EXP_ULTRA_GREEN) {
                 addSkill(person, skillName, skillLevel, skillPreferences.randomizeSkill(), 0);
             }
         }

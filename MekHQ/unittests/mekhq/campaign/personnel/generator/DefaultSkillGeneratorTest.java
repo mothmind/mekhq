@@ -33,6 +33,8 @@
 package mekhq.campaign.personnel.generator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mockStatic;
 
@@ -42,10 +44,52 @@ import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
 import mekhq.campaign.personnel.skills.RandomSkillPreferences;
+import mekhq.campaign.personnel.skills.SkillType;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 class DefaultSkillGeneratorTest {
+
+    @BeforeAll
+    static void initializeSkillTypes() {
+        SkillType.initializeTypes();
+    }
+
+    @Test
+    void anUltraGreenCommandRollGrantsNoCommandSkill() {
+        RandomSkillPreferences preferences = new RandomSkillPreferences();
+        Person person = new Person("GivenName", "Surname", null, "MERC");
+
+        try (MockedStatic<Compute> compute = mockStatic(Compute.class, CALLS_REAL_METHODS)) {
+            // 9 on the dice, -8 for an elite's default command modifier: a total of 1, which is Ultra-Green
+            compute.when(() -> Compute.d6(2)).thenReturn(9);
+
+            DefaultSkillGenerator.generateCommandUtilitySkills(person, SkillType.EXP_ELITE, preferences);
+        }
+
+        assertFalse(person.hasSkill(SkillType.S_LEADER));
+        assertFalse(person.hasSkill(SkillType.S_TACTICS));
+        assertFalse(person.hasSkill(SkillType.S_STRATEGY));
+        assertFalse(person.hasSkill(SkillType.S_TRAINING));
+    }
+
+    @Test
+    void aCommandRollAboveUltraGreenGrantsTheSkill() {
+        RandomSkillPreferences preferences = new RandomSkillPreferences();
+        Person person = new Person("GivenName", "Surname", null, "MERC");
+
+        try (MockedStatic<Compute> compute = mockStatic(Compute.class, CALLS_REAL_METHODS)) {
+            compute.when(() -> Compute.d6(2)).thenReturn(12);
+
+            DefaultSkillGenerator.generateCommandUtilitySkills(person, SkillType.EXP_ELITE, preferences);
+        }
+
+        assertTrue(person.hasSkill(SkillType.S_LEADER));
+        assertTrue(person.hasSkill(SkillType.S_TACTICS));
+        assertTrue(person.hasSkill(SkillType.S_STRATEGY));
+        assertTrue(person.hasSkill(SkillType.S_TRAINING));
+    }
 
     @Test
     void generatedEdgeDoesNotExceedCampaignMaximum() {
