@@ -27,6 +27,7 @@ import java.util.UUID;
 
 import megamek.common.Player;
 import megamek.common.annotations.Nullable;
+import megamek.common.enums.SkillLevel;
 import megamek.common.game.Game;
 import megamek.common.options.IOption;
 import megamek.common.options.PilotOptions;
@@ -39,6 +40,7 @@ import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.PersonAwardController;
 import mekhq.campaign.personnel.enums.GenderDescriptors;
 import mekhq.campaign.personnel.skills.Skill;
+import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.personnel.skills.Skills;
 import mekhq.campaign.unit.Unit;
 
@@ -59,6 +61,7 @@ public record PilotDossier(String key, String callName, String sheet, boolean ca
     static final int MAX_CHARACTER = 600;
     static final int MAX_ABILITY = 160;
     static final int MAX_DECORATIONS = 8;
+    static final int MAX_OTHER_SKILLS = 6;
     private static final PilotOptions RULES = new PilotOptions();
 
     /**
@@ -248,22 +251,29 @@ public record PilotDossier(String key, String callName, String sheet, boolean ca
     }
 
     /**
-     * @return every skill but gunnery and piloting, which the unit line already gives, with how good they are at it
+     * @return the pilot's best skills but gunnery and piloting, which the unit line already gives, with how good they
+     *       are at each; at most {@link #MAX_OTHER_SKILLS}, best first
      */
     private static String otherSkills(Person person) {
         Skills skills = person.getSkills();
         if (skills == null) {
             return "";
         }
-        List<String> named = new ArrayList<>();
+        SkillModifierData modifiers = person.getSkillModifierData();
+        Map<String, SkillLevel> levels = new LinkedHashMap<>();
         for (String name : skills.getSkillNames()) {
             Skill skill = skills.getSkill(name);
             if ((skill == null) || name.startsWith("Gunnery") || name.startsWith("Piloting")) {
                 continue;
             }
-            named.add(name + " (" + skill.getSkillLevel(person.getSkillModifierData()) + ")");
+            SkillLevel level = skill.getSkillLevel(modifiers);
+            levels.put(name, (level == null) ? SkillLevel.NONE : level);
         }
-        return String.join(", ", named);
+        return String.join(", ", levels.entrySet().stream()
+                                       .sorted(Map.Entry.<String, SkillLevel>comparingByValue().reversed())
+                                       .limit(MAX_OTHER_SKILLS)
+                                       .map(entry -> entry.getKey() + " (" + entry.getValue() + ")")
+                                       .toList());
     }
 
     /**

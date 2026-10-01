@@ -384,6 +384,41 @@ class ChatterPiecesTest {
     }
 
     @Test
+    @DisplayName("a campaign pilot's record lists only their best few other skills, best first")
+    void campaignDossierCapsSkills() {
+        Game game = new Game();
+        Player players = new Player(0, "Players");
+        game.addPlayer(0, players);
+        Entity atlas = mek(game, players, "Natasha Kerensky");
+        Person person = mock(Person.class);
+        when(person.getId()).thenReturn(UUID.randomUUID());
+        Skills skills = mock(Skills.class);
+        List<String> names = List.of("Swimming", "Piloting/Mek", "Acting", "Forgery", "Leadership", "Running",
+              "Stealth", "Tactics/Any", "Cooking", "Survival/Any");
+        List<SkillLevel> levels = List.of(SkillLevel.GREEN, SkillLevel.ELITE, SkillLevel.REGULAR, SkillLevel.GREEN,
+              SkillLevel.ELITE, SkillLevel.ULTRA_GREEN, SkillLevel.VETERAN, SkillLevel.HEROIC, SkillLevel.GREEN,
+              SkillLevel.REGULAR);
+        when(skills.getSkillNames()).thenReturn(names);
+        for (int i = 0; i < names.size(); i++) {
+            Skill skill = mock(Skill.class);
+            when(skill.getSkillLevel(any())).thenReturn(levels.get(i));
+            when(skills.getSkill(names.get(i))).thenReturn(skill);
+        }
+        when(person.getSkills()).thenReturn(skills);
+        Campaign campaign = mock(Campaign.class);
+        when(campaign.getPlayerForce()).thenReturn(mock(PlayerForce.class));
+
+        String sheet = PilotDossier.forCampaignPilot(atlas, person, campaign).sheet();
+
+        assertTrue(sheet.contains("Other skills: Tactics/Any (" + SkillLevel.HEROIC + "), Leadership ("
+                                        + SkillLevel.ELITE + "), Stealth (" + SkillLevel.VETERAN + "), Acting ("
+                                        + SkillLevel.REGULAR + "), Survival/Any (" + SkillLevel.REGULAR
+                                        + "), Swimming (" + SkillLevel.GREEN + ")\n"), sheet);
+        assertFalse(sheet.contains("Running"), "skills past the cap are left out, weakest first");
+        assertFalse(sheet.contains("Piloting/Mek ("), "piloting is already on the unit line");
+    }
+
+    @Test
     @DisplayName("an ability is explained by MegaMek's rules text, else MekHQ's first sentence, else not at all")
     void abilityDescriptions() {
         IOption sniper = mock(IOption.class);
