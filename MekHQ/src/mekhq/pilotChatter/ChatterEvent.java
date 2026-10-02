@@ -23,6 +23,8 @@ package mekhq.pilotChatter;
  * moments always get a line; the rest get one by chance.
  */
 public enum ChatterEvent {
+    SURRENDER(100, "is in charge of what is left of their force, and is surrendering it to the enemy over open comms. "
+                         + "Declare the surrender, in their own voice."),
     HEADSHOT(100, "was killed instantly by a shot to the head."),
     POSE(100, "struck a dramatic pose instead of moving. Deliver a one-liner worthy of it."),
     DESTROYED(100, "had their unit destroyed around them."),
@@ -53,6 +55,13 @@ public enum ChatterEvent {
      */
     public boolean isForced() {
         return chance >= 100;
+    }
+
+    /**
+     * @return whether the line goes out over open comms, heard by every player even under double-blind
+     */
+    public boolean isOpenChannel() {
+        return this == SURRENDER;
     }
 
     /**

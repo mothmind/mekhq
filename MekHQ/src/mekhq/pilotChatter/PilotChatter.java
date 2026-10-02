@@ -23,9 +23,12 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -39,10 +42,12 @@ import megamek.common.compute.Compute;
 import megamek.common.enums.GamePhase;
 import megamek.common.event.GameListenerAdapter;
 import megamek.common.event.GamePhaseChangeEvent;
+import megamek.common.event.GameSurrenderEvent;
 import megamek.common.event.GameToastEvent;
 import megamek.common.game.Game;
 import megamek.common.net.enums.PacketCommand;
 import megamek.common.net.packets.Packet;
+import megamek.common.options.OptionsConstants;
 import megamek.common.units.EjectedCrew;
 import megamek.common.units.Entity;
 import megamek.logging.MMLogger;
@@ -114,6 +119,7 @@ public class PilotChatter extends GameListenerAdapter {
     private final Executor executor;
     private final IntUnaryOperator roll;
     private final AtomicInteger failures = new AtomicInteger();
+    private final Set<Integer> surrenderedSides = ConcurrentHashMap.newKeySet();
     private volatile boolean silenced;
 
     private Game game;
@@ -190,6 +196,72 @@ public class PilotChatter extends GameListenerAdapter {
     }
 
     @Override
+    public void gameSurrender(GameSurrenderEvent event) {
+        try {
+            declareSurrender(event.getPlayerId());
+        } catch (RuntimeException ex) {
+            LOGGER.error(ex, "Pilot chatter could not voice a surrender; the battle carries on without it");
+        }
+    }
+
+    /**
+     * Has whoever is in charge of an enemy force declare its surrender, the first time that side offers or admits it.
+     * Later offers and the acknowledgment of a declared victory say nothing more.
+     */
+    private void declareSurrender(int playerId) {
+        Player player = game.getPlayer(playerId);
+        if (silenced || (player == null)) {
+            return;
+        }
+        Player campaignSide = PilotDossier.campaignSide(game, campaign);
+        if (!PilotDossier.isEnemy(player, campaignSide)) {
+            return;
+        }
+        Entity speaker = surrenderSpeaker(game, player);
+        if ((speaker == null) || !surrenderedSides.add(sideOf(player))) {
+            return;
+        }
+        String standing = speaker.isCommander() ?
+                                "They are the force's commander." :
+                                "They are the senior pilot left standing, so the surrender falls to them.";
+        speak(new Trigger(speaker.getId(), ChatterEvent.SURRENDER, standing, List.of()), campaignSide);
+    }
+
+    /**
+     * Picks who declares a force's surrender: a unit flagged as its commander if one is still in the fight, otherwise
+     * the one with the best initiative command bonus, as MegaMek counts it for the force's initiative. Ties go to the
+     * better Gunnery and Piloting, then the lower unit id. The pilot must be alive and conscious, in a unit that is
+     * still in the fight.
+     *
+     * @return the speaker, or {@code null} if nobody is left who could
+     */
+    static @Nullable Entity surrenderSpeaker(Game game, Player player) {
+        boolean commandInitiative = game.getOptions().booleanOption(OptionsConstants.RPG_COMMAND_INIT);
+        Comparator<Entity> inCharge = Comparator.comparing((Entity entity) -> !entity.isCommander())
+              .thenComparingInt(entity -> -player.getIndividualCommandBonus(entity, commandInitiative))
+              .thenComparingInt(entity -> entity.getCrew().getGunnery() + entity.getCrew().getPiloting())
+              .thenComparingInt(Entity::getId);
+        return game.getEntitiesVector().stream()
+                     .filter(entity -> player.equals(entity.getOwner()))
+                     .filter(PilotChatter::canSpeakForTheForce)
+                     .min(inCharge)
+                     .orElse(null);
+    }
+
+    private static boolean canSpeakForTheForce(Entity entity) {
+        return !(entity instanceof EjectedCrew) && !entity.isDestroyed() && !entity.isDoomed() && !entity.isCaptured()
+                     && (entity.getCrew() != null) && entity.getCrew().isActive()
+                     && !BattleEventDetector.pilotKilled(entity);
+    }
+
+    /**
+     * @return the side a player fights on: their team, or the player alone if they have none
+     */
+    private static int sideOf(Player player) {
+        return (player.getTeam() == Player.TEAM_NONE) ? -1 - player.getId() : player.getTeam();
+    }
+
+    @Override
     public void gamePhaseChange(GamePhaseChangeEvent event) {
         try {
             reactTo(event.getNewPhase());
@@ -250,7 +322,7 @@ public class PilotChatter extends GameListenerAdapter {
         if (!tuning.enemyChatter() && PilotDossier.isEnemy(entity.getOwner(), campaignSide)) {
             return;
         }
-        ChatAudience audience = ChatAudience.of(game, entity);
+        ChatAudience audience = trigger.event().isOpenChannel() ? ChatAudience.EVERYONE : ChatAudience.of(game, entity);
         if (!audience.isHeard()) {
             return;
         }

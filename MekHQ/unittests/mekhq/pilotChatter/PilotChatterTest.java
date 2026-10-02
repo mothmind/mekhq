@@ -40,6 +40,7 @@ import megamek.common.Player;
 import megamek.common.Report;
 import megamek.common.enums.GamePhase;
 import megamek.common.equipment.EquipmentType;
+import megamek.common.event.GameSurrenderEvent;
 import megamek.common.game.Game;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.BipedMek;
@@ -619,5 +620,114 @@ class PilotChatterTest {
         assertEquals(1, delivered.size());
         old.setPhase(GamePhase.FIRING_REPORT);
         assertEquals(1, delivered.size(), "the replaced game is no longer listened to");
+    }
+
+    private void surrenders(Player player, boolean admitted) {
+        game.processGameEvent(new GameSurrenderEvent(this, player.getId(), admitted));
+    }
+
+    @Test
+    @DisplayName("when the enemy surrenders, their commander declares it, heard by everyone even under double-blind")
+    void commanderDeclaresTheSurrender() {
+        game.getOptions().getOption(OptionsConstants.ADVANCED_DOUBLE_BLIND).setValue(true);
+        mek(game, players, "Hatchet");
+        mek(game, opFor, "Kenji");
+        Entity commander = mek(game, opFor, "Tai-sa Ito");
+        commander.setCommander(true);
+        chatter(99);
+
+        surrenders(opFor, false);
+
+        assertEquals(List.of("Tai-sa Ito (Test Tai-sa Ito): Line 1"), delivered);
+        assertEquals(List.of(commander.getId() + " Tai-sa Ito (Test Tai-sa Ito): Line 1"), popups);
+        assertTrue(prompts.getFirst().contains("surrendering it to the enemy over open comms"));
+        assertTrue(prompts.getFirst().contains("They are the force's commander."));
+        assertEquals(1, listenerIds.size());
+        assertEquals(null, listenerIds.getFirst(), "a surrender goes out to every player, not just those who see it");
+        assertEquals("SURRENDER", journal.recentInBattle("Battle A", 1).getFirst().event());
+    }
+
+    @Test
+    @DisplayName("with the commander dead, the surrender falls to whoever is left in charge")
+    void surrenderFallsToWhoeverIsLeft() {
+        Entity commander = mek(game, opFor, "Tai-sa Ito");
+        commander.setCommander(true);
+        commander.getCrew().setDead(true);
+        Entity green = mek(game, opFor, "Green");
+        green.getCrew().setGunnery(5, 0);
+        green.getCrew().setPiloting(6, 0);
+        Entity veteran = mek(game, opFor, "Kenji");
+        veteran.getCrew().setGunnery(2, 0);
+        veteran.getCrew().setPiloting(3, 0);
+        chatter(99);
+
+        surrenders(opFor, false);
+
+        assertEquals(List.of("Kenji (Test Kenji): Line 1"), delivered, "the better pilot outranks the green one");
+        assertTrue(prompts.getFirst().contains("the surrender falls to them"));
+    }
+
+    @Test
+    @DisplayName("the force's command bonus, as initiative counts it, outranks raw piloting skill")
+    void commandBonusOutranksSkill() {
+        game.getOptions().getOption(OptionsConstants.RPG_COMMAND_INIT).setValue(true);
+        Entity leader = mek(game, opFor, "Leader");
+        leader.setDeployed(true);
+        leader.getCrew().setGunnery(5, 0);
+        leader.getCrew().setPiloting(6, 0);
+        leader.getCrew().setCommandBonus(2);
+        Entity ace = mek(game, opFor, "Ace");
+        ace.setDeployed(true);
+        ace.getCrew().setGunnery(2, 0);
+        ace.getCrew().setPiloting(3, 0);
+
+        assertEquals(leader, PilotChatter.surrenderSpeaker(game, opFor));
+    }
+
+    @Test
+    @DisplayName("a side surrenders once: repeated offers and the final acknowledgment say nothing more")
+    void surrenderIsDeclaredOnce() {
+        mek(game, opFor, "Kenji");
+        chatter(99);
+
+        surrenders(opFor, false);
+        surrenders(opFor, false);
+        surrenders(opFor, true);
+
+        assertEquals(1, delivered.size());
+    }
+
+    @Test
+    @DisplayName("only the enemy's surrender is voiced, never the players' own")
+    void onlyEnemySurrendersAreVoiced() {
+        mek(game, players, "Hatchet");
+        chatter(99);
+
+        surrenders(players, false);
+
+        assertTrue(delivered.isEmpty());
+    }
+
+    @Test
+    @DisplayName("with enemy chatter switched off, the enemy surrenders in silence")
+    void enemyChatterOffSilencesTheSurrender() {
+        mek(game, opFor, "Kenji");
+        tuning = new ChatterTuning(Chattiness.CHATTY, false, ChatterTuning.DEFAULT_LORE_CHANCE);
+        chatter(99);
+
+        surrenders(opFor, false);
+
+        assertTrue(delivered.isEmpty());
+    }
+
+    @Test
+    @DisplayName("a force with nobody left who could speak surrenders in silence")
+    void nobodyLeftToSpeak() {
+        Entity wreck = mek(game, opFor, "Kenji");
+        wreck.setDestroyed(true);
+        chatter(99);
+
+        assertDoesNotThrow(() -> surrenders(opFor, false));
+        assertTrue(delivered.isEmpty());
     }
 }
