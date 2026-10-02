@@ -71,6 +71,7 @@ class PilotChatterTest {
     private PilotJournal journal;
     private final List<String> prompts = new ArrayList<>();
     private final List<String> delivered = new ArrayList<>();
+    private final List<String> popups = new ArrayList<>();
     private final List<List<Integer>> listenerIds = new ArrayList<>();
     private final List<String> notices = new ArrayList<>();
     private final Campaign campaign = mock(Campaign.class);
@@ -146,6 +147,11 @@ class PilotChatterTest {
             }
 
             @Override
+            public void showSpeech(List<Player> listeners, int entityId, String callName, String line) {
+                popups.add(entityId + " " + callName + ": " + line);
+            }
+
+            @Override
             public void notice(String message) {
                 notices.add(message);
             }
@@ -177,6 +183,20 @@ class PilotChatterTest {
         assertEquals("Line 1", entry.line());
         assertEquals("DAMAGED", entry.event());
         assertEquals("3067-03-01", entry.campaignDate());
+    }
+
+    @Test
+    @DisplayName("a spoken line also pops up on the board, against the unit that said it")
+    void popsUpAgainstTheSpeaker() {
+        Entity hatchet = mek(game, players, "Hatchet");
+        chatter(0);
+        phase(GamePhase.FIRING);
+
+        hatchet.setArmor(2, Mek.LOC_CENTER_TORSO);
+        phase(GamePhase.FIRING_REPORT);
+
+        assertEquals(List.of(hatchet.getId() + " Hatchet (Test Hatchet): Line 1"), popups);
+        assertEquals(delivered.size(), popups.size(), "every line in chat is on the board as well");
     }
 
     @Test

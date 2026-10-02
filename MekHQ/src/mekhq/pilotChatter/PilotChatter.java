@@ -39,7 +39,10 @@ import megamek.common.compute.Compute;
 import megamek.common.enums.GamePhase;
 import megamek.common.event.GameListenerAdapter;
 import megamek.common.event.GamePhaseChangeEvent;
+import megamek.common.event.GameToastEvent;
 import megamek.common.game.Game;
+import megamek.common.net.enums.PacketCommand;
+import megamek.common.net.packets.Packet;
 import megamek.common.units.EjectedCrew;
 import megamek.common.units.Entity;
 import megamek.logging.MMLogger;
@@ -64,6 +67,8 @@ public class PilotChatter extends GameListenerAdapter {
 
     static final int MAX_CONSECUTIVE_FAILURES = 3;
     static final int QUEUE_LIMIT = 12;
+    /** How long a line stays up on the board, longer than the toast setting allows: it is read, not glanced at. */
+    static final int SPEECH_TOAST_MILLIS = 13_000;
     static final int MAX_WORDS_BEFORE_CUT = 4;
     private static final String TRAILING_PUNCTUATION = "[\\s\\p{Punct}\\u2013\\u2014\\u2026]+$";
 
@@ -83,6 +88,16 @@ public class PilotChatter extends GameListenerAdapter {
          * @param listeners the players who hear it, or {@code null} for everyone
          */
         void deliver(@Nullable List<Player> listeners, String callName, String line);
+
+        /**
+         * Pops the line up on the board beside the speaking unit's icon, as well as having it in chat. Optional: a
+         * delivery with nowhere to show one does nothing.
+         *
+         * @param listeners the players who see it, or {@code null} for everyone
+         * @param entityId  the speaking unit, whose icon goes with the popup
+         */
+        default void showSpeech(@Nullable List<Player> listeners, int entityId, String callName, String line) {
+        }
 
         void notice(String message);
     }
@@ -255,7 +270,7 @@ public class PilotChatter extends GameListenerAdapter {
               journal.recentInBattle(battle, ChatterPrompt.BATTLE_LINES, audience::heard));
         executor.execute(() -> {
             try {
-                generate(audience, dossier, trigger.event(), prompt, round, team);
+                generate(audience, dossier, trigger.event(), prompt, round, team, trigger.entityId());
             } catch (RuntimeException ex) {
                 LOGGER.error(ex, "Pilot chatter lost a line from {}", dossier.callName());
             }
@@ -281,7 +296,7 @@ public class PilotChatter extends GameListenerAdapter {
     }
 
     private void generate(ChatAudience audience, PilotDossier dossier, ChatterEvent event, String prompt, int round,
-          int team) {
+          int team, int entityId) {
         if (silenced) {
             return;
         }
@@ -305,6 +320,7 @@ public class PilotChatter extends GameListenerAdapter {
                   battle, round, dossier.key(), dossier.callName(), event.name(), spoken, team,
                   dossier.pronouns(), audience.listenerIds()));
             delivery.deliver(audience.listeners(), dossier.callName(), spoken);
+            delivery.showSpeech(audience.listeners(), entityId, dossier.callName(), spoken);
         });
     }
 
@@ -353,6 +369,19 @@ public class PilotChatter extends GameListenerAdapter {
                 } else {
                     for (Player player : listeners) {
                         server.sendChat(player.getId(), callName, line);
+                    }
+                }
+            }
+
+            @Override
+            public void showSpeech(@Nullable List<Player> listeners, int entityId, String callName, String line) {
+                // The toast MegaMek already raises for a unit's own events: a level, the text, and the unit whose
+                // icon goes with it. A client that does not hold the unit, as under double-blind, shows it text-only.
+                Packet toast = new Packet(PacketCommand.SEND_TOAST, GameToastEvent.Level.INFO,
+                      Server.formatChatMessage(callName, line), entityId, SPEECH_TOAST_MILLIS);
+                for (Player player : (listeners == null) ? server.getGame().getPlayersList() : listeners) {
+                    if (!player.isBot()) {
+                        server.send(player.getId(), toast);
                     }
                 }
             }
