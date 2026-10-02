@@ -46,6 +46,7 @@ import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.io.File;
 import java.util.*;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
 import megamek.client.IClient;
@@ -594,7 +595,7 @@ public class ResolveScenarioTracker {
             return;
         }
 
-        Entity killer = victoryEvent.getEntity(e.getKillerId());
+        Entity killer = creditedKiller(e, victoryEvent::getEntity);
 
         if ((null != killer) && !"-1".equals(killer.getExternalIdAsString())) {
             killCredits.put(e.getDisplayName(), killer.getExternalIdAsString());
@@ -604,6 +605,25 @@ public class ResolveScenarioTracker {
         } else {
             killCredits.put(e.getDisplayName(), "None");
         }
+    }
+
+    /**
+     * The unit credited with a kill: the one that landed the last hit, or, when nobody did - the unit blew itself up,
+     * its crew ejected or abandoned it, it fell or was left stranded - the one that did it the most damage over the
+     * battle, ties going to whichever of them hit it most recently.
+     *
+     * @param victim the unit killed
+     * @param lookup finds a unit by id, returning {@code null} for an unknown id
+     *
+     * @return the unit credited, or {@code null} if no one is
+     */
+    static @Nullable Entity creditedKiller(Entity victim, IntFunction<Entity> lookup) {
+        Entity killer = lookup.apply(victim.getKillerId());
+        if (killer != null) {
+            return killer;
+        }
+        int mostDamaging = victim.getMostDamagingAttackerId();
+        return (mostDamaging == Entity.NONE) ? null : lookup.apply(mostDamaging);
     }
 
     private UnitStatus processAlliedUnit(Entity e) {
