@@ -43,6 +43,7 @@ import mekhq.campaign.personnel.skills.Skill;
 import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.personnel.skills.Skills;
 import mekhq.campaign.unit.Unit;
+import mekhq.campaign.universe.Faction;
 
 /**
  * Who is speaking: the name they go by on comms, and what the model knows about them. The campaign's own pilots get
@@ -124,6 +125,14 @@ public record PilotDossier(String key, String callName, String sheet, boolean ca
             return true;
         }
         return (campaignSide == null) ? (owner.getTeam() != 1) : campaignSide.isEnemyOf(owner);
+    }
+
+    /**
+     * @return the faction a campaign pilot comes from, or {@code null} if the unit is not crewed by one or it is unknown
+     */
+    static @Nullable Faction originFaction(Entity entity, Campaign campaign) {
+        Person person = campaignPilot(entity, campaign);
+        return (person == null) ? null : person.getOriginFaction();
     }
 
     private static @Nullable Person campaignPilot(Entity entity, Campaign campaign) {

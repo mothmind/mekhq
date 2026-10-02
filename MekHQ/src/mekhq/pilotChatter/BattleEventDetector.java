@@ -25,14 +25,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+import megamek.common.Hex;
 import megamek.common.Player;
 import megamek.common.Report;
 import megamek.common.annotations.Nullable;
+import megamek.common.board.Board;
 import megamek.common.game.Game;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.EjectedCrew;
 import megamek.common.units.Entity;
 import megamek.common.units.Mek;
+import megamek.common.units.Tank;
+import megamek.common.units.Terrains;
 
 /**
  * Works out what happened to each pilot since the last report phase, by comparing every unit with how it stood then
@@ -41,9 +45,13 @@ import megamek.common.units.Mek;
 public class BattleEventDetector {
     static final int EXPLOSION_REPORT = 6390;
     static final int MAX_CONTEXT_LINES = 6;
+    /** A single phase's damage at or above this share of everything the unit started with is called a brutal hit. */
+    static final int BRUTAL_HIT_PERCENT = 20;
     static final String UNSEEN = "[unseen]";
 
     private final Map<Integer, Snapshot> snapshots = new HashMap<>();
+    /** The last round each burning unit screamed in, so a fire draws one scream a round rather than one a phase. */
+    private final Map<Integer, Integer> lastScreamRound = new HashMap<>();
 
     /**
      * Something that happened to one pilot's unit.
@@ -158,10 +166,15 @@ public class BattleEventDetector {
             if (now.armorAndStructure() < before.armorAndStructure()) {
                 raise(events, entity.getId(), ChatterEvent.DAMAGED);
                 details.putIfAbsent(entity.getId(),
-                      "They took " + (before.armorAndStructure() - now.armorAndStructure()) + " damage.");
+                      damageDetail(before.armorAndStructure() - now.armorAndStructure(), entity));
             }
             if (now.posing() && !before.posing()) {
                 raise(events, entity.getId(), ChatterEvent.POSE);
+            }
+            if (!now.destroyed() && onFire(game, entity)
+                      && (lastScreamRound.getOrDefault(entity.getId(), Integer.MIN_VALUE) < game.getCurrentRound())) {
+                raise(events, entity.getId(), ChatterEvent.BURNING);
+                lastScreamRound.put(entity.getId(), game.getCurrentRound());
             }
         }
 
@@ -201,6 +214,37 @@ public class BattleEventDetector {
         events.forEach((entityId, event) -> triggers.add(new Trigger(entityId, event,
               details.getOrDefault(entityId, ""), context.getOrDefault(entityId, List.of()))));
         return triggers;
+    }
+
+    /**
+     * Whether a unit is burning: inferno rounds stuck to it, a vehicle fire, or standing in a burning hex. An airborne
+     * unit is above the flames.
+     */
+    static boolean onFire(Game game, Entity entity) {
+        if (entity.infernos.isStillBurning() || ((entity instanceof Tank tank) && tank.isOnFire())) {
+            return true;
+        }
+        if (entity.isAirborne() || entity.isAirborneVTOLorWIGE() || (entity.getPosition() == null)) {
+            return false;
+        }
+        Board board = game.getBoard(entity);
+        Hex hex = (board == null) ? null : board.getHex(entity.getPosition());
+        return (hex != null) && hex.containsTerrain(Terrains.FIRE);
+    }
+
+    /**
+     * Damage taken in a phase, with its size against everything the unit started with, so the model can tell a scratch
+     * from a hit that tore half the unit away.
+     */
+    static String damageDetail(int damage, Entity entity) {
+        String detail = "They took " + damage + " damage.";
+        int original = entity.getTotalOArmor() + entity.getTotalOInternal();
+        if (original <= 0) {
+            return detail;
+        }
+        int percent = (int) Math.round((100.0 * damage) / original);
+        detail += " That is about " + percent + "% of everything their unit started with";
+        return detail + ((percent >= BRUTAL_HIT_PERCENT) ? " - a brutal hit." : ".");
     }
 
     private static String killDetail(Entity victim, ChatterEvent destruction, @Nullable Player viewer) {

@@ -31,6 +31,11 @@ public enum ChatterEvent {
     KILL(100, "destroyed an enemy unit."),
     EJECTED(100, "ejected from their stricken unit."),
     INTERNAL_EXPLOSION(100, "felt something explode inside their own unit."),
+    WITHDRAWING(100, "has taken so much damage that they are pulling out of the fight and withdrawing. Tell the others, "
+                           + "in their own voice."),
+    RETURNING_FIRE(100, "was shot at while withdrawing, and will now shoot back as they keep pulling out of the fight. "
+                              + "Tell the others, in their own voice."),
+    BURNING(100, "is on fire, and the heat is pouring into the cockpit."),
     PILOT_HURT(70, "was hurt in the cockpit."),
     DAMAGED(45, "took hits."),
     IN_ACTION(25, "is in the thick of it this turn.");

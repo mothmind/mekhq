@@ -36,6 +36,7 @@ public final class ChatterPrompt {
           - One line, at most 20 words. No quotation marks, narration, stage directions, emojis or hashtags.
           - Speak as that pilot: their personality, history and side. Stay inside the BattleTech universe.
           - React to what just happened. Callbacks to earlier lines are welcome; repeating them is not.
+          - When you are told how the pilot feels, let it show in how they speak, not just in what they say.
           - Chatter marked [enemy] comes from the other side: you may taunt them, never speak for them or use their \
           slogans.
           - Never mention map hexes, coordinates, headings, or where anyone is or is going.
@@ -46,7 +47,7 @@ public final class ChatterPrompt {
 
     static String build(PilotDossier dossier, int team, Trigger trigger, boolean pilotDead, int round,
           List<PilotJournal.Entry> ownLines, List<PilotJournal.Entry> battleLines) {
-        return build(dossier, "", "", team, trigger, pilotDead, round, ownLines, battleLines);
+        return build(dossier, "", "", "", "", team, trigger, pilotDead, round, ownLines, battleLines);
     }
 
     /**
@@ -54,6 +55,9 @@ public final class ChatterPrompt {
      * @param briefing    what the speaker knows beyond their own unit, as {@link BattleBriefing} writes it; may be
      *                    empty
      * @param recall      a request to draw on the company's story, from {@link BattleBriefing#recall}; may be empty
+     * @param tone        how the pilot is feeling, from {@link ChatterTone#of}; may be empty
+     * @param language    the instruction to speak their faction's language, from {@link ChatterLanguage#forPilot};
+     *                    empty for English
      * @param team        the speaker's team, to tell their side's chatter from the enemy's
      * @param trigger     what happened to them
      * @param pilotDead   whether the pilot is dead, making this their last words
@@ -63,8 +67,9 @@ public final class ChatterPrompt {
      *
      * @return the request for the model
      */
-    static String build(PilotDossier dossier, String briefing, String recall, int team, Trigger trigger,
-          boolean pilotDead, int round, List<PilotJournal.Entry> ownLines, List<PilotJournal.Entry> battleLines) {
+    static String build(PilotDossier dossier, String briefing, String recall, String tone, String language, int team,
+          Trigger trigger, boolean pilotDead, int round, List<PilotJournal.Entry> ownLines,
+          List<PilotJournal.Entry> battleLines) {
         StringBuilder prompt = new StringBuilder();
         prompt.append("THE PILOT\n").append(dossier.sheet()).append("\n\n");
         prompt.append(briefing);
@@ -79,6 +84,9 @@ public final class ChatterPrompt {
         }
         if (!recall.isBlank()) {
             prompt.append("- ").append(recall).append('\n');
+        }
+        if (!tone.isBlank()) {
+            prompt.append("- ").append(tone).append('\n');
         }
         if (trigger.event() == ChatterEvent.HEADSHOT) {
             prompt.append("- They never saw it coming, so this is no farewell: write what they were in the middle of ")
@@ -100,6 +108,10 @@ public final class ChatterPrompt {
                 prompt.append("- ").append(sideLabel(entry.team(), team)).append(speakerName(entry)).append(": ")
                       .append(entry.line()).append('\n');
             }
+        }
+
+        if (!language.isBlank()) {
+            prompt.append("\nLANGUAGE\n- ").append(language).append('\n');
         }
 
         prompt.append("\nWrite the pilot's line now.");

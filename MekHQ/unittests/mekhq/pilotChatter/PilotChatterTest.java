@@ -36,11 +36,13 @@ import java.util.UUID;
 import java.util.Vector;
 import java.util.concurrent.Executor;
 
+import megamek.common.InfernoTracker;
 import megamek.common.Player;
 import megamek.common.Report;
 import megamek.common.enums.GamePhase;
 import megamek.common.equipment.EquipmentType;
 import megamek.common.event.GameSurrenderEvent;
+import megamek.common.event.GameWithdrawalEvent;
 import megamek.common.game.Game;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.BipedMek;
@@ -729,5 +731,202 @@ class PilotChatterTest {
 
         assertDoesNotThrow(() -> surrenders(opFor, false));
         assertTrue(delivered.isEmpty());
+    }
+
+    private void reports(Entity unit, boolean returningFire) {
+        game.processGameEvent(new GameWithdrawalEvent(this, unit.getId(), returningFire));
+    }
+
+    @Test
+    @DisplayName("a bot unit that starts withdrawing always says so, on the board against its icon")
+    void withdrawingPilotSaysSo() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        chatter(99);
+
+        reports(kenji, false);
+
+        assertEquals(List.of("Kenji (Test Kenji): Line 1"), delivered);
+        assertEquals(List.of(kenji.getId() + " Kenji (Test Kenji): Line 1"), popups);
+        assertTrue(prompts.getFirst().contains("pulling out of the fight and withdrawing"));
+        assertEquals("WITHDRAWING", journal.recentInBattle("Battle A", 1).getFirst().event());
+    }
+
+    @Test
+    @DisplayName("a withdrawing unit that turns to shoot back says that too")
+    void returningFirePilotSaysSo() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        chatter(99);
+
+        reports(kenji, false);
+        reports(kenji, true);
+
+        assertEquals(2, delivered.size());
+        assertTrue(prompts.get(1).contains("will now shoot back as they keep pulling out"));
+        assertEquals("RETURNING_FIRE", journal.recentInBattle("Battle A", 1).getFirst().event());
+    }
+
+    @Test
+    @DisplayName("each change of course is said once per unit, however often it is reported")
+    void eachCourseIsSaidOnce() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        Entity hiro = mek(game, opFor, "Hiro");
+        chatter(99);
+
+        reports(kenji, false);
+        reports(kenji, false);
+        reports(hiro, false);
+
+        assertEquals(2, delivered.size(), "Kenji once, Hiro once");
+    }
+
+    @Test
+    @DisplayName("with enemy chatter switched off, an enemy pulls out in silence")
+    void enemyChatterOffSilencesWithdrawal() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        tuning = new ChatterTuning(Chattiness.CHATTY, false, ChatterTuning.DEFAULT_LORE_CHANCE);
+        chatter(99);
+
+        reports(kenji, false);
+
+        assertTrue(delivered.isEmpty());
+    }
+
+    @Test
+    @DisplayName("once a unit is withdrawing, everything its pilot says is terrified")
+    void withdrawingPilotStaysTerrified() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        chatter(0);
+        reports(kenji, false);
+        phase(GamePhase.FIRING);
+
+        kenji.setArmor(2, Mek.LOC_CENTER_TORSO);
+        phase(GamePhase.FIRING_REPORT);
+
+        assertEquals(2, prompts.size(), "the announcement, then the damage line");
+        assertTrue(prompts.get(0).contains(ChatterTone.TERRIFIED));
+        assertTrue(prompts.get(1).contains(ChatterTone.TERRIFIED), "the later damage line must stay terrified");
+    }
+
+    @Test
+    @DisplayName("a pilot whose unit is badly hurt shows the strain, in their own way")
+    void badlyHurtPilotShowsStrain() {
+        Entity hatchet = mek(game, players, "Hatchet");
+        chatter(0);
+        phase(GamePhase.FIRING);
+
+        for (int location = 0; location < hatchet.locations(); location++) {
+            hatchet.setArmor(0, location);
+        }
+        hatchet.setInternal(0, Mek.LOC_LEFT_ARM);
+        hatchet.setInternal(0, Mek.LOC_RIGHT_ARM);
+        hatchet.setInternal(0, Mek.LOC_LEFT_LEG);
+        hatchet.setInternal(0, Mek.LOC_RIGHT_LEG);
+        phase(GamePhase.FIRING_REPORT);
+
+        assertEquals(1, prompts.size());
+        assertTrue(prompts.getFirst().contains("whichever fits their personality"), prompts.getFirst());
+        assertTrue(prompts.getFirst().contains("a brutal hit"), "losing that much in one phase is a brutal hit");
+    }
+
+    @Test
+    @DisplayName("a lightly scratched pilot gets no tone line")
+    void scratchedPilotHasNoTone() {
+        Entity hatchet = mek(game, players, "Hatchet");
+        chatter(0);
+        phase(GamePhase.FIRING);
+
+        hatchet.setArmor(8, Mek.LOC_CENTER_TORSO);
+        phase(GamePhase.FIRING_REPORT);
+
+        assertEquals(1, prompts.size());
+        assertFalse(prompts.getFirst().contains("armor and structure left"));
+        assertFalse(prompts.getFirst().contains("terrified"));
+    }
+
+    @Test
+    @DisplayName("a report for a unit no longer in the game says nothing and does not throw")
+    void unknownUnitIsIgnored() {
+        chatter(99);
+
+        assertDoesNotThrow(() -> game.processGameEvent(new GameWithdrawalEvent(this, 9999, false)));
+        assertTrue(delivered.isEmpty());
+    }
+
+    @Test
+    @DisplayName("a pilot on fire screams, once a round for as long as the fire lasts")
+    void burningPilotScreamsOncePerRound() {
+        Entity kenji = mek(game, opFor, "Kenji");
+        chatter(99);
+        phase(GamePhase.MOVEMENT);
+
+        kenji.infernos.add(InfernoTracker.STANDARD_ROUND, 1);
+        phase(GamePhase.MOVEMENT_REPORT);
+        phase(GamePhase.FIRING);
+        phase(GamePhase.FIRING_REPORT);
+
+        assertEquals(1, delivered.size(), "one scream for the round, not one a phase");
+        assertTrue(prompts.getFirst().contains("is on fire"));
+        assertTrue(prompts.getFirst().contains(ChatterTone.SCREAMING));
+
+        game.setCurrentRound(game.getCurrentRound() + 1);
+        phase(GamePhase.MOVEMENT);
+        phase(GamePhase.MOVEMENT_REPORT);
+        assertEquals(2, delivered.size(), "still burning the next round, so another scream");
+    }
+
+    @Test
+    @DisplayName("enemy pilots who speak their faction's language use it; the rest speak English")
+    void enemyPilotsSpeakTheEnemyLanguage() {
+        List<Entity> enemies = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            enemies.add(mek(game, opFor, "Pilot" + i));
+        }
+        PilotChatter chatter = chatter(0);
+        chatter.sideLanguages("Japanese", "German");
+
+        enemies.forEach(enemy -> reports(enemy, false));
+
+        assertEquals(enemies.size(), prompts.size());
+        int speakers = 0;
+        for (int i = 0; i < enemies.size(); i++) {
+            boolean speaks = ChatterLanguage.speaksOwnLanguage("battle:Battle A:" + enemies.get(i).getId());
+            assertEquals(speaks, prompts.get(i).contains("speak Japanese"), "pilot " + i);
+            assertFalse(prompts.get(i).contains("German"), "enemy pilots never take the employer's language");
+            speakers += speaks ? 1 : 0;
+        }
+        assertTrue((speakers > 0) && (speakers < enemies.size()), "a minority speak it, not none or all");
+    }
+
+    @Test
+    @DisplayName("allied pilots take the employer's language")
+    void alliedPilotsSpeakTheEmployerLanguage() {
+        List<Entity> allies = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            allies.add(mek(game, players, "Ally" + i));
+        }
+        PilotChatter chatter = chatter(0);
+        chatter.sideLanguages("Japanese", "German");
+
+        allies.forEach(ally -> reports(ally, false));
+
+        for (int i = 0; i < allies.size(); i++) {
+            boolean speaks = ChatterLanguage.speaksOwnLanguage("battle:Battle A:" + allies.get(i).getId());
+            assertEquals(speaks, prompts.get(i).contains("speak German"), "ally " + i);
+        }
+    }
+
+    @Test
+    @DisplayName("even a speaker uses English when the line roll says so")
+    void speakersStillUseEnglishSometimes() {
+        List<Entity> enemies = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            enemies.add(mek(game, opFor, "Pilot" + i));
+        }
+        PilotChatter chatter = chatter(99);
+        chatter.sideLanguages("Japanese", null);
+
+        enemies.forEach(enemy -> reports(enemy, false));
+
+        assertTrue(prompts.stream().noneMatch(prompt -> prompt.contains("speak Japanese")));
     }
 }

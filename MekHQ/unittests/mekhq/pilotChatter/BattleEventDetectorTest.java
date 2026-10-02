@@ -108,7 +108,20 @@ class BattleEventDetectorTest {
         List<Trigger> triggers = detector.detect(game, List.of(), false);
 
         assertEquals(ChatterEvent.DAMAGED, triggers.getFirst().event());
-        assertEquals("They took 6 damage.", triggers.getFirst().detail());
+        long percent = Math.round(600.0 / (target.getTotalOArmor() + target.getTotalOInternal()));
+        assertEquals("They took 6 damage. That is about " + percent + "% of everything their unit started with.",
+              triggers.getFirst().detail());
+    }
+
+    @Test
+    @DisplayName("a hit that takes a fifth or more of the whole unit is called brutal")
+    void brutalHit() {
+        Entity target = mek("A", players);
+        int original = target.getTotalOArmor() + target.getTotalOInternal();
+
+        assertTrue(BattleEventDetector.damageDetail(original / 4, target).endsWith(" - a brutal hit."));
+        assertTrue(BattleEventDetector.damageDetail(original / 10, target).endsWith("started with."),
+              "a tenth of the unit is a hit, not a brutal one");
     }
 
     @Test

@@ -44,6 +44,7 @@ import megamek.common.event.GameListenerAdapter;
 import megamek.common.event.GamePhaseChangeEvent;
 import megamek.common.event.GameSurrenderEvent;
 import megamek.common.event.GameToastEvent;
+import megamek.common.event.GameWithdrawalEvent;
 import megamek.common.game.Game;
 import megamek.common.net.enums.PacketCommand;
 import megamek.common.net.packets.Packet;
@@ -120,6 +121,9 @@ public class PilotChatter extends GameListenerAdapter {
     private final IntUnaryOperator roll;
     private final AtomicInteger failures = new AtomicInteger();
     private final Set<Integer> surrenderedSides = ConcurrentHashMap.newKeySet();
+    private final Set<String> announcedCourses = ConcurrentHashMap.newKeySet();
+    private volatile String enemyLanguage;
+    private volatile String alliedLanguage;
     private volatile boolean silenced;
 
     private Game game;
@@ -167,6 +171,11 @@ public class PilotChatter extends GameListenerAdapter {
                   enemyFaction(campaign, scenario), settings.endpoint(), briefing,
                   ChatterTuning.fromOptions(MekHQ.getMHQOptions()), journal, client::generate,
                   serverDelivery(server), backgroundExecutor(), Compute::randomInt);
+            AbstractContract contract = campaign.getContract(scenario.getMissionId());
+            if (contract != null) {
+                chatter.sideLanguages(ChatterLanguage.of(contract.getEnemyFaction()),
+                      ChatterLanguage.of(contract.getEmployerFaction()));
+            }
             chatter.watch(game);
             if (server.getGameManager() instanceof CampaignGameManager campaignGameManager) {
                 campaignGameManager.addGameReplacedListener(chatter::follow);
@@ -176,6 +185,18 @@ public class PilotChatter extends GameListenerAdapter {
             LOGGER.error(ex, "Pilot chatter could not start; the battle goes ahead without it");
             return null;
         }
+    }
+
+    /**
+     * Sets the own languages of the factions on each side, for pilots with no personal file: the enemy's for enemy
+     * pilots, the employer's for allied ones.
+     *
+     * @param enemyLanguage  the enemy faction's own language, or {@code null} if it speaks English
+     * @param alliedLanguage the employer faction's own language, or {@code null} if it speaks English
+     */
+    void sideLanguages(@Nullable String enemyLanguage, @Nullable String alliedLanguage) {
+        this.enemyLanguage = enemyLanguage;
+        this.alliedLanguage = alliedLanguage;
     }
 
     void watch(Game newGame) {
@@ -202,6 +223,41 @@ public class PilotChatter extends GameListenerAdapter {
         } catch (RuntimeException ex) {
             LOGGER.error(ex, "Pilot chatter could not voice a surrender; the battle carries on without it");
         }
+    }
+
+    @Override
+    public void gameWithdrawal(GameWithdrawalEvent event) {
+        try {
+            declareCourse(event.getEntityId(), event.isReturningFire());
+        } catch (RuntimeException ex) {
+            LOGGER.error(ex, "Pilot chatter could not voice a withdrawal; the battle carries on without it");
+        }
+    }
+
+    /**
+     * Has a bot's pilot say that they are withdrawing, or that they will shoot back while they do, so the players can
+     * see who has pulled out of the fight and when. Each is said once per unit; the usual audience rules apply.
+     */
+    private void declareCourse(int entityId, boolean returningFire) {
+        if (silenced || (game.getEntity(entityId) == null)) {
+            return;
+        }
+        ChatterEvent event = returningFire ? ChatterEvent.RETURNING_FIRE : ChatterEvent.WITHDRAWING;
+        if (!announcedCourses.add(courseKey(event, entityId))) {
+            return;
+        }
+        speak(new Trigger(entityId, event, "", List.of()), PilotDossier.campaignSide(game, campaign));
+    }
+
+    private static String courseKey(ChatterEvent event, int entityId) {
+        return event.name() + ":" + entityId;
+    }
+
+    /**
+     * @return whether the unit's bot has reported it withdrawing, which colours everything its pilot says from then on
+     */
+    private boolean isWithdrawing(int entityId) {
+        return announcedCourses.contains(courseKey(ChatterEvent.WITHDRAWING, entityId));
     }
 
     /**
@@ -336,7 +392,15 @@ public class PilotChatter extends GameListenerAdapter {
         String recall = (dossier.campaignPilot() && (roll.applyAsInt(100) < tuning.loreChance())) ?
                               briefing.recall(roll.applyAsInt(BattleBriefing.RECALLED.size())) :
                               "";
-        String prompt = ChatterPrompt.build(dossier, briefingText, recall, team, trigger, dead, round,
+        String tone = ChatterTone.of(entity, trigger.event(), isWithdrawing(entity.getId()),
+              BattleEventDetector.onFire(game, entity));
+        String factionLanguage = dossier.campaignPilot() ?
+                                       ChatterLanguage.of(PilotDossier.originFaction(entity, campaign)) :
+                                       (PilotDossier.isEnemy(entity.getOwner(), campaignSide) ?
+                                              enemyLanguage :
+                                              alliedLanguage);
+        String language = ChatterLanguage.forPilot(dossier.key(), factionLanguage, roll.applyAsInt(100));
+        String prompt = ChatterPrompt.build(dossier, briefingText, recall, tone, language, team, trigger, dead, round,
               journal.recentBy(dossier.key(), ChatterPrompt.OWN_LINES,
                     entry -> !entry.battle().equals(battle) || audience.heard(entry)),
               journal.recentInBattle(battle, ChatterPrompt.BATTLE_LINES, audience::heard));
