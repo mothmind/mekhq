@@ -462,9 +462,9 @@ class ResolveScenarioTrackerTest {
         poser.addKill(victim);
 
         when(victoryEvent.getEntity(7)).thenReturn(poser);
+        // Every call gets a fresh enumeration, as the real results do; the tracker reads this list more than once
         when(victoryEvent.getDevastatedEntities())
-              .thenReturn(Collections.enumeration(List.of(victim)))
-              .thenReturn(Collections.enumeration(List.of(victim)));
+              .thenAnswer(invocation -> Collections.enumeration(List.of(victim)));
 
         ResolveScenarioTracker tracker = createTracker();
         tracker.processGame();
@@ -484,9 +484,9 @@ class ResolveScenarioTrackerTest {
         killer.addKill(victim);
 
         when(victoryEvent.getEntity(7)).thenReturn(killer);
+        // Every call gets a fresh enumeration, as the real results do; the tracker reads this list more than once
         when(victoryEvent.getDevastatedEntities())
-              .thenReturn(Collections.enumeration(List.of(victim)))
-              .thenReturn(Collections.enumeration(List.of(victim)));
+              .thenAnswer(invocation -> Collections.enumeration(List.of(victim)));
 
         ResolveScenarioTracker tracker = createTracker();
         tracker.processGame();

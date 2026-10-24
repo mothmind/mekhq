@@ -143,7 +143,7 @@ class OrbitalControlCalculatorTest {
 
     @Test
     void anFRatedEnemyHasNothingOverhead() {
-        // -50 against a base of 40: a force that cannot keep its BattleMechs running has no WarShip either.
+        // -50 against a base of 40: a force that cannot keep its Meks running has no WarShip either.
         OrbitalControl control = OrbitalControlCalculator.forContract(
               contract(ContractMoraleLevel.STALEMATE, DragoonRating.DRAGOON_F));
 

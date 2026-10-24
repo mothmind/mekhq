@@ -433,7 +433,7 @@ public class OrbitalSupportCalculator {
      * How many bays an unseen enemy vessel carries, by the force's equipment rating: the fewest it can have and the
      * most, inclusive.
      *
-     * <p>A force that cannot afford working BattleMechs does not have a broadside. Below B rating the ship is
+     * <p>A force that cannot afford working Meks does not have a broadside. Below B rating the ship is
      * whatever hull could be scraped up, good for one shot; from B upwards it is a real warship, and an A*-rated
      * fleet fields something that can flatten a valley at leisure.</p>
      */

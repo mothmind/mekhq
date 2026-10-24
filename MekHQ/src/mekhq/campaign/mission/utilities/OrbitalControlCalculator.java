@@ -87,7 +87,7 @@ public class OrbitalControlCalculator {
      *
      * <p>A WarShip is the most expensive thing a force can field, so the rating that measures what a force can
      * afford tells heavily here - more heavily than morale does. An F-rated outfit is scraping for working
-     * BattleMechs and has nothing overhead at all; the F modifier is deliberately large enough to take such a force
+     * Meks and has nothing overhead at all; the F modifier is deliberately large enough to take such a force
      * to zero on its own, whatever else is going for them.</p>
      */
     public static final Map<DragoonRating, Integer> EQUIPMENT_MODIFIERS = Map.of(
