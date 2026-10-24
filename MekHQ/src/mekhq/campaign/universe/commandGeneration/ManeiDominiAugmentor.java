@@ -35,7 +35,7 @@ package mekhq.campaign.universe.commandGeneration;
 import java.util.ArrayList;
 import java.util.List;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.enums.AugmentedUnitType;
 import megamek.common.enums.ManeiDominiAugmentationRank;
 import megamek.common.enums.ManeiDominiImplants;
@@ -48,6 +48,7 @@ import mekhq.campaign.personnel.PersonnelOptions;
 import mekhq.campaign.personnel.enums.ManeiDominiClass;
 import mekhq.campaign.personnel.enums.ManeiDominiRank;
 import mekhq.campaign.personnel.enums.PersonnelRole;
+import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AdvancedMedicalAlternateImplants;
 
 /**
  * Fits generated Word of Blake Shadow Division warriors with Manei Domini rank, class and cybernetics.
@@ -132,7 +133,7 @@ public final class ManeiDominiAugmentor {
             ManeiDominiAugmentationRank augmentationRank = rankFor(person);
             person.setManeiDominiRank(toCampaignRank(augmentationRank));
             person.setManeiDominiClass(classFor(person));
-            implantsIssued += issueImplants(person, augmentationRank, generationFaction);
+            implantsIssued += issueImplants(campaign, person, augmentationRank, generationFaction);
             // Read the values back rather than trusting the setters, and show the rank name the
             // roster will actually display. If the rank system is not flagged for Manei Domini the
             // name comes out plain, which is the difference between "not assigned" and "assigned but
@@ -185,8 +186,8 @@ public final class ManeiDominiAugmentor {
      * <p>The explosive charge every Manei Domini implant carries is fitted separately and does not
      * count against the allowance.</p>
      */
-    private static int issueImplants(Person person, ManeiDominiAugmentationRank augmentationRank,
-          String factionCode) {
+    private static int issueImplants(Campaign campaign, Person person,
+          ManeiDominiAugmentationRank augmentationRank, String factionCode) {
         AugmentedUnitType unitType = unitTypeFor(person);
         // Selected and fitted by the shared code, so a warrior raised in MegaMek's generator is
         // augmented exactly as one raised here. A campaign's PersonnelOptions is a PilotOptions, which
@@ -219,6 +220,10 @@ public final class ManeiDominiAugmentor {
                         + " is probably not in the {} group",
                   person.getFullName(), failed, PersonnelOptions.MD_ADVANTAGES);
         }
+        if (chargeFitted) {
+            confirmed.add(ManeiDominiImplants.getExplosiveCharge());
+        }
+        recordImplantProsthetics(campaign, person, confirmed);
         return issued.size();
     }
 
@@ -290,5 +295,37 @@ public final class ManeiDominiAugmentor {
             return ManeiDominiClass.GHOST;
         }
         return ManeiDominiClass.SPECTER;
+    }
+
+    /**
+     * Records the prosthetics behind every implant this warrior was issued, where the campaign uses Advanced
+     * Alternate Medical.
+     *
+     * <p>That rule set reads a warrior's augmentation from their medical record: prosthetics count towards
+     * degradation, show in the medical UI, and are what dermal armour, dermal camouflage, triple-strength myomer and
+     * prosthetic leg MASC are worked out from each day. Without the record the derived implants are gone by the next
+     * morning, and the rest are invisible to the medical system.</p>
+     *
+     * <p>Campaigns not using that rule set are left alone. There the implant option is the only record anyone keeps,
+     * nothing rewrites it, and adding entries to a warrior's medical history would only put surgery in the roster that
+     * never happened.</p>
+     *
+     * @param campaign the campaign the warrior belongs to
+     * @param person   the warrior to record prosthetics for
+     * @param implants the implant options confirmed on the warrior, including the explosive charge
+     *
+     * @return the number of prosthetics recorded
+     */
+    static int recordImplantProsthetics(Campaign campaign, Person person, List<String> implants) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL)) {
+            return 0;
+        }
+        int recorded = AdvancedMedicalAlternateImplants.recordImplantProsthetics(campaign, person, implants);
+        if (recorded > 0) {
+            LOGGER.info("[ManeiDomini]     '{}': Advanced Alternate Medical is on, so {} recorded as {}"
+                        + " prosthetic(s)",
+                  person.getFullName(), implants, recorded);
+        }
+        return recorded;
     }
 }

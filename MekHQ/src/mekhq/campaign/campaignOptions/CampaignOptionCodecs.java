@@ -53,12 +53,15 @@ import mekhq.campaign.RandomOriginOptions;
 import mekhq.campaign.autoResolve.AutoResolveMethod;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConPlayType;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.StratConSectorCountMethod;
+import mekhq.campaign.enums.LithiumFusionBatteryMode;
 import mekhq.campaign.enums.PlanetaryAcquisitionFactionLimit;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.FinancialYearDuration;
+import mekhq.campaign.finances.enums.UnitCostModel;
 import mekhq.campaign.market.enums.ContractMarketMethod;
 import mekhq.campaign.market.enums.UnitMarketMethod;
 import mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle;
+import mekhq.campaign.mission.scenarios.salvage.SalvageSystem;
 import mekhq.campaign.personnel.enums.*;
 import mekhq.campaign.personnel.familiarity.Familiarity;
 import mekhq.campaign.randomEvents.prisoners.PrisonerCaptureStyle;
@@ -165,6 +168,8 @@ final class CampaignOptionCodecs {
         register(CampaignOption.MINIMUM_CALLSIGN_SKILL_LEVEL, enumCodec(SkillLevel::parseFromString));
         register(CampaignOption.AUTO_RESOLVE_METHOD, enumCodec(AutoResolveMethod::valueOf));
         register(CampaignOption.CHASSIS_FAMILIARITY_MODE, enumCodec(Familiarity::valueOf));
+        register(CampaignOption.LITHIUM_FUSION_BATTERY_MODE, enumCodec(LithiumFusionBatteryMode::valueOf));
+        register(CampaignOption.UNIT_COST_MODEL, enumCodec(UnitCostModel::valueOf));
 
         // Enums persisted by a lookup name/key rather than Enum.name().
         register(CampaignOption.ACQUISITIONS_TYPE,
@@ -175,6 +180,8 @@ final class CampaignOptionCodecs {
               enumCodec(EdgeRefreshPeriod::fromString, EdgeRefreshPeriod::getLookupKey));
         register(CampaignOption.STRAT_CON_PLAY_TYPE,
               enumCodec(StratConPlayType::fromLookupName, StratConPlayType::getLookupName));
+        register(CampaignOption.SALVAGE_SYSTEM,
+              enumCodec(SalvageSystem::fromLookupName, SalvageSystem::getLookupName));
         register(CampaignOption.STRAT_CON_SECTOR_COUNT_METHOD,
               enumCodec(StratConSectorCountMethod::fromLookupName, StratConSectorCountMethod::getLookupName));
         register(CampaignOption.ORBITAL_SUPPORT_METHOD,
@@ -413,7 +420,9 @@ final class CampaignOptionCodecs {
                     options.get(CampaignOption.ATB_BATTLE_CHANCE)),
               (node, text, version, option, options) -> {
                   final String[] values = text.split(",");
-                  for (int i = 0; i < values.length; i++) {
+                  // Older saves can carry entries for since-removed roles (such as Cadre), so ignore any extras
+                  final int count = Math.min(values.length, options.get(CampaignOption.ATB_BATTLE_CHANCE).length);
+                  for (int i = 0; i < count; i++) {
                       try {
                           options.setAtBBattleChance(i, parseInt(values[i]));
                       } catch (Exception ignored) {
@@ -472,12 +481,6 @@ final class CampaignOptionCodecs {
     }
 
     private static void registerSpecials() {
-        // Strategic view theme is derived through the client preferences on both read and write.
-        register(CampaignOption.STRATEGIC_VIEW_MINIMAP_THEME, CampaignOptionCodec.of(
-              (pw, indent, option, options) -> MHQXMLUtility.writeSimpleXMLTag(pw, indent, option.xmlTag(),
-                    options.getStrategicViewTheme().getName()),
-              (node, text, version, option, options) -> options.setStrategicViewTheme(text)));
-
         // Personnel market name has a pre-CamOps backward-compatibility rename.
         register(CampaignOption.PERSONNEL_MARKET_NAME, CampaignOptionCodec.of(
               (pw, indent, option, options) -> MHQXMLUtility.writeSimpleXMLTag(pw, indent, option.xmlTag(),

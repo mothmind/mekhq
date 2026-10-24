@@ -112,7 +112,11 @@ public final class ContractXmlCodec {
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "nameIsOperationCodename",
               contract.isNameOperationCodename());
         writeStringIfPresent(printWriter, indent, "description", contract.getDescription());
-        MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "scale", contract.getScale());
+        MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "scale", contract.getExactScale());
+        if (contract.getSalvageTaperMultiplier() != 1.0) {
+            MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "salvageTaperMultiplier",
+                  contract.getSalvageTaperMultiplier());
+        }
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "requiredVictoryPoints",
               contract.getRequiredVictoryPoints());
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "trackCount", contract.getTrackCount());
@@ -125,6 +129,8 @@ public final class ContractXmlCodec {
         }
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "contractNature", contract.getNature().name());
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "sharesPercent", contract.getSharesPercent());
+        MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "consecutiveTrackResultTally",
+              contract.getConsecutiveTrackResultTally());
         if (!contract.getObfuscatedIntel().isEmpty()) {
             MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "obfuscatedIntel",
                   contract.getObfuscatedIntel().stream().map(Enum::name).collect(Collectors.joining(",")));
@@ -136,12 +142,20 @@ public final class ContractXmlCodec {
         if (contract.getStatus() != null) {
             MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "missionStatus", contract.getStatus().name());
         }
+        if (contract.getMandatedCompletionStatus() != null) {
+            MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "mandatedCompletionStatus",
+                  contract.getMandatedCompletionStatus().name());
+        }
         // Running salvage totals, accumulated across the contract's scenarios.
         MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "salvagedByUnitValue", contract.getSalvagedByUnitValue());
         MHQXMLUtility.writeSimpleXMLTag(printWriter,
               indent,
               "salvagedByEmployerValue",
               contract.getSalvagedByEmployerValue());
+        MHQXMLUtility.writeSimpleXMLTag(printWriter,
+              indent,
+              "withheldSupportPayments",
+              contract.getWithheldSupportPayments());
         // The player's chosen negotiator is a roster member, so persist only their id and re-resolve on load.
         if (contract.getPlayerNegotiator() != null) {
             MHQXMLUtility.writeSimpleXMLTag(printWriter, indent, "playerNegotiatorId",
@@ -337,7 +351,7 @@ public final class ContractXmlCodec {
             MHQXMLUtility.writeSimpleXMLTag(pw, indent, "routEndDate", data.routEndDate());
         }
         if (data.routedPayout() != null) {
-            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "routedPayout", data.routedPayout());
+            MHQXMLUtility.writeSimpleXMLTag(pw, indent, "finalPayout", data.routedPayout());
         }
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "moraleData");
     }
@@ -421,7 +435,10 @@ public final class ContractXmlCodec {
         readers.put("nameIsOperationCodename",
               (contract, node, campaign, version) -> contract.setNameOperationCodename(Boolean.parseBoolean(text(node))));
         readers.put("description", (contract, node, campaign, version) -> contract.setDescription(text(node)));
-        readers.put("scale", (contract, node, campaign, version) -> contract.setScale(parseInt(node)));
+        readers.put("scale",
+              (contract, node, campaign, version) -> contract.setScale(MathUtility.parseDouble(text(node), 0.0)));
+        readers.put("salvageTaperMultiplier", (contract, node, campaign, version) ->
+              contract.setSalvageTaperMultiplier(MathUtility.parseDouble(text(node), 1.0)));
         readers.put("requiredVictoryPoints",
               (contract, node, campaign, version) -> contract.setRequiredVictoryPoints(parseInt(node)));
         readers.put("trackCount", (contract, node, campaign, version) -> contract.setTrackCount(parseInt(node)));
@@ -437,12 +454,20 @@ public final class ContractXmlCodec {
         });
         readers.put("sharesPercent",
               (contract, node, campaign, version) -> contract.setSharesPercent(parseInt(node)));
+        readers.put("consecutiveTrackResultTally",
+              (contract, node, campaign, version) -> contract.setConsecutiveTrackResultTally(parseInt(node)));
         readers.put("missionStatus",
               (contract, node, campaign, version) -> contract.setStatus(MissionStatus.parseFromString(text(node))));
+        readers.put("mandatedCompletionStatus",
+              (contract, node, campaign, version) -> contract.setMandatedCompletionStatus(
+                    MissionStatus.parseFromString(text(node))));
         readers.put("salvagedByUnitValue",
               (contract, node, campaign, version) -> contract.setSalvagedByUnitValue(Money.fromXmlString(text(node))));
         readers.put("salvagedByEmployerValue",
               (contract, node, campaign, version) -> contract.setSalvagedByEmployerValue(Money.fromXmlString(text(
+                    node))));
+        readers.put("withheldSupportPayments",
+              (contract, node, campaign, version) -> contract.setWithheldSupportPayments(Money.fromXmlString(text(
                     node))));
         // The roster is not loaded yet when contracts are read, so stash the id; the loader resolves it post-load.
         readers.put("playerNegotiatorId",
@@ -968,7 +993,7 @@ public final class ContractXmlCodec {
     private static final class MoraleDataBuilder {
         ContractMoraleLevel moraleLevel;
         LocalDate routEndDate;
-        Money routedPayout = Money.zero();
+        Money routedPayout;
     }
 
     private static final Map<String, FieldBinder<MoraleDataBuilder>> MORALE_BINDERS = createMoraleBinders();
@@ -979,7 +1004,15 @@ public final class ContractXmlCodec {
               (builder, node, campaign, version) -> builder.moraleLevel = ContractMoraleLevel.valueOf(text(node)));
         binders.put("routEndDate",
               (builder, node, campaign, version) -> builder.routEndDate = MHQXMLUtility.parseDate(text(node)));
-        binders.put("routedPayout",
+        // Saves written before the routed payout became nullable stored a zero payout on every contract under this
+        // tag, meaning "not set", so a zero here is read back as unset rather than as a deliberate "pay nothing".
+        binders.put("routedPayout", (builder, node, campaign, version) -> {
+            Money routedPayout = Money.fromXmlString(text(node));
+            builder.routedPayout = routedPayout.isZero() ? null : routedPayout;
+        });
+        // Current saves only write this tag when a payout has been set, so its value is always taken as given - a zero
+        // here is a deliberate "pay nothing".
+        binders.put("finalPayout",
               (builder, node, campaign, version) -> builder.routedPayout = Money.fromXmlString(text(node)));
         return binders;
     }

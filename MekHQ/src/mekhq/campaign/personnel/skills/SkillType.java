@@ -51,11 +51,12 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
+import jakarta.annotation.Nullable;
 import megamek.Version;
 import megamek.codeUtilities.MathUtility;
 import megamek.codeUtilities.ObjectUtility;
-import megamek.common.annotations.Nullable;
 import megamek.common.battleArmor.BattleArmor;
 import megamek.common.enums.SkillLevel;
 import megamek.common.units.AbstractBuildingEntity;
@@ -271,6 +272,16 @@ public class SkillType {
 
     public static final int SKILL_NONE = 0;
     public static final int DISABLED_SKILL_LEVEL = -1;
+    /**
+     * The default XP cost of buying a Natural Aptitude in a Basic skill (A Time of War complexity SB or CB), before the
+     * campaign's XP cost multiplier. Campaigns can set a different cost per skill.
+     */
+    public static final int BASIC_NATURAL_APTITUDE_COST = 300;
+    /**
+     * The default XP cost of buying a Natural Aptitude in an Advanced skill (A Time of War complexity SA or CA), before
+     * the campaign's XP cost multiplier. Campaigns can set a different cost per skill.
+     */
+    public static final int ADVANCED_NATURAL_APTITUDE_COST = 500;
 
     public static final int EXP_NONE = -1;
     public static final int EXP_ULTRA_GREEN = 0;
@@ -294,6 +305,7 @@ public class SkillType {
     private int heroicLvl;
     private int legendaryLvl;
     private Integer[] costs;
+    private int naturalAptitudeCost = BASIC_NATURAL_APTITUDE_COST;
 
     /**
      * @param level skill level integer to get name for
@@ -572,6 +584,7 @@ public class SkillType {
         this.eliteLvl = eliteLvl == null ? 5 : eliteLvl;
         this.heroicLvl = heroicLvl == null ? 6 : heroicLvl;
         this.legendaryLvl = legendaryLvl == null ? 7 : legendaryLvl;
+        this.naturalAptitudeCost = getDefaultNaturalAptitudeCost(name);
 
         // This validates the length of costs to ensure that valid entries exist for all possible skill levels (0-10,
         // inclusive)
@@ -901,6 +914,82 @@ public class SkillType {
     }
 
     /**
+     * @return the XP cost of buying a Natural Aptitude in this skill, before the campaign's XP cost multiplier, or
+     *       {@link #DISABLED_SKILL_LEVEL} if it can't be bought
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public int getNaturalAptitudeCost() {
+        return naturalAptitudeCost;
+    }
+
+    /**
+     * @param naturalAptitudeCost the XP cost of buying a Natural Aptitude in this skill, before the campaign's XP cost
+     *                            multiplier, or {@link #DISABLED_SKILL_LEVEL} if it can't be bought
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public void setNaturalAptitudeCost(int naturalAptitudeCost) {
+        this.naturalAptitudeCost = naturalAptitudeCost;
+    }
+
+    /**
+     * @return {@code true} if a Natural Aptitude in this skill can be bought with XP
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public boolean isNaturalAptitudePurchasable() {
+        return naturalAptitudeCost != DISABLED_SKILL_LEVEL;
+    }
+
+    /**
+     * Skill groups whose every specialty is an Advanced skill in A Time of War. Matched by the prefix before the
+     * specialty, e.g. {@code "Science/"}.
+     */
+    private static final List<String> ADVANCED_SKILL_GROUPS = List.of("Piloting/", "Gunnery/", "Tech/", "Art/",
+          "Interest/", "Science/", "Security Systems/");
+
+    /** Individual skills that are Advanced in A Time of War. */
+    private static final Set<String> ADVANCED_SKILLS = Set.of(S_ARTILLERY, S_DEMOLITIONS, S_MARTIAL_ARTS,
+          S_MELEE_WEAPONS, S_SURGERY, S_ADMIN, S_LEADER, S_STRATEGY, S_TACTICS, S_TRAINING, S_ESCAPE_ARTIST,
+          S_FORGERY, S_SENSOR_OPERATIONS, S_STEALTH, S_TRACKING, S_SLEIGHT_OF_HAND, S_COMPUTERS, S_CRYPTOGRAPHY,
+          S_INTERROGATION, S_INVESTIGATION, S_LANGUAGES, S_PROTOCOLS, S_SURVIVAL);
+
+    /**
+     * The default XP cost of buying a Natural Aptitude in a skill, based on its complexity in the A Time of War Master
+     * Skills List: {@link #ADVANCED_NATURAL_APTITUDE_COST} for Advanced skills (SA and CA) and
+     * {@link #BASIC_NATURAL_APTITUDE_COST} for Basic skills (SB and CB). Skills with no A Time of War equivalent, such
+     * as Astech, count as Basic.
+     *
+     * @param skillName the name of the skill
+     *
+     * @return the default cost, before the campaign's XP cost multiplier
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static int getDefaultNaturalAptitudeCost(@Nullable String skillName) {
+        if (skillName == null) {
+            return BASIC_NATURAL_APTITUDE_COST;
+        }
+
+        if (ADVANCED_SKILLS.contains(skillName)) {
+            return ADVANCED_NATURAL_APTITUDE_COST;
+        }
+
+        for (String skillGroup : ADVANCED_SKILL_GROUPS) {
+            if (skillName.startsWith(skillGroup)) {
+                return ADVANCED_NATURAL_APTITUDE_COST;
+            }
+        }
+
+        return BASIC_NATURAL_APTITUDE_COST;
+    }
+
+    /**
      * Sets the first {@link SkillAttribute} associated with the skill type.
      *
      * <p>If {@code firstAttribute} is {@code null}, no action is taken, and the current value of the first attribute
@@ -1009,127 +1098,141 @@ public class SkillType {
     }
 
     public static void initializeTypes() {
-        lookupHash = new Hashtable<>();
-        lookupHash.put(S_PILOT_MEK, createPilotingMek());
-        lookupHash.put(S_GUN_MEK, createGunneryMek());
-        lookupHash.put(S_PILOT_AERO, createPilotingAero());
-        lookupHash.put(S_GUN_AERO, createGunneryAero());
-        lookupHash.put(S_PILOT_JET, createPilotingJet());
-        lookupHash.put(S_GUN_JET, createGunneryJet());
-        lookupHash.put(S_PILOT_SPACE, createPilotingSpace());
-        lookupHash.put(S_GUN_SPACE, createGunnerySpace());
-        lookupHash.put(S_PILOT_GVEE, createPilotingGroundVee());
-        lookupHash.put(S_PILOT_NVEE, createPilotingNavalVee());
-        lookupHash.put(S_PILOT_VTOL, createPilotingVTOL());
-        lookupHash.put(S_GUN_VEE, createGunneryVehicle());
-        lookupHash.put(S_ARTILLERY, createArtillery());
-        lookupHash.put(S_GUN_BA, createGunneryBA());
-        lookupHash.put(S_GUN_PROTO, createGunneryProto());
-        lookupHash.put(S_PILOT_PROTO, createPilotingProto());
-        lookupHash.put(S_SMALL_ARMS, createSmallArms());
-        lookupHash.put(S_ANTI_MEK, createAntiMek());
-        lookupHash.put(S_TECH_MEK, createTechMek());
-        lookupHash.put(S_TECH_VEHICLE, createTechVehicle());
-        lookupHash.put(S_TECH_AERO, createTechAero());
-        lookupHash.put(S_TECH_BA, createTechBA());
-        lookupHash.put(S_TECH_VESSEL, createTechVessel());
-        lookupHash.put(S_TECH_MILITARY, createTechMilitary());
-        lookupHash.put(S_TECH_CIVILIAN, createTechCivilian());
-        lookupHash.put(S_TECH_ELECTRONIC, createTechElectronic());
-        lookupHash.put(S_TECH_NUCLEAR, createTechNuclear());
-        lookupHash.put(S_TECH_AERONAUTICS, createTechAeronautics());
-        lookupHash.put(S_TECH_MECHANICAL, createTechMechanical());
-        lookupHash.put(S_TECH_MYOMER, createTechMyomer());
-        lookupHash.put(S_TECH_JETS, createTechJets());
-        lookupHash.put(S_TECH_WEAPONS, createTechWeapons());
-        lookupHash.put(S_TECH_CYBERNETICS, createTechCybernetics());
-        lookupHash.put(S_ASTECH, createAstech());
-        lookupHash.put(S_SURGERY, createSurgery());
-        lookupHash.put(S_MEDTECH, createMedTech());
-        lookupHash.put(S_NAVIGATION, createNavigation());
-        lookupHash.put(S_TACTICS, createTactics());
-        lookupHash.put(S_STRATEGY, createStrategy());
-        lookupHash.put(S_ADMIN, createAdmin());
-        lookupHash.put(S_LEADER, createLeadership());
-        lookupHash.put(S_NEGOTIATION, createNegotiation());
-        lookupHash.put(S_ACROBATICS, createAcrobatics());
-        lookupHash.put(S_ACTING, createActing());
-        lookupHash.put(S_ANIMAL_HANDLING, createAnimalHandling());
-        lookupHash.put(S_APPRAISAL, createAppraisal());
-        lookupHash.put(S_ARCHERY, createArchery());
-        lookupHash.put(S_ART_DANCING, createArtDancing());
-        lookupHash.put(S_ART_DRAWING, createArtDrawing());
-        lookupHash.put(S_ART_PAINTING, createArtPainting());
-        lookupHash.put(S_ART_WRITING, createArtWriting());
-        lookupHash.put(S_ART_POETRY, createArtPoetry());
-        lookupHash.put(S_ART_SCULPTURE, createArtSculpture());
-        lookupHash.put(S_ART_INSTRUMENT, createArtInstrument());
-        lookupHash.put(S_ART_COOKING, createArtCooking());
-        lookupHash.put(S_ART_SINGING, createArtSinging());
-        lookupHash.put(S_ART_OTHER, createArtOther());
-        lookupHash.put(S_COMMUNICATIONS, createCommunications());
-        lookupHash.put(S_COMPUTERS, createComputers());
-        lookupHash.put(S_CRYPTOGRAPHY, createCryptography());
-        lookupHash.put(S_DEMOLITIONS, createDemolitions());
-        lookupHash.put(S_DISGUISE, createDisguise());
-        lookupHash.put(S_ESCAPE_ARTIST, createEscapeArtist());
-        lookupHash.put(S_FORGERY, createForgery());
-        lookupHash.put(S_INTEREST_SPORTS, createInterestSports());
-        lookupHash.put(S_INTEREST_HISTORY, createInterestHistory());
-        lookupHash.put(S_INTEREST_LITERATURE, createInterestLiterature());
-        lookupHash.put(S_INTEREST_HOLO_GAMES, createInterestHoloGames());
-        lookupHash.put(S_INTEREST_FASHION, createInterestFashion());
-        lookupHash.put(S_INTEREST_MUSIC, createInterestMusic());
-        lookupHash.put(S_INTEREST_MILITARY, createInterestMilitary());
-        lookupHash.put(S_INTEREST_ANTIQUES, createInterestAntiques());
-        lookupHash.put(S_INTEREST_THEOLOGY, createInterestTheology());
-        lookupHash.put(S_INTEREST_GAMBLING, createInterestGambling());
-        lookupHash.put(S_INTEREST_POLITICS, createInterestPolitics());
-        lookupHash.put(S_INTEREST_PHILOSOPHY, createInterestPhilosophy());
-        lookupHash.put(S_INTEREST_ECONOMICS, createInterestEconomics());
-        lookupHash.put(S_INTEREST_POP_CULTURE, createInterestPopCulture());
-        lookupHash.put(S_INTEREST_ASTROLOGY, createInterestAstrology());
-        lookupHash.put(S_INTEREST_FISHING, createInterestFishing());
-        lookupHash.put(S_INTEREST_MYTHOLOGY, createInterestMythology());
-        lookupHash.put(S_INTEREST_CARTOGRAPHY, createInterestCartography());
-        lookupHash.put(S_INTEREST_ARCHEOLOGY, createInterestArcheology());
-        lookupHash.put(S_INTEREST_HOLO_CINEMA, createInterestHoloCinema());
-        lookupHash.put(S_INTEREST_EXOTIC_ANIMALS, createInterestExoticAnimals());
-        lookupHash.put(S_INTEREST_LAW, createInterestLaw());
-        lookupHash.put(S_INTEREST_OTHER, createInterestOther());
-        lookupHash.put(S_INTERROGATION, createInterrogation());
-        lookupHash.put(S_INVESTIGATION, createInvestigation());
-        lookupHash.put(S_LANGUAGES, createLanguage());
-        lookupHash.put(S_MARTIAL_ARTS, createMartialArts());
-        lookupHash.put(S_PERCEPTION, createPerception());
-        lookupHash.put(S_SLEIGHT_OF_HAND, createSleightOfHand());
-        lookupHash.put(S_PROTOCOLS, createProtocols());
-        lookupHash.put(S_SCIENCE_BIOLOGY, createScienceBiology());
-        lookupHash.put(S_SCIENCE_CHEMISTRY, createScienceChemistry());
-        lookupHash.put(S_SCIENCE_MATHEMATICS, createScienceMathematics());
-        lookupHash.put(S_SCIENCE_PHYSICS, createSciencePhysics());
-        lookupHash.put(S_SCIENCE_MILITARY, createScienceMilitary());
-        lookupHash.put(S_SCIENCE_GEOLOGY, createScienceGeology());
-        lookupHash.put(S_SCIENCE_XENOBIOLOGY, createScienceXenobiology());
-        lookupHash.put(S_SCIENCE_PHARMACOLOGY, createSciencePharmacology());
-        lookupHash.put(S_SCIENCE_GENETICS, createScienceGenetics());
-        lookupHash.put(S_SCIENCE_PSYCHOLOGY, createSciencePsychology());
-        lookupHash.put(S_SCIENCE_OTHER, createScienceOther());
-        lookupHash.put(S_SECURITY_SYSTEMS_ELECTRONIC, createSecuritySystemsElectronic());
-        lookupHash.put(S_SECURITY_SYSTEMS_MECHANICAL, createSecuritySystemsMechanical());
-        lookupHash.put(S_SENSOR_OPERATIONS, createSensorOperations());
-        lookupHash.put(S_STEALTH, createStealth());
-        lookupHash.put(S_STREETWISE, createStreetwise());
-        lookupHash.put(S_SURVIVAL, createSurvival());
-        lookupHash.put(S_TRACKING, createTracking());
-        lookupHash.put(S_TRAINING, createTraining());
-        lookupHash.put(S_CAREER_ANY, createCareer());
-        lookupHash.put(S_SWIMMING, createSwimming());
-        lookupHash.put(S_RUNNING, createRunning());
-        lookupHash.put(S_ZERO_G_OPERATIONS, createZeroGOperations());
-        lookupHash.put(S_MELEE_WEAPONS, createMeleeWeapons());
-        lookupHash.put(S_THROWN_WEAPONS, createThrownWeapons());
-        lookupHash.put(S_SUPPORT_WEAPONS, createSupportWeapons());
+        lookupHash = createDefaultTypes();
+    }
+
+    /**
+     * Builds a fresh map of every skill type at its default values. Each call returns new instances, so the result can
+     * be edited without touching the active skill types.
+     *
+     * @return a new map of skill name to default {@link SkillType}
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static Map<String, SkillType> createDefaultTypes() {
+        Map<String, SkillType> defaultTypes = new Hashtable<>();
+        defaultTypes.put(S_PILOT_MEK, createPilotingMek());
+        defaultTypes.put(S_GUN_MEK, createGunneryMek());
+        defaultTypes.put(S_PILOT_AERO, createPilotingAero());
+        defaultTypes.put(S_GUN_AERO, createGunneryAero());
+        defaultTypes.put(S_PILOT_JET, createPilotingJet());
+        defaultTypes.put(S_GUN_JET, createGunneryJet());
+        defaultTypes.put(S_PILOT_SPACE, createPilotingSpace());
+        defaultTypes.put(S_GUN_SPACE, createGunnerySpace());
+        defaultTypes.put(S_PILOT_GVEE, createPilotingGroundVee());
+        defaultTypes.put(S_PILOT_NVEE, createPilotingNavalVee());
+        defaultTypes.put(S_PILOT_VTOL, createPilotingVTOL());
+        defaultTypes.put(S_GUN_VEE, createGunneryVehicle());
+        defaultTypes.put(S_ARTILLERY, createArtillery());
+        defaultTypes.put(S_GUN_BA, createGunneryBA());
+        defaultTypes.put(S_GUN_PROTO, createGunneryProto());
+        defaultTypes.put(S_PILOT_PROTO, createPilotingProto());
+        defaultTypes.put(S_SMALL_ARMS, createSmallArms());
+        defaultTypes.put(S_ANTI_MEK, createAntiMek());
+        defaultTypes.put(S_TECH_MEK, createTechMek());
+        defaultTypes.put(S_TECH_VEHICLE, createTechVehicle());
+        defaultTypes.put(S_TECH_AERO, createTechAero());
+        defaultTypes.put(S_TECH_BA, createTechBA());
+        defaultTypes.put(S_TECH_VESSEL, createTechVessel());
+        defaultTypes.put(S_TECH_MILITARY, createTechMilitary());
+        defaultTypes.put(S_TECH_CIVILIAN, createTechCivilian());
+        defaultTypes.put(S_TECH_ELECTRONIC, createTechElectronic());
+        defaultTypes.put(S_TECH_NUCLEAR, createTechNuclear());
+        defaultTypes.put(S_TECH_AERONAUTICS, createTechAeronautics());
+        defaultTypes.put(S_TECH_MECHANICAL, createTechMechanical());
+        defaultTypes.put(S_TECH_MYOMER, createTechMyomer());
+        defaultTypes.put(S_TECH_JETS, createTechJets());
+        defaultTypes.put(S_TECH_WEAPONS, createTechWeapons());
+        defaultTypes.put(S_TECH_CYBERNETICS, createTechCybernetics());
+        defaultTypes.put(S_ASTECH, createAstech());
+        defaultTypes.put(S_SURGERY, createSurgery());
+        defaultTypes.put(S_MEDTECH, createMedTech());
+        defaultTypes.put(S_NAVIGATION, createNavigation());
+        defaultTypes.put(S_TACTICS, createTactics());
+        defaultTypes.put(S_STRATEGY, createStrategy());
+        defaultTypes.put(S_ADMIN, createAdmin());
+        defaultTypes.put(S_LEADER, createLeadership());
+        defaultTypes.put(S_NEGOTIATION, createNegotiation());
+        defaultTypes.put(S_ACROBATICS, createAcrobatics());
+        defaultTypes.put(S_ACTING, createActing());
+        defaultTypes.put(S_ANIMAL_HANDLING, createAnimalHandling());
+        defaultTypes.put(S_APPRAISAL, createAppraisal());
+        defaultTypes.put(S_ARCHERY, createArchery());
+        defaultTypes.put(S_ART_DANCING, createArtDancing());
+        defaultTypes.put(S_ART_DRAWING, createArtDrawing());
+        defaultTypes.put(S_ART_PAINTING, createArtPainting());
+        defaultTypes.put(S_ART_WRITING, createArtWriting());
+        defaultTypes.put(S_ART_POETRY, createArtPoetry());
+        defaultTypes.put(S_ART_SCULPTURE, createArtSculpture());
+        defaultTypes.put(S_ART_INSTRUMENT, createArtInstrument());
+        defaultTypes.put(S_ART_COOKING, createArtCooking());
+        defaultTypes.put(S_ART_SINGING, createArtSinging());
+        defaultTypes.put(S_ART_OTHER, createArtOther());
+        defaultTypes.put(S_COMMUNICATIONS, createCommunications());
+        defaultTypes.put(S_COMPUTERS, createComputers());
+        defaultTypes.put(S_CRYPTOGRAPHY, createCryptography());
+        defaultTypes.put(S_DEMOLITIONS, createDemolitions());
+        defaultTypes.put(S_DISGUISE, createDisguise());
+        defaultTypes.put(S_ESCAPE_ARTIST, createEscapeArtist());
+        defaultTypes.put(S_FORGERY, createForgery());
+        defaultTypes.put(S_INTEREST_SPORTS, createInterestSports());
+        defaultTypes.put(S_INTEREST_HISTORY, createInterestHistory());
+        defaultTypes.put(S_INTEREST_LITERATURE, createInterestLiterature());
+        defaultTypes.put(S_INTEREST_HOLO_GAMES, createInterestHoloGames());
+        defaultTypes.put(S_INTEREST_FASHION, createInterestFashion());
+        defaultTypes.put(S_INTEREST_MUSIC, createInterestMusic());
+        defaultTypes.put(S_INTEREST_MILITARY, createInterestMilitary());
+        defaultTypes.put(S_INTEREST_ANTIQUES, createInterestAntiques());
+        defaultTypes.put(S_INTEREST_THEOLOGY, createInterestTheology());
+        defaultTypes.put(S_INTEREST_GAMBLING, createInterestGambling());
+        defaultTypes.put(S_INTEREST_POLITICS, createInterestPolitics());
+        defaultTypes.put(S_INTEREST_PHILOSOPHY, createInterestPhilosophy());
+        defaultTypes.put(S_INTEREST_ECONOMICS, createInterestEconomics());
+        defaultTypes.put(S_INTEREST_POP_CULTURE, createInterestPopCulture());
+        defaultTypes.put(S_INTEREST_ASTROLOGY, createInterestAstrology());
+        defaultTypes.put(S_INTEREST_FISHING, createInterestFishing());
+        defaultTypes.put(S_INTEREST_MYTHOLOGY, createInterestMythology());
+        defaultTypes.put(S_INTEREST_CARTOGRAPHY, createInterestCartography());
+        defaultTypes.put(S_INTEREST_ARCHEOLOGY, createInterestArcheology());
+        defaultTypes.put(S_INTEREST_HOLO_CINEMA, createInterestHoloCinema());
+        defaultTypes.put(S_INTEREST_EXOTIC_ANIMALS, createInterestExoticAnimals());
+        defaultTypes.put(S_INTEREST_LAW, createInterestLaw());
+        defaultTypes.put(S_INTEREST_OTHER, createInterestOther());
+        defaultTypes.put(S_INTERROGATION, createInterrogation());
+        defaultTypes.put(S_INVESTIGATION, createInvestigation());
+        defaultTypes.put(S_LANGUAGES, createLanguage());
+        defaultTypes.put(S_MARTIAL_ARTS, createMartialArts());
+        defaultTypes.put(S_PERCEPTION, createPerception());
+        defaultTypes.put(S_SLEIGHT_OF_HAND, createSleightOfHand());
+        defaultTypes.put(S_PROTOCOLS, createProtocols());
+        defaultTypes.put(S_SCIENCE_BIOLOGY, createScienceBiology());
+        defaultTypes.put(S_SCIENCE_CHEMISTRY, createScienceChemistry());
+        defaultTypes.put(S_SCIENCE_MATHEMATICS, createScienceMathematics());
+        defaultTypes.put(S_SCIENCE_PHYSICS, createSciencePhysics());
+        defaultTypes.put(S_SCIENCE_MILITARY, createScienceMilitary());
+        defaultTypes.put(S_SCIENCE_GEOLOGY, createScienceGeology());
+        defaultTypes.put(S_SCIENCE_XENOBIOLOGY, createScienceXenobiology());
+        defaultTypes.put(S_SCIENCE_PHARMACOLOGY, createSciencePharmacology());
+        defaultTypes.put(S_SCIENCE_GENETICS, createScienceGenetics());
+        defaultTypes.put(S_SCIENCE_PSYCHOLOGY, createSciencePsychology());
+        defaultTypes.put(S_SCIENCE_OTHER, createScienceOther());
+        defaultTypes.put(S_SECURITY_SYSTEMS_ELECTRONIC, createSecuritySystemsElectronic());
+        defaultTypes.put(S_SECURITY_SYSTEMS_MECHANICAL, createSecuritySystemsMechanical());
+        defaultTypes.put(S_SENSOR_OPERATIONS, createSensorOperations());
+        defaultTypes.put(S_STEALTH, createStealth());
+        defaultTypes.put(S_STREETWISE, createStreetwise());
+        defaultTypes.put(S_SURVIVAL, createSurvival());
+        defaultTypes.put(S_TRACKING, createTracking());
+        defaultTypes.put(S_TRAINING, createTraining());
+        defaultTypes.put(S_CAREER_ANY, createCareer());
+        defaultTypes.put(S_SWIMMING, createSwimming());
+        defaultTypes.put(S_RUNNING, createRunning());
+        defaultTypes.put(S_ZERO_G_OPERATIONS, createZeroGOperations());
+        defaultTypes.put(S_MELEE_WEAPONS, createMeleeWeapons());
+        defaultTypes.put(S_THROWN_WEAPONS, createThrownWeapons());
+        defaultTypes.put(S_SUPPORT_WEAPONS, createSupportWeapons());
+        return defaultTypes;
     }
 
     public static @Nullable SkillType getType(String skillName) {
@@ -1370,6 +1473,7 @@ public class SkillType {
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "heroicLvl", heroicLvl);
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "legendaryLvl", legendaryLvl);
         MHQXMLUtility.writeSimpleXMLTag(pw, indent, "costs", StringUtils.join(costs, ','));
+        MHQXMLUtility.writeSimpleXMLTag(pw, indent, "naturalAptitudeCost", naturalAptitudeCost);
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "skillType");
     }
 
@@ -1383,6 +1487,7 @@ public class SkillType {
         try {
             SkillType skillType = new SkillType();
             NodeList nodeList = workingNode.getChildNodes();
+            boolean hasNaturalAptitudeCost = false;
 
             for (int x = 0; x < nodeList.getLength(); x++) {
                 Node wn2 = nodeList.item(x);
@@ -1427,7 +1532,16 @@ public class SkillType {
                     for (int i = 0; i < values.length; i++) {
                         skillType.costs[i] = MathUtility.parseInt(values[i], skillType.costs[i]);
                     }
+                } else if (wn2.getNodeName().equalsIgnoreCase("naturalAptitudeCost")) {
+                    skillType.naturalAptitudeCost = MathUtility.parseInt(wn2.getTextContent(),
+                          skillType.naturalAptitudeCost);
+                    hasNaturalAptitudeCost = true;
                 }
+            }
+
+            // Saves and presets from before Natural Aptitude costs existed get the default for the skill
+            if (!hasNaturalAptitudeCost) {
+                skillType.naturalAptitudeCost = getDefaultNaturalAptitudeCost(skillType.name);
             }
 
             lookupHash.put(skillType.name, skillType);
@@ -1442,6 +1556,7 @@ public class SkillType {
         try {
             SkillType skillType = new SkillType();
             NodeList nl = wn.getChildNodes();
+            boolean hasNaturalAptitudeCost = false;
 
             for (int x = 0; x < nl.getLength(); x++) {
                 Node wn2 = nl.item(x);
@@ -1474,7 +1589,16 @@ public class SkillType {
                     for (int i = 0; i < values.length; i++) {
                         skillType.costs[i] = MathUtility.parseInt(values[i], skillType.costs[i]);
                     }
+                } else if (wn2.getNodeName().equalsIgnoreCase("naturalAptitudeCost")) {
+                    skillType.naturalAptitudeCost = MathUtility.parseInt(wn2.getTextContent(),
+                          skillType.naturalAptitudeCost);
+                    hasNaturalAptitudeCost = true;
                 }
+            }
+
+            // Saves and presets from before Natural Aptitude costs existed get the default for the skill
+            if (!hasNaturalAptitudeCost) {
+                skillType.naturalAptitudeCost = getDefaultNaturalAptitudeCost(skillType.name);
             }
 
             hash.put(skillType.name, skillType);

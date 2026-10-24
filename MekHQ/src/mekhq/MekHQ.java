@@ -62,6 +62,7 @@ import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.text.DefaultEditorKit;
 
 import io.sentry.Sentry;
+import jakarta.annotation.Nullable;
 import megamek.MMLoggingConstants;
 import megamek.MegaMek;
 import megamek.SuiteConstants;
@@ -78,7 +79,6 @@ import megamek.client.ui.dialogs.helpDialogs.AutoResolveSimulationLogDialog;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.preferences.SuitePreferences;
 import megamek.client.ui.util.UIUtil;
-import megamek.common.annotations.Nullable;
 import megamek.common.autoResolve.acar.SimulatedClient;
 import megamek.common.autoResolve.converter.SetupForces;
 import megamek.common.autoResolve.converter.SingletonForces;
@@ -561,7 +561,15 @@ public class MekHQ implements GameListener {
                 f.setDirectory(System.getProperty("user.dir") + "/savegames");
                 f.setVisible(true);
                 if (null != f.getFile()) {
-                    getMyServer().loadGame(new File(f.getDirectory(), f.getFile()));
+                    if (!getMyServer().loadGame(new File(f.getDirectory(), f.getFile()))) {
+                        // loadGame catches its own failures and returns false rather than throwing, so the catch
+                        // blocks below never see them. Stop here instead of letting the game thread start and push the
+                        // campaign's units into a fresh, empty battle in place of the save the player asked to resume.
+                        stopHost();
+                        LOGGER.errorDialog(getText("startHost.saveLoadFailed.title"),
+                              getText("startHost.saveLoadFailed.message"));
+                        return;
+                    }
                 } else {
                     stopHost();
                     return; // exceptions as flow control? no, thanks.

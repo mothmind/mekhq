@@ -52,6 +52,7 @@ import java.util.function.Predicate;
 import javax.swing.*;
 import javax.swing.GroupLayout.Alignment;
 
+import jakarta.annotation.Nullable;
 import megamek.client.generator.RandomCallsignGenerator;
 import megamek.client.generator.RandomNameGenerator;
 import megamek.client.ui.buttons.MMButton;
@@ -64,7 +65,6 @@ import megamek.client.ui.preferences.JTextFieldPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.codeUtilities.StringUtility;
 import megamek.common.Messages;
-import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.enums.Gender;
 import megamek.common.loaders.MekFileParser;
@@ -78,6 +78,7 @@ import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.events.persons.PersonChangedEvent;
+import mekhq.campaign.location.LocationDispatch;
 import mekhq.campaign.mission.scenarios.AtBDynamicScenarioFactory;
 import mekhq.campaign.parts.enums.PartQuality;
 import mekhq.campaign.personnel.Bloodname;
@@ -1518,8 +1519,12 @@ public class GMToolsDialog extends AbstractMHQDialogBasic {
                                     .addNewUnit(getLastRolledUnit(), false, 0, quality, UnitAcquisitionType.GM_ADDED);
 
             if ((getPerson() != null) && (getPerson().getUnit() == null)) {
+                // The new unit joins the main force, so bring the person to it if they are elsewhere
+                LocationDispatch.movePersonToLocationOf(getGUI().getCampaign(), getPerson(), unit);
                 unit.addPilotOrSoldier(getPerson());
-                getPerson().setOriginalUnit(unit);
+                if (getPerson().getUnit() == unit) {
+                    getPerson().setOriginalUnit(unit);
+                }
             }
             setLastRolledUnit(null);
         }

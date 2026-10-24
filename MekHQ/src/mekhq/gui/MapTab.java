@@ -41,42 +41,17 @@ import static mekhq.campaign.mission.contract.utilities.ContractAutomation.outOf
 import static mekhq.campaign.personnel.skills.SkillType.EXP_REGULAR;
 import static mekhq.campaign.randomEvents.prisoners.RecoverMIAPersonnel.abandonMissingPersonnel;
 
-import java.awt.AlphaComposite;
-import java.awt.BorderLayout;
-import java.awt.CardLayout;
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Composite;
-import java.awt.Dimension;
-import java.awt.Font;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.GridLayout;
-import java.awt.Insets;
-import java.awt.Point;
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.HierarchyEvent;
 import java.util.List;
 import java.util.Objects;
+import java.util.Vector;
 import java.util.function.Consumer;
-import javax.swing.BorderFactory;
-import javax.swing.BoxLayout;
-import javax.swing.ButtonGroup;
-import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JLabel;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
-import javax.swing.JToggleButton;
-import javax.swing.JViewport;
-import javax.swing.ScrollPaneConstants;
-import javax.swing.SwingUtilities;
-import javax.swing.Timer;
+import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
@@ -84,8 +59,10 @@ import jakarta.annotation.Nullable;
 import megamek.client.ui.util.UIUtil;
 import megamek.common.event.Subscribe;
 import megamek.common.ui.FastJScrollPane;
+import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.AbstractLocation;
+import mekhq.campaign.JumpDriveProfile;
 import mekhq.campaign.JumpPath;
 import mekhq.campaign.NavigationRouteAnalysis.PathAssessment;
 import mekhq.campaign.NavigationRouteAnalysis.Severity;
@@ -97,6 +74,7 @@ import mekhq.campaign.events.LocationAddedEvent;
 import mekhq.campaign.events.LocationRemovedEvent;
 import mekhq.campaign.events.NewDayEvent;
 import mekhq.campaign.events.OptionsChangedEvent;
+import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.missions.MissionEvent;
 import mekhq.campaign.events.scenarios.ScenarioEvent;
 import mekhq.campaign.finances.Money;
@@ -127,6 +105,7 @@ import mekhq.utilities.MHQInternationalization;
 // FIXME: this class should not inherit from CampaignGuiTab because it is managed by NavigationTab now
 public final class MapTab extends CampaignGuiTab implements ActionListener,
     InterstellarMapPanel.RoutePlanningHandler {
+    private static final MMLogger LOGGER = MMLogger.create(MapTab.class);
     private static final String RESOURCE_BUNDLE = "mekhq.resources.CampaignGUI";
     private static final int PADDING = UIUtil.scaleForGUI(10);
     private static final Color ROUTE_STRIP_BACKGROUND = new Color(7, 16, 27);
@@ -196,6 +175,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
     private int inspectorDividerSize;
     private int inspectorWidth = INSPECTOR_PREFERRED_WIDTH;
     private boolean applyingLayoutState;
+    private boolean isRefreshPending;
+    private boolean isNewDayUpdatePending;
     JSuggestField suggestPlanet;
 
     //region Constructors
@@ -315,6 +296,17 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
 
         panMap.setCampaign(getCampaign());
         panMap.addActionListener(this);
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0) {
+                return;
+            }
+            if (isShowing()) {
+                runPendingNewDayUpdate();
+                runPendingRefresh();
+            } else {
+                panMap.closeMapUtilityWindows();
+            }
+        });
 
         panSystem = new PlanetarySystemMapPanel(getCampaign(), getCampaignGui());
         panSystem.addActionListener(this);
@@ -356,7 +348,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         suggestPlanet.addActionListener(ev -> {
             PlanetarySystem system = getCampaign().getSystemByName(suggestPlanet.getText());
             if (system != null) {
-                panMap.setSelectedSystem(system);
+                selectMapSystem(system);
                 panSystem.updatePlanetarySystem(system);
                 syncRouteDestinationToSelection();
                 refreshPlanetView();
@@ -424,7 +416,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
           int utilityButtonSize = layers.getPreferredSize().height;
           InterstellarMapPanel.setNavigationUtilityButtonSize(information,
               new Dimension(utilityButtonSize, utilityButtonSize));
-        information.addActionListener(event -> panMap.toggleMapLegendDialog());
+        information.addActionListener(event -> panMap.toggleMapLegendDialog(information));
         constraints = new GridBagConstraints();
         constraints.gridx = 6;
         constraints.gridy = 0;
@@ -435,6 +427,10 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         preferredSize.height = Math.max(preferredSize.height, HUD_MINIMUM_HEIGHT);
         navigationHud.setPreferredSize(preferredSize);
         return navigationHud;
+    }
+
+    private void selectMapSystem(PlanetarySystem system) {
+        panMap.setSelectedSystem(system);
     }
 
     private void applyLayoutState() {
@@ -696,8 +692,10 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
               MHQInternationalization.getTextAt(RESOURCE_BUNDLE, "chkAvoidAbandonedSystems.toolTipText")));
         avoidAbandonedSystems.setSelected(getCampaign().getPlayerForce().isAvoidingEmptySystems());
         avoidAbandonedSystems.setAlignmentX(Component.LEFT_ALIGNMENT);
-        avoidAbandonedSystems.addActionListener(event ->
-              getCampaign().getPlayerForce().setIsAvoidingEmptySystems(avoidAbandonedSystems.isSelected()));
+        avoidAbandonedSystems.addActionListener(event -> {
+            getCampaign().getPlayerForce().setIsAvoidingEmptySystems(avoidAbandonedSystems.isSelected());
+            updateRouteStrip();
+        });
         options.add(avoidAbandonedSystems);
 
           JCheckBox useCommandCircuits = new ImmersiveCheckBox(
@@ -1057,7 +1055,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
                       currentLocation.getTransitTime())
                   : currentLocation.getTransitTime());
           int duration = (int) ceil(displayedPath.getTotalTime(getCampaign().getLocalDate(), currentTransit,
-              getCampaign().isUseCommandCircuit()));
+              getCampaign().isUseCommandCircuit(), getCampaign().getJumpDriveProfile()));
           String durationText = MHQInternationalization.getTextAt(RESOURCE_BUNDLE, "routeStrip.duration.text") + "  " + duration + ' '
               + MHQInternationalization.getTextAt(RESOURCE_BUNDLE, "routeStrip.days.text");
           String nextJumpText = createNextJumpText(displayedPath, currentLocation, unavailable, useCampaignProgress);
@@ -1106,9 +1104,14 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
               ? currentLocation.getCurrentSystem()
               : displayedPath.getFirstSystem();
           double elapsedRecharge = useCampaignProgress ? currentLocation.getRechargeTime() : 0.0;
-        double remainingRechargeHours = Math.max(0.0,
-              currentSystem.getRechargeTime(getCampaign().getLocalDate(), getCampaign().isUseCommandCircuit())
-                  - elapsedRecharge);
+          JumpDriveProfile jumpDriveProfile = getCampaign().getJumpDriveProfile();
+          double neededRechargeHours = jumpDriveProfile.adjustRechargeTime(
+              currentSystem.getRechargeTime(getCampaign().getLocalDate(), getCampaign().isUseCommandCircuit()));
+          // A charged Lithium-Fusion battery can power the next jump without waiting for the drive
+          if (useCampaignProgress && (jumpDriveProfile.storedJumpCharges() > 0)) {
+              neededRechargeHours = 0.0;
+          }
+        double remainingRechargeHours = Math.max(0.0, neededRechargeHours - elapsedRecharge);
         double remainingDays = Math.max(remainingTransitDays, remainingRechargeHours / 24.0);
         if (remainingDays <= 0.0) {
             return label + MHQInternationalization.getTextAt(RESOURCE_BUNDLE, "routeStrip.nextJump.ready.text");
@@ -1259,13 +1262,32 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         lblRouteCost.setForeground(color);
     }
 
-    /*
-     * (non-Javadoc)
-     *
-     * @see mekhq.gui.CampaignGuiTab#refreshAll()
+    /**
+     * Rebuilds the dossier and route panels. While the tab is hidden the rebuild waits until the tab is shown, so
+     * advancing days with another tab open does not rebuild panels nobody can see once per day.
      */
     @Override
     public void refreshAll() {
+        if (!isShowing()) {
+            if (!isRefreshPending) {
+                LOGGER.debug("[MapTab] Refresh deferred until the tab is shown");
+            }
+            isRefreshPending = true;
+            return;
+        }
+        isRefreshPending = false;
+        refreshSystemView();
+    }
+
+    /**
+     * Runs the refresh that {@link #refreshAll()} held back while the tab was hidden, if there is one.
+     */
+    private void runPendingRefresh() {
+        if (!isRefreshPending) {
+            return;
+        }
+        LOGGER.debug("[MapTab] Running the refresh deferred while the tab was hidden");
+        isRefreshPending = false;
         refreshSystemView();
     }
 
@@ -1416,7 +1438,8 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         boolean isUseCommandCircuits = getCampaign().isUseCommandCircuit();
         int duration = (int) ceil(jumpPath.getTotalTime(getCampaign().getLocalDate(),
               currentLocation.getTransitTime(),
-              isUseCommandCircuits));
+              isUseCommandCircuits,
+              getCampaign().getJumpDriveProfile()));
 
         TransportCostCalculations transportCostCalculations = getCampaign().getTransportCostCalculation(EXP_REGULAR);
         Money journeyCost = transportCostCalculations.calculateJumpCostForEntireJourney(duration, jumpPath.getJumps());
@@ -1620,7 +1643,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
      */
     public void switchPlanetaryMap(Planet p) {
         PlanetarySystem s = p.getParentSystem();
-        panMap.setSelectedSystem(s);
+        selectMapSystem(s);
         panSystem.updatePlanetarySystem(p);
         mapView.setView(panSystem);
         refreshPlanetView();
@@ -1632,7 +1655,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
      * @param s The {@link PlanetarySystem} to select.
      */
     public void switchPlanetaryMap(PlanetarySystem s) {
-        panMap.setSelectedSystem(s);
+        selectMapSystem(s);
         panSystem.updatePlanetarySystem(s);
         mapView.setView(panSystem);
         refreshPlanetView();
@@ -1644,7 +1667,7 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
      * @param s The {@link PlanetarySystem} to select.
      */
     public void switchSystemsMap(PlanetarySystem s) {
-        panMap.setSelectedSystem(s);
+        selectMapSystem(s);
         panSystem.updatePlanetarySystem(s);
         switchSystemsMap();
     }
@@ -1673,8 +1696,73 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
         PLANNED
     }
 
+    static void restoreSelectedPlanet(PlanetarySystemMapPanel panel, PlanetarySystem system,
+          @Nullable String planetId) {
+        Planet planet = planetId == null ? null : system.getPlanetById(planetId);
+        if (planet != null) {
+            panel.updatePlanetarySystem(planet);
+        } else {
+            panel.updatePlanetarySystem(system);
+        }
+    }
+
     @Subscribe
-    public void handle(NewDayEvent ev) {
+    public void handle(PlanetarySystemsChangedEvent event) {
+        if (event.getCampaign() != getCampaign()) {
+            return;
+        }
+        Planet selectedPlanet = panSystem.getSelectedPlanet();
+        String selectedPlanetId = selectedPlanet == null ? null : selectedPlanet.getId();
+        routePlanningIntent.refreshPlanetarySystems(getCampaign());
+        panMap.setJumpPath(routePlanningIntent.getJumpPath());
+        panMap.setCampaign(getCampaign());
+        PlanetarySystem system = panMap.getSelectedSystem();
+        if (system != null) {
+            restoreSelectedPlanet(panSystem, system, selectedPlanetId);
+        }
+        refreshSystemSearchFields();
+        setRouteFieldSystem(suggestRouteOrigin, routePlanningIntent.getOrigin());
+        List<PlanetarySystem> stops = routePlanningIntent.getRequestedStops();
+        if (!stops.isEmpty()) {
+            setRouteFieldSystem(suggestRouteDestination, stops.getLast());
+        }
+        refreshPlanetView();
+    }
+
+    /**
+     * Brings the map up to the new day. While the tab is hidden this waits until the tab is shown, so advancing a
+     * month with another tab open does the update once instead of thirty times.
+     */
+    @Subscribe
+    public void handle(NewDayEvent event) {
+        if (!isShowing()) {
+            if (!isNewDayUpdatePending) {
+                LOGGER.debug("[MapTab] New day update deferred until the tab is shown");
+            }
+            isNewDayUpdatePending = true;
+            return;
+        }
+        isNewDayUpdatePending = false;
+        updateForNewDay();
+    }
+
+    /**
+     * Runs the new day update that {@link #handle(NewDayEvent)} held back while the tab was hidden, if there is one.
+     */
+    private void runPendingNewDayUpdate() {
+        if (!isNewDayUpdatePending) {
+            return;
+        }
+        LOGGER.debug("[MapTab] Running the new day update deferred while the tab was hidden");
+        isNewDayUpdatePending = false;
+        updateForNewDay();
+    }
+
+    /**
+     * Redraws the map for the new date, resets an unplanned route to start from the current system, and refreshes the
+     * route strip and the system names, which can change with the date.
+     */
+    private void updateForNewDay() {
         panMap.requestStaticCartographyPreparation();
         panMap.repaint();
         if (!hasPlannedRoute()) {
@@ -1682,9 +1770,18 @@ public final class MapTab extends CampaignGuiTab implements ActionListener,
             setRouteFieldSystem(suggestRouteOrigin, routePlanningIntent.getOrigin());
         }
         updateRouteStrip();
-        suggestPlanet.setSuggestData(getCampaign().getSystemNames());
-        suggestRouteOrigin.setSuggestData(getCampaign().getSystemNames());
-        suggestRouteDestination.setSuggestData(getCampaign().getSystemNames());
+        refreshSystemSearchFields();
+    }
+
+    /**
+     * Gives the three system search fields the current system names. The names are looked up once and copied, because
+     * looking them up visits every system and each field sorts and keeps the list it is given.
+     */
+    private void refreshSystemSearchFields() {
+        Vector<String> systemNames = getCampaign().getSystemNames();
+        suggestPlanet.setSuggestData(new Vector<>(systemNames));
+        suggestRouteOrigin.setSuggestData(new Vector<>(systemNames));
+        suggestRouteDestination.setSuggestData(systemNames);
     }
 
     @Subscribe

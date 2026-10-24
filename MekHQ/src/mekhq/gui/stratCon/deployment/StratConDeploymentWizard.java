@@ -52,10 +52,10 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import jakarta.annotation.Nullable;
 import megamek.client.ui.preferences.JWindowPreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.util.UIUtil;
-import megamek.common.annotations.Nullable;
 import megamek.common.rolls.TargetRoll;
 import megamek.common.units.Entity;
 import megamek.logging.MMLogger;
@@ -86,6 +86,8 @@ import mekhq.campaign.personnel.skills.SkillModifierData;
 import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
 import mekhq.gui.StratConPanel;
+import mekhq.gui.baseComponents.hud.HudModeSelector;
+import mekhq.gui.baseComponents.hud.HudStyle;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogConfirmation;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogNotification;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogSimple;
@@ -175,7 +177,8 @@ public class StratConDeploymentWizard extends JDialog {
     private int leadershipPointsUsed;
     private int defensivePoints;
 
-    private final HudModeSelector modeSelector = new HudModeSelector(this::switchMode);
+    private final HudModeSelector<DeploymentMode> modeSelector = new HudModeSelector<>(DeploymentMode.class,
+          DeploymentMode::getLabel, this::switchMode);
     private transient ReinforcementAdvisor reinforcementAdvisor;
 
     private final transient DeploymentInspectorPanel inspector;
@@ -485,7 +488,7 @@ public class StratConDeploymentWizard extends JDialog {
               campaign,
               currentTrack,
               false,
-              null,
+              scenario,
               campaignState,
               restrictToSingleForce);
 

@@ -35,6 +35,7 @@ package mekhq.gui.campaignOptions.contents;
 import jakarta.annotation.Nonnull;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
+import mekhq.campaign.enums.LithiumFusionBatteryMode;
 
 class RepairAndMaintenanceOptionsModel {
     boolean techsUseAdministration;
@@ -50,6 +51,11 @@ class RepairAndMaintenanceOptionsModel {
     int destroyPartTarget;
     boolean checkMaintenance;
     int maintenanceCycleDays;
+    boolean maintenanceOnContract;
+    boolean maintenanceOffContract;
+    boolean maintenanceInTransit;
+    double combatContractMaintenanceCostMultiplier;
+    double inTransitMaintenanceCostMultiplier;
     int maintenanceBonus;
     int defaultMaintenanceTime;
     boolean useQualityMaintenance;
@@ -58,10 +64,12 @@ class RepairAndMaintenanceOptionsModel {
     boolean usePlanetaryModifiers;
     boolean useUnofficialMaintenance;
     boolean logMaintenance;
+    boolean techsMaintainConventionalInfantry;
     boolean useFabrication;
     boolean useBalancedFabrication;
     boolean maintenanceFabrication;
     boolean useAmmoFabrication;
+    LithiumFusionBatteryMode lithiumFusionBatteryMode;
 
     RepairAndMaintenanceOptionsModel(@Nonnull CampaignOptions options) {
         techsUseAdministration = options.get(CampaignOption.TECHS_USE_ADMINISTRATION);
@@ -77,6 +85,12 @@ class RepairAndMaintenanceOptionsModel {
         destroyPartTarget = options.get(CampaignOption.DESTROY_PART_TARGET);
         checkMaintenance = options.get(CampaignOption.CHECK_MAINTENANCE);
         maintenanceCycleDays = options.get(CampaignOption.MAINTENANCE_CYCLE_DAYS);
+        maintenanceOnContract = options.get(CampaignOption.MAINTENANCE_ON_CONTRACT);
+        maintenanceOffContract = options.get(CampaignOption.MAINTENANCE_OFF_CONTRACT);
+        maintenanceInTransit = options.get(CampaignOption.MAINTENANCE_IN_TRANSIT);
+        combatContractMaintenanceCostMultiplier =
+              options.get(CampaignOption.COMBAT_CONTRACT_MAINTENANCE_COST_MULTIPLIER);
+        inTransitMaintenanceCostMultiplier = options.get(CampaignOption.IN_TRANSIT_MAINTENANCE_COST_MULTIPLIER);
         maintenanceBonus = options.get(CampaignOption.MAINTENANCE_BONUS);
         defaultMaintenanceTime = options.get(CampaignOption.DEFAULT_MAINTENANCE_TIME);
         useQualityMaintenance = options.get(CampaignOption.USE_QUALITY_MAINTENANCE);
@@ -85,10 +99,12 @@ class RepairAndMaintenanceOptionsModel {
         usePlanetaryModifiers = options.get(CampaignOption.USE_PLANETARY_MODIFIERS);
         useUnofficialMaintenance = options.get(CampaignOption.USE_UNOFFICIAL_MAINTENANCE);
         logMaintenance = options.get(CampaignOption.LOG_MAINTENANCE);
+        techsMaintainConventionalInfantry = options.get(CampaignOption.TECHS_MAINTAIN_CONVENTIONAL_INFANTRY);
         useFabrication = options.get(CampaignOption.USE_FABRICATION);
         useBalancedFabrication = options.get(CampaignOption.USE_BALANCED_FABRICATION);
         maintenanceFabrication = options.get(CampaignOption.FABRICATE_D_IN_MAINTENANCE_FACILITY);
         useAmmoFabrication = options.get(CampaignOption.USE_AMMO_FABRICATION);
+        lithiumFusionBatteryMode = options.get(CampaignOption.LITHIUM_FUSION_BATTERY_MODE);
     }
 
     void applyTo(@Nonnull CampaignOptions options) {
@@ -105,6 +121,12 @@ class RepairAndMaintenanceOptionsModel {
         options.set(CampaignOption.DESTROY_PART_TARGET, destroyPartTarget);
         options.set(CampaignOption.CHECK_MAINTENANCE, checkMaintenance);
         options.set(CampaignOption.MAINTENANCE_CYCLE_DAYS, maintenanceCycleDays);
+        options.set(CampaignOption.MAINTENANCE_ON_CONTRACT, maintenanceOnContract);
+        options.set(CampaignOption.MAINTENANCE_OFF_CONTRACT, maintenanceOffContract);
+        options.set(CampaignOption.MAINTENANCE_IN_TRANSIT, maintenanceInTransit);
+        options.set(CampaignOption.COMBAT_CONTRACT_MAINTENANCE_COST_MULTIPLIER,
+              combatContractMaintenanceCostMultiplier);
+        options.set(CampaignOption.IN_TRANSIT_MAINTENANCE_COST_MULTIPLIER, inTransitMaintenanceCostMultiplier);
         options.set(CampaignOption.MAINTENANCE_BONUS, maintenanceBonus);
         options.set(CampaignOption.DEFAULT_MAINTENANCE_TIME, defaultMaintenanceTime);
         options.set(CampaignOption.USE_QUALITY_MAINTENANCE, useQualityMaintenance);
@@ -113,9 +135,11 @@ class RepairAndMaintenanceOptionsModel {
         options.set(CampaignOption.USE_PLANETARY_MODIFIERS, usePlanetaryModifiers);
         options.set(CampaignOption.USE_UNOFFICIAL_MAINTENANCE, useUnofficialMaintenance);
         options.set(CampaignOption.LOG_MAINTENANCE, logMaintenance);
+        options.set(CampaignOption.TECHS_MAINTAIN_CONVENTIONAL_INFANTRY, techsMaintainConventionalInfantry);
         options.set(CampaignOption.USE_FABRICATION, useFabrication);
         options.set(CampaignOption.USE_BALANCED_FABRICATION, useBalancedFabrication);
         options.set(CampaignOption.FABRICATE_D_IN_MAINTENANCE_FACILITY, maintenanceFabrication);
         options.set(CampaignOption.USE_AMMO_FABRICATION, useAmmoFabrication);
+        options.set(CampaignOption.LITHIUM_FUSION_BATTERY_MODE, lithiumFusionBatteryMode);
     }
 }

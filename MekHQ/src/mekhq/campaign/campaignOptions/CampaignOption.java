@@ -42,17 +42,21 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 import jakarta.annotation.Nonnull;
+import megamek.client.generator.RandomNameGenerator;
 import megamek.common.enums.SkillLevel;
 import mekhq.campaign.RandomOriginOptions;
 import mekhq.campaign.autoResolve.AutoResolveMethod;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConPlayType;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.StratConSectorCountMethod;
+import mekhq.campaign.enums.LithiumFusionBatteryMode;
 import mekhq.campaign.enums.PlanetaryAcquisitionFactionLimit;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.FinancialYearDuration;
+import mekhq.campaign.finances.enums.UnitCostModel;
 import mekhq.campaign.market.enums.ContractMarketMethod;
 import mekhq.campaign.market.enums.UnitMarketMethod;
 import mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle;
+import mekhq.campaign.mission.scenarios.salvage.SalvageSystem;
 import mekhq.campaign.personnel.enums.*;
 import mekhq.campaign.personnel.familiarity.Familiarity;
 import mekhq.campaign.personnel.quartermaster.ArmorKitCatalog;
@@ -86,6 +90,16 @@ public final class CampaignOption<T> {
           of(Boolean.class, true, "checkMaintenance");
     public static final CampaignOption<Integer> MAINTENANCE_CYCLE_DAYS =
           of(Integer.class, 7, "maintenanceCycleDays");
+    public static final CampaignOption<Boolean> MAINTENANCE_ON_CONTRACT =
+          of(Boolean.class, true, "maintenanceOnContract");
+    public static final CampaignOption<Boolean> MAINTENANCE_OFF_CONTRACT =
+          of(Boolean.class, true, "maintenanceOffContract");
+    public static final CampaignOption<Boolean> MAINTENANCE_IN_TRANSIT =
+          of(Boolean.class, true, "maintenanceInTransit");
+    public static final CampaignOption<Double> COMBAT_CONTRACT_MAINTENANCE_COST_MULTIPLIER =
+          of(Double.class, 0.25, "combatContractMaintenanceCostMultiplier");
+    public static final CampaignOption<Double> IN_TRANSIT_MAINTENANCE_COST_MULTIPLIER =
+          of(Double.class, 1.0, "inTransitMaintenanceCostMultiplier");
     public static final CampaignOption<Integer> MAINTENANCE_BONUS =
           of(Integer.class, -1, "maintenanceBonus");
     public static final CampaignOption<Boolean> USE_QUALITY_MAINTENANCE =
@@ -96,6 +110,8 @@ public final class CampaignOption<T> {
           of(Boolean.class, true, "useRandomUnitQualities");
     public static final CampaignOption<Boolean> USE_UNOFFICIAL_MAINTENANCE =
           of(Boolean.class, false, "useUnofficialMaintenance");
+    public static final CampaignOption<Boolean> TECHS_MAINTAIN_CONVENTIONAL_INFANTRY =
+          of(Boolean.class, false, "techsMaintainConventionalInfantry");
     public static final CampaignOption<Boolean> LOG_MAINTENANCE =
           of(Boolean.class, false, "logMaintenance");
     public static final CampaignOption<Integer> DEFAULT_MAINTENANCE_TIME =
@@ -116,6 +132,23 @@ public final class CampaignOption<T> {
     public static final CampaignOption<Integer> CHASSIS_FAMILIARITY_SPEED =
           of(Integer.class, 2, "chassisFamiliaritySpeed");
     // endregion Chassis Familiarity
+
+    // region Interstellar Travel
+    public static final CampaignOption<LithiumFusionBatteryMode> LITHIUM_FUSION_BATTERY_MODE =
+          of(LithiumFusionBatteryMode.class, LithiumFusionBatteryMode.DISABLED, "lithiumFusionBatteryMode");
+    // endregion Interstellar Travel
+
+    // region Oracle
+    /**
+     * The most dice and Oracle results the Oracle log keeps; once reached, the oldest are removed as new ones are
+     * added. Campaign chronicle records don't count and are never removed.
+     */
+    public static final CampaignOption<Integer> MAXIMUM_ORACLE_LOG_ENTRIES =
+          of(Integer.class, 500, "maximumOracleLogEntries");
+    /** Whether contracts, battles, arrivals and personnel changes are written into the Oracle journal. */
+    public static final CampaignOption<Boolean> USE_ORACLE_CHRONICLE =
+          of(Boolean.class, true, "useOracleChronicle");
+    // endregion Oracle
 
     // region Migrated Options (generated storage-only migration)
     public static final CampaignOption<Boolean> REQUIRE_SUPPORT_FORCE_TRANSPORTATION =
@@ -284,6 +317,18 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "useArtillery");
     public static final CampaignOption<Boolean> USE_ABILITIES =
           of(Boolean.class, false, "useAbilities");
+    public static final CampaignOption<Boolean> USE_SPA_TRAINING_COSTS =
+          of(Boolean.class, false, "useSpaTrainingCosts");
+    public static final CampaignOption<Boolean> CAP_TOTAL_SPAS =
+          of(Boolean.class, false, "capTotalSpas");
+    public static final CampaignOption<Boolean> SKILL_IMPROVEMENTS_COST_C_BILLS =
+          of(Boolean.class, false, "skillImprovementsCostCBills");
+    public static final CampaignOption<Double> PROFESSION_SKILL_TRAINING_COST_MULTIPLIER =
+          of(Double.class, 1.0, "professionSkillTrainingCostMultiplier");
+    public static final CampaignOption<Double> UTILITY_SKILL_TRAINING_COST_MULTIPLIER =
+          of(Double.class, 1.0, "utilitySkillTrainingCostMultiplier");
+    public static final CampaignOption<Double> ROLEPLAY_SKILL_TRAINING_COST_MULTIPLIER =
+          of(Double.class, 0.0, "roleplaySkillTrainingCostMultiplier");
     public static final CampaignOption<Boolean> ONLY_COMMANDERS_MATTER_VEHICLES =
           of(Boolean.class, false, "onlyCommandersMatterVehicles");
     public static final CampaignOption<Boolean> ONLY_COMMANDERS_MATTER_INFANTRY =
@@ -338,6 +383,8 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "npcFactionArmorKits");
     public static final CampaignOption<Boolean> REQUIRE_MEKWARRIOR_KIT_TO_DEPLOY =
           of(Boolean.class, false, "requireMekWarriorKitToDeploy");
+    public static final CampaignOption<Boolean> REQUIRE_AEROSPACE_KIT_TO_DEPLOY =
+          of(Boolean.class, false, "requireAerospaceKitToDeploy");
     public static final CampaignOption<Boolean> USE_EXTENDED_TOE_FORCE_NAME =
           of(Boolean.class, true, "useExtendedTOEForceName");
     public static final CampaignOption<Boolean> PERSONNEL_LOG_SKILL_GAIN =
@@ -482,6 +529,10 @@ public final class CampaignOption<T> {
           of(String.class, "", "awardSetFilterList");
     public static final CampaignOption<Integer> NON_BINARY_DICE_SIZE =
           of(Integer.class, 60, "nonBinaryDiceSize");
+    public static final CampaignOption<Integer> PERCENT_FEMALE =
+          of(Integer.class, 50, "percentFemale");
+    public static final CampaignOption<String> NAME_GENERATOR_FACTION =
+          of(String.class, RandomNameGenerator.KEY_DEFAULT_FACTION, "nameGeneratorFaction");
     public static final CampaignOption<RandomOriginOptions> RANDOM_ORIGIN_OPTIONS =
           ofMutable(RandomOriginOptions.class, () -> new RandomOriginOptions(true), "randomOriginOptions");
     public static final CampaignOption<Boolean> USE_RANDOM_PERSONALITIES =
@@ -741,6 +792,18 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "payForOverhead");
     public static final CampaignOption<Boolean> PAY_FOR_MAINTAIN =
           of(Boolean.class, false, "payForMaintain");
+    public static final CampaignOption<Boolean> PAY_FOR_HOT_SPOTS_UPKEEP =
+          of(Boolean.class, false, "payForHotSpotsUpkeep");
+    public static final CampaignOption<UnitCostModel> UNIT_COST_MODEL =
+          of(UnitCostModel.class, UnitCostModel.TOTAL_WARFARE, "unitCostModel");
+    public static final CampaignOption<Boolean> INCREASE_CLAN_REPAIR_COSTS =
+          of(Boolean.class, false, "increaseClanRepairCosts");
+    public static final CampaignOption<Boolean> USE_PLANETARY_COST_REDUCTIONS =
+          of(Boolean.class, false, "usePlanetaryCostReductions");
+    public static final CampaignOption<Boolean> PLANETARY_COST_REDUCTIONS_ON_CONTRACT =
+          of(Boolean.class, false, "planetaryCostReductionsOnContract");
+    public static final CampaignOption<Boolean> PLANETARY_COST_REDUCTIONS_FOR_MAINTENANCE =
+          of(Boolean.class, false, "planetaryCostReductionsForMaintenance");
     public static final CampaignOption<Boolean> PAY_FOR_TRANSPORT =
           of(Boolean.class, false, "payForTransport");
     public static final CampaignOption<Boolean> SELL_UNITS =
@@ -749,6 +812,14 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "sellParts");
     public static final CampaignOption<Boolean> PAY_FOR_RECRUITMENT =
           of(Boolean.class, false, "payForRecruitment");
+    public static final CampaignOption<Double> RECRUITMENT_TRAINING_COST_MULTIPLIER =
+          of(Double.class, 1.5, "recruitmentTrainingCostMultiplier");
+    public static final CampaignOption<Double> RECRUITMENT_PROFESSION_SKILL_COST_MULTIPLIER =
+          of(Double.class, 1.5, "recruitmentProfessionSkillCostMultiplier");
+    public static final CampaignOption<Double> RECRUITMENT_UTILITY_SKILL_COST_MULTIPLIER =
+          of(Double.class, 1.0, "recruitmentUtilitySkillCostMultiplier");
+    public static final CampaignOption<Double> RECRUITMENT_ROLEPLAY_SKILL_COST_MULTIPLIER =
+          of(Double.class, 0.0, "recruitmentRoleplaySkillCostMultiplier");
     public static final CampaignOption<Boolean> PAY_FOR_FOOD =
           of(Boolean.class, false, "payForFood");
     public static final CampaignOption<Boolean> PAY_FOR_HOUSING =
@@ -811,12 +882,26 @@ public final class CampaignOption<T> {
           of(Integer.class, 0, "rentedFacilitiesCostHoldingCells");
     public static final CampaignOption<Integer> RENTED_FACILITIES_COST_REPAIR_BAYS =
           of(Integer.class, 0, "rentedFacilitiesCostRepairBays");
+    public static final CampaignOption<Boolean> CAP_CONTRACT_SCALE_BY_HIRING_HALL =
+          of(Boolean.class, false, "capContractScaleByHiringHall");
+    public static final CampaignOption<Boolean> TAPER_COMBAT_PAY_AND_SALVAGE_BY_SCALE =
+          of(Boolean.class, false, "taperCombatPayAndSalvageByScale");
+    public static final CampaignOption<Boolean> USE_FRACTIONAL_SCALE =
+          of(Boolean.class, false, "useFractionalScale");
+    public static final CampaignOption<Boolean> ESCALATING_HOT_SPOTS_UPKEEP =
+          of(Boolean.class, false, "escalatingHotSpotsUpkeep");
+    public static final CampaignOption<Boolean> BASE_PAY_ONLY_CONSIDERS_SCALE =
+          of(Boolean.class, false, "basePayOnlyConsidersScale");
     public static final CampaignOption<Boolean> USE_CHAOS_SUPPORT_POINT_CONVERSION =
           of(Boolean.class, true, "useChaosSupportPointConversion");
     public static final CampaignOption<Boolean> USE_CHAOS_SCALE_SUPPORT_POINT_CONVERSION =
           of(Boolean.class, true, "useChaosScaleSupportPointConversion");
     public static final CampaignOption<Boolean> MULTIPLY_TRACK_INTENSITY_BY_SCALE =
           of(Boolean.class, true, "multiplyTrackIntensityByScale");
+    public static final CampaignOption<Boolean> MINIMUM_ONE_TRACK_PER_ROLL =
+          of(Boolean.class, false, "minimumOneTrackPerRoll");
+    public static final CampaignOption<Boolean> ROLL_TRACKS_WEEKLY =
+          of(Boolean.class, false, "rollTracksWeekly");
     public static final CampaignOption<Boolean> USE_CONTRACT_FACTION_MODIFIERS =
           of(Boolean.class, true, "useContractFactionModifiers");
     public static final CampaignOption<Boolean> USE_INTEL_OBFUSCATION =
@@ -841,6 +926,8 @@ public final class CampaignOption<T> {
           of(Double.class, 1.0, "contractTransportMultiplier");
     public static final CampaignOption<Double> CONTRACT_SALVAGE_MULTIPLIER =
           of(Double.class, 1.0, "contractSalvageMultiplier");
+    public static final CampaignOption<Double> SCENARIO_TEMPO_MULTIPLIER =
+          of(Double.class, 1.0, "scenarioTempoMultiplier");
     public static final CampaignOption<Boolean> USE_LEGACY_CONTRACT_PAY =
           of(Boolean.class, false, "useLegacyContractPay");
     public static final CampaignOption<Boolean> USE_ALTERNATE_PAYMENT_MODE =
@@ -947,12 +1034,16 @@ public final class CampaignOption<T> {
           of(Integer.class, 4, "pityContracts");
     public static final CampaignOption<Boolean> IS_USE_TWO_WAY_PAY =
           of(Boolean.class, true, "isUseTwoWayPay");
-    public static final CampaignOption<Boolean> IS_USE_CAM_OPS_SALVAGE =
-          of(Boolean.class, false, "isUseCamOpsSalvage");
+    public static final CampaignOption<SalvageSystem> SALVAGE_SYSTEM =
+          of(SalvageSystem.class, SalvageSystem.LEGACY, "salvageSystem");
     public static final CampaignOption<Boolean> IS_USE_RISKY_SALVAGE =
           of(Boolean.class, false, "isUseRiskySalvage");
+    public static final CampaignOption<Boolean> IS_KEEP_ENEMY_CAMOUFLAGE_ON_SALVAGE =
+          of(Boolean.class, false, "isKeepEnemyCamouflageOnSalvage");
     public static final CampaignOption<Boolean> IS_ENABLE_SALVAGE_FLAG_BY_DEFAULT =
           of(Boolean.class, true, "isEnableSalvageFlagByDefault");
+    public static final CampaignOption<Boolean> USE_CLAN_SALVAGE_CLAUSE =
+          of(Boolean.class, true, "useClanSalvageClause");
     public static final CampaignOption<Boolean> HAD_AT_B_ENABLED_MARKER =
           of(Boolean.class, false, "useAtB");
     public static final CampaignOption<StratConPlayType> STRAT_CON_PLAY_TYPE =
@@ -961,6 +1052,18 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "useAdvancedScouting");
     public static final CampaignOption<Boolean> ESSENTIAL_SCENARIOS_ONLY =
           of(Boolean.class, false, "essentialScenariosOnly");
+    public static final CampaignOption<Boolean> CONTRACTS_USE_SPECIAL_MECHANICS =
+          of(Boolean.class, false, "contractsUseSpecialMechanics");
+    public static final CampaignOption<Boolean> USE_EMPLOYER_LOST_PLANET_REACTIONS =
+          of(Boolean.class, true, "useEmployerLostPlanetReactions");
+    public static final CampaignOption<Boolean> USE_FACILITY_OPERATIONS =
+          of(Boolean.class, true, "useFacilityOperations");
+    public static final CampaignOption<Double> ENEMY_FACILITY_ACTIVITY =
+          of(Double.class, 1.0, "enemyFacilityActivity");
+    public static final CampaignOption<Boolean> USE_SUPPLY_LINES =
+          of(Boolean.class, true, "useSupplyLines");
+    public static final CampaignOption<Double> FACILITY_DENSITY =
+          of(Double.class, 1.0, "facilityDensity");
     public static final CampaignOption<Boolean> RESTRICT_SCENARIOS_TO_FLEET_CAPABILITY =
           of(Boolean.class, false, "restrictScenariosToFleetCapability");
     public static final CampaignOption<StratConSectorCountMethod> STRAT_CON_SECTOR_COUNT_METHOD =
@@ -1071,6 +1174,8 @@ public final class CampaignOption<T> {
           of(SkillLevel.class, SkillLevel.VETERAN, "minimumCallsignSkillLevel");
     public static final CampaignOption<Boolean> TRACK_FACTION_STANDING =
           of(Boolean.class, false, "trackFactionStanding");
+    public static final CampaignOption<Boolean> USE_FACTION_STANDING_ULTIMATUMS =
+          of(Boolean.class, false, "useFactionStandingUltimatums");
     public static final CampaignOption<Boolean> TRACK_CLIMATE_REGARD_CHANGES =
           of(Boolean.class, false, "trackClimateRegardChanges");
     public static final CampaignOption<Boolean> USE_FACTION_STANDING_NEGOTIATION =

@@ -35,10 +35,9 @@ package mekhq.campaign.parts.meks;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.CriticalSlot;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
-import megamek.common.compute.Compute;
 import megamek.common.units.Entity;
 import megamek.common.units.Mek;
 import megamek.logging.MMLogger;
@@ -210,7 +209,7 @@ public class MekCockpit extends Part {
                 }
             }
             if (checkForDestruction && hits > priorHits
-                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
+                      && campaign.getDice().d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }

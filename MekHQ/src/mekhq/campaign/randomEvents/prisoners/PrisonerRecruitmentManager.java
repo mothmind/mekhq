@@ -52,8 +52,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import jakarta.annotation.Nullable;
 import megamek.common.TargetRollModifier;
-import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;

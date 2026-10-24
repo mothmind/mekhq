@@ -35,8 +35,8 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.CriticalSlot;
-import megamek.common.annotations.Nullable;
 import megamek.common.equipment.IArmorState;
 import megamek.common.equipment.Mounted;
 import megamek.common.equipment.WeaponType;
@@ -84,6 +84,15 @@ public class Turret extends TankLocation {
         super(loc, tonnage, c);
         this.weight = weight;
         this.name = "Turret";
+    }
+
+    /**
+     * Moves this turret to the given turret location, used when a spare turret is fitted in place of a destroyed one.
+     *
+     * @param turretLocation the location of the turret it replaces
+     */
+    public void setTurretLocation(int turretLocation) {
+        this.loc = turretLocation;
     }
 
     @Override
@@ -140,7 +149,7 @@ public class Turret extends TankLocation {
 
     @Override
     public MissingPart getMissingPart() {
-        return new MissingTurret(getUnitTonnage(), weight, campaign);
+        return new MissingTurret(getUnitTonnage(), loc, weight, campaign);
     }
 
     @Override

@@ -70,6 +70,7 @@ public final class MHQConstants extends SuiteConstants {
     public static final String DISPLAY_NODE = "mekhq/prefs/display";
     public static final String DISPLAY_DATE_FORMAT = "displayDateFormat";
     public static final String LONG_DISPLAY_DATE_FORMAT = "longDisplayDateFormat";
+    public static final String WORK_TIME_DISPLAY = "workTimeDisplay";
     public static final String HIDE_UNIT_FLUFF = "hideUnitFluff";
     public static final String HISTORICAL_DAILY_LOG = "historicalDailyLog";
     public static final int MAX_HISTORICAL_LOG_DAYS = 120; // max number of days that will be stored in the history,
@@ -131,6 +132,8 @@ public final class MHQConstants extends SuiteConstants {
     public static final String IN_TRANSIT_BACKGROUND = "inTransitBackground";
     public static final String QUEUED_FOR_TRAVEL_FOREGROUND = "queuedForTravelForeground";
     public static final String QUEUED_FOR_TRAVEL_BACKGROUND = "queuedForTravelBackground";
+    public static final String PENDING_REFIT_FOREGROUND = "pendingRefitForeground";
+    public static final String PENDING_REFIT_BACKGROUND = "pendingRefitBackground";
     public static final String REFITTING_FOREGROUND = "refittingForeground";
     public static final String REFITTING_BACKGROUND = "refittingBackground";
     public static final String MOTHBALLING_FOREGROUND = "mothballingForeground";
@@ -161,6 +164,8 @@ public final class MHQConstants extends SuiteConstants {
     public static final String ABSENT_BACKGROUND = "absentBackground";
     public static final String FATIGUED_FOREGROUND = "fatiguedForeground";
     public static final String FATIGUED_BACKGROUND = "fatiguedBackground";
+    public static final String WORKING_FOREGROUND = "workingForeground";
+    public static final String WORKING_BACKGROUND = "workingBackground";
     public static final String AWAY_FROM_MAIN_FORCE_FOREGROUND = "awayFromMainForceForeground";
     public static final String AWAY_FROM_MAIN_FORCE_BACKGROUND = "awayFromMainForceBackground";
     public static final String STRAT_CON_HEX_COORD_FOREGROUND = "stratconHexCoordForeground";
@@ -231,6 +236,8 @@ public final class MHQConstants extends SuiteConstants {
     public static final String NEW_DAY_TRAINING = "NewDayTraining";
     public static final String NEW_DAY_OTHER_COMMAND = "NewDayOtherCommand";
     public static final String SELF_CORRECT_MAINTENANCE = "SelfCorrectMaintenance";
+    public static final String DO_NOT_MOTHBALL_UNITS_IN_BAYS = "doNotMothballUnitsInBays";
+    public static final String DO_NOT_MOTHBALL_SALVAGE = "doNotMothballSalvage";
     public static final String NEW_DAY_FORCE_ICON_OPERATIONAL_STATUS = "newDayFormationIconOperationalStatus";
     public static final String NEW_DAY_FORCE_ICON_OPERATIONAL_STATUS_STYLE = "newDayFormationIconOperationalStatusStyle";
     // endregion New Day
@@ -269,8 +276,12 @@ public final class MHQConstants extends SuiteConstants {
     public static final String NAG_INSUFFICIENT_AS_TECH_TIME = "nagInsufficientAstechTime";
     public static final String NAG_INSUFFICIENT_MEDICS = "nagInsufficientMedics";
     public static final String NAG_COMBAT_CHALLENGE = "nagCombatChallenge";
+    /** The prefix of the per-contract-type special mechanics briefing keys; the contract type's name follows it. */
+    public static final String NAG_CONTRACT_SPECIAL_MECHANICS_PREFIX = "nagContractSpecialMechanics.";
     public static final String NAG_UNRESOLVED_STRAT_CON_CONTACTS = "nagUnresolvedStratConContacts";
+    public static final String NAG_STRATCON_FACILITY_BRIEFING = "nagStratConFacilityBriefing";
     public static final String NAG_OUTSTANDING_SCENARIOS = "nagOutstandingScenarios";
+    public static final String NAG_EXPIRING_NAV_POINTS = "nagExpiringNavPoints";
     public static final String NAG_INVALID_FACTION = "nagInvalidFaction";
     public static final String NAG_UNABLE_TO_AFFORD_EXPENSES = "nagUnableToAffordExpenses";
     public static final String NAG_UNABLE_TO_AFFORD_RENT = "nagUnableToAffordRent";
@@ -283,6 +294,7 @@ public final class MHQConstants extends SuiteConstants {
     public static final String NAG_SOMEONE_RANDOMLY_DIED_CIVILIAN = "nagSomeoneRandomlyDiedCivilian";
     public static final String NAG_SOMEONE_RANDOMLY_DIED_CAMP_FOLLOWER = "nagSomeoneRandomlyDiedCampFollower";
     public static final String NAG_SOMEONE_RANDOMLY_DIED_RETIREE = "nagSomeoneRandomlyDiedRetired";
+    public static final String NAG_CONTRACT_JOURNAL_PROMPT = "nagContractJournalPrompt";
 
     public static final String CONFIRMATION_ACCEPT_CONTRACT = "confirmationAcceptContract";
     public static final String CONFIRMATION_FACTION_STANDINGS_ULTIMATUM = "confirmationFactionStandingsUltimatum";
@@ -357,6 +369,7 @@ public final class MHQConstants extends SuiteConstants {
     public static final String LAYERED_FORCE_ICON_FRAME_PATH = "Pieces/Frames/";
     public static final String LAYERED_FORCE_ICON_DEFAULT_FRAME_FILENAME = "Frame.png";
     public static final String LAYERED_FORCE_ICON_LOGO_PATH = "Pieces/Logos/";
+    public static final String LAYERED_FORCE_ICON_FACTION_LOGO_CATEGORY = "Factions";
     public static final String LAYERED_FORCE_ICON_SPECIAL_MODIFIER_PATH = "Pieces/Special Modifiers/";
     public static final String LAYERED_FORCE_ICON_OPERATIONAL_STATUS_BORDER_PATH = "Operational Indicators (Border)/";
     public static final String LAYERED_FORCE_ICON_OPERATIONAL_STATUS_TAB_PATH = "Operational Indicators (Tab)/";
@@ -416,6 +429,10 @@ public final class MHQConstants extends SuiteConstants {
     public static final String STRAT_CON_FACILITY_MANIFEST = "./data/stratconfacilities/facilitymanifest.json";
     public static final String STRAT_CON_USER_FACILITY_MANIFEST = "./data/stratconfacilities/userfacilitymanifest.json";
     public static final String STRAT_CON_FACILITY_PATH = "./data/stratconfacilities/";
+    public static final String STRAT_CON_POINT_OF_INTEREST_MANIFEST = "./data/stratconpointsofinterest/pointofinterestmanifest.json";
+    public static final String STRAT_CON_USER_POINT_OF_INTEREST_MANIFEST = "./data/stratconpointsofinterest/userpointofinterestmanifest.json";
+    public static final String STRAT_CON_POINT_OF_INTEREST_PATH = "./data/stratconpointsofinterest/";
+    public static final String FACTION_STANDING_ULTIMATUM_MANIFEST = "./data/universe/factionStandingUltimatums/ultimatummanifest.json";
     public static final String STRAT_CON_CONTRACT_MANIFEST = "./data/stratconcontractdefinitions/ContractDefinitionManifest.json";
     public static final String STRAT_CON_USER_CONTRACT_MANIFEST = "./data/stratconcontractdefinitions/UserContractDefinitionManifest.json";
     public static final String STRAT_CON_CONTRACT_PATH = "./data/stratconcontractdefinitions/";
@@ -488,6 +505,11 @@ public final class MHQConstants extends SuiteConstants {
     public static final String NAME_PRE_FAB_USER = Paths.get(
           "userdata/data/universe/backgrounds/randomCompanyNameGenerator/preFab.csv").toString();
     // endregion Backgrounds
+
+    // region Oracles
+    public static final String ORACLE_DIRECTORY = Paths.get("data/oracles").toString();
+    public static final String ORACLE_DIRECTORY_USER = Paths.get("userdata/data/oracles").toString();
+    // endregion Oracles
 
     // region Operation Names
     public static final String OPERATION_NAME_DESCRIPTOR = Paths.get(

@@ -35,9 +35,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntUnaryOperator;
 
+import jakarta.annotation.Nullable;
 import megamek.common.Player;
 import megamek.common.Report;
-import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.enums.GamePhase;
 import megamek.common.event.GameListenerAdapter;

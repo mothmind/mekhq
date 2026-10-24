@@ -33,9 +33,9 @@
  */
 package mekhq.campaign.parts;
 
+import jakarta.annotation.Nullable;
 import megamek.common.SimpleTechLevel;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.enums.AvailabilityValue;
 import megamek.common.enums.Faction;
 import megamek.common.enums.TechBase;
@@ -87,11 +87,10 @@ public class Rotor extends TankLocation {
 
     @Override
     public boolean isSamePartType(Part part) {
+        // Damage and a failed repair are the rotor's condition, compared by isSameStatus, not a different rotor
         return part instanceof Rotor
                      && getLoc() == ((Rotor) part).getLoc()
-                     && getUnitTonnage() == part.getUnitTonnage()
-                     && this.getDamage() == ((Rotor) part).getDamage()
-                     && part.getSkillMin() == this.getSkillMin();
+                     && getUnitTonnage() == part.getUnitTonnage();
     }
 
     @Override

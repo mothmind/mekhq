@@ -35,7 +35,7 @@ package mekhq.campaign.mission.utilities;
 import java.util.EnumMap;
 import java.util.Map;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.enums.SkillLevel;
 import mekhq.campaign.enums.DragoonRating;

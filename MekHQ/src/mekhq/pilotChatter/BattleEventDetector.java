@@ -25,10 +25,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+import jakarta.annotation.Nullable;
 import megamek.common.Hex;
 import megamek.common.Player;
 import megamek.common.Report;
-import megamek.common.annotations.Nullable;
 import megamek.common.board.Board;
 import megamek.common.game.Game;
 import megamek.common.options.OptionsConstants;

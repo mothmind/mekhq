@@ -33,21 +33,24 @@
 package mekhq.campaign;
 
 import static mekhq.campaign.enums.DailyReportType.ACQUISITIONS;
+import static mekhq.utilities.MHQInternationalization.getFormattedTextAt;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.equipment.AmmoType;
 import megamek.common.units.Entity;
 import megamek.common.weapons.infantry.InfantryWeapon;
+import megamek.logging.MMLogger;
 import mekhq.MekHQ;
-import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.parts.PartArrivedEvent;
 import mekhq.campaign.events.parts.PartChangedEvent;
 import mekhq.campaign.finances.Money;
+import mekhq.campaign.finances.PlanetaryCostReductions;
 import mekhq.campaign.finances.enums.TransactionType;
 import mekhq.campaign.parts.AmmoStorage;
 import mekhq.campaign.parts.Armor;
@@ -66,6 +69,10 @@ import mekhq.campaign.unit.UnitAcquisitionType;
  * Manages machines and material for a campaign.
  */
 public record ForceQuartermaster(Campaign campaign) {
+    private static final String FINANCES_RESOURCE_BUNDLE = "mekhq.resources.Finances";
+
+    private static final MMLogger LOGGER = MMLogger.create(ForceQuartermaster.class);
+
     public enum PartAcquisitionResult {
         PartInherentFailure,
         PlanetSpecificFailure,
@@ -127,7 +134,10 @@ public record ForceQuartermaster(Campaign campaign) {
      * the location tree), falling back to the campaign warehouse.
      */
     private LocalWarehouse warehouseFor(Part part) {
-        LocalWarehouse partWarehouse = part.getWarehouse();
+        // a spare bought or set aside for a refit is kept with the unit being refitted, which may be at a base
+        Unit refitUnit = part.getRefitUnit();
+        boolean isForARefit = (part.getUnit() == null) && (refitUnit != null);
+        LocalWarehouse partWarehouse = isForARefit ? refitUnit.getWarehouse() : part.getWarehouse();
         return (partWarehouse != null) ? partWarehouse : getWarehouse();
     }
 
@@ -182,8 +192,9 @@ public record ForceQuartermaster(Campaign campaign) {
             return;
         }
 
-        // don't keep around spare ammo bins
-        if ((part instanceof AmmoBin) && (null == part.getUnit())) {
+        // don't keep around spare ammo bins; a bin set aside for a refit is not spare and must survive a save
+        boolean isLooseAmmoBin = (part instanceof AmmoBin) && (null == part.getUnit());
+        if (isLooseAmmoBin && !part.isReservedForRefit()) {
             return;
         }
 
@@ -502,14 +513,27 @@ public record ForceQuartermaster(Campaign campaign) {
      * @return The number of shots available of the given ammo type.
      */
     public int getAmmoAvailable(AmmoType ammoType) {
+        return getAmmoAvailable(getWarehouse(), ammoType);
+    }
+
+    /**
+     * Gets the amount of ammo of a given type available in a warehouse, such as a base's.
+     *
+     * @param warehouse The warehouse to count in; the main force's when {@code null}.
+     * @param ammoType  The type of ammo.
+     *
+     * @return The number of shots available of the given ammo type.
+     */
+    public int getAmmoAvailable(@Nullable LocalWarehouse warehouse, AmmoType ammoType) {
         Objects.requireNonNull(ammoType);
+        LocalWarehouse stock = (warehouse != null) ? warehouse : getWarehouse();
 
         if (!getCampaignOptions().get(CampaignOption.USE_AMMO_BY_TYPE)) {
             // We can't just use findSpareAmmo, that will return the first
             // matching ammo. There may be multiple instances of matching
             // ammo that have different qualities, so we should return
             // all of those counts as viable and not just the first we find.
-            return getWarehouse()
+            return stock
                          .streamSpareParts()
                          .filter(ForceQuartermaster::isAvailableAsSpareAmmo)
                          .mapToInt(part -> {
@@ -524,7 +548,7 @@ public record ForceQuartermaster(Campaign campaign) {
         } else {
             // If we're using ammo by type, stream through all
             // the ammo that matches strictly or is compatible.
-            return getWarehouse()
+            return stock
                          .streamSpareParts()
                          .filter(ForceQuartermaster::isAvailableAsSpareAmmo)
                          .mapToInt(part -> {
@@ -677,7 +701,10 @@ public record ForceQuartermaster(Campaign campaign) {
         }
 
         if (getCampaignOptions().get(CampaignOption.PAY_FOR_UNITS)) {
-            Money cost = new Unit(en, campaign()).getBuyCost().multipliedBy(valueMultiplier);
+            double contractMultiplier = campaign().getPlayerForce().getPurchaseCostMultiplier(campaign().getActiveContracts());
+            Money cost = new Unit(en, campaign()).getBuyCost()
+                               .multipliedBy(valueMultiplier)
+                               .multipliedBy(contractMultiplier);
             if (campaign().getPlayerForce()
                       .getFinances()
                       .debit(TransactionType.UNIT_PURCHASE, campaign().getLocalDate(),
@@ -705,10 +732,11 @@ public record ForceQuartermaster(Campaign campaign) {
 
         Money sellValue = unit.getSellValue();
 
-        campaign().getPlayerForce().getFinances().credit(TransactionType.UNIT_SALE, campaign().getLocalDate(),
-              sellValue, "Sale of " + unit.getName());
-
-        campaign().removeUnit(unit.getId());
+        // a unit the campaign cannot find is not sold, so nothing is paid for it
+        if (campaign().removeUnit(unit.getId())) {
+            campaign().getPlayerForce().getFinances().credit(TransactionType.UNIT_SALE, campaign().getLocalDate(),
+                  sellValue, getFormattedTextAt(FINANCES_RESOURCE_BUNDLE, "UnitSale.finances", unit.getName()));
+        }
     }
 
     /**
@@ -747,6 +775,10 @@ public record ForceQuartermaster(Campaign campaign) {
             return;
         }
 
+        if (!isForSale(part)) {
+            return;
+        }
+
         // Do not sell more than we have
         quantity = Math.min(quantity, part.getQuantity());
         if (quantity <= 0) {
@@ -763,6 +795,20 @@ public record ForceQuartermaster(Campaign campaign) {
               cost, "Sale of " + quantity + " " + part.getName() + plural);
 
         warehouseFor(part).removePart(part, quantity);
+    }
+
+    /**
+     * Only a spare can be sold. A part on a unit, reserved or being worked on is not for sale: paying for it would
+     * leave the part where it is as well.
+     *
+     * @return {@code true} if the part is a spare
+     */
+    private boolean isForSale(Part part) {
+        if (!part.isSpare()) {
+            LOGGER.warn("[Quartermaster] {} was not sold: it is not a spare", part.getName());
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -784,6 +830,9 @@ public record ForceQuartermaster(Campaign campaign) {
      */
     public void sellAmmo(AmmoStorage ammo, int shots) {
         Objects.requireNonNull(ammo);
+        if (!isForSale(ammo)) {
+            return;
+        }
 
         // Do not sell more than we have
         shots = Math.min(shots, ammo.getShots());
@@ -825,6 +874,9 @@ public record ForceQuartermaster(Campaign campaign) {
      */
     public void sellArmor(Armor armor, int points) {
         Objects.requireNonNull(armor);
+        if (!isForSale(armor)) {
+            return;
+        }
 
         // Do not sell more than we have
         points = Math.min(points, armor.getAmount());
@@ -913,11 +965,30 @@ public record ForceQuartermaster(Campaign campaign) {
     public boolean buyRefurbishment(Part part) {
         if (getCampaignOptions().get(CampaignOption.PAY_FOR_PARTS)) {
             return campaign().getPlayerForce().getFinances().debit(TransactionType.EQUIPMENT_PURCHASE,
-                  campaign().getLocalDate(), part.getActualValue(),
+                  campaign().getLocalDate(), getRefurbishmentCost(part),
                   "Purchase of " + part.getName());
         } else {
             return true;
         }
+    }
+
+    /**
+     * Gets what a refurbishment costs the force, including any contract purchase cost multiplier.
+     *
+     * @param part The refurbishment to price.
+     *
+     * @return The price, or zero when the campaign does not pay for parts.
+     */
+    public Money getRefurbishmentCost(Part part) {
+        if (!getCampaignOptions().get(CampaignOption.PAY_FOR_PARTS)) {
+            return Money.zero();
+        }
+        double contractMultiplier = campaign().getPlayerForce().getPurchaseCostMultiplier(campaign().getActiveContracts());
+        Money cost = part.getActualValue().multipliedBy(contractMultiplier);
+        if (part instanceof Refit) {
+            cost = cost.multipliedBy(PlanetaryCostReductions.getRepairAndRefitMultiplier(campaign()));
+        }
+        return cost;
     }
 
     /**
@@ -960,7 +1031,11 @@ public record ForceQuartermaster(Campaign campaign) {
         Objects.requireNonNull(part);
 
         if (getCampaignOptions().get(CampaignOption.PAY_FOR_PARTS)) {
-            Money cost = part.getActualValue().multipliedBy(costMultiplier);
+            double contractMultiplier = campaign().getPlayerForce().getPurchaseCostMultiplier(campaign().getActiveContracts());
+            Money cost = part.getActualValue()
+                               .multipliedBy(costMultiplier)
+                               .multipliedBy(contractMultiplier);
+
             if (campaign().getPlayerForce().getFinances().debit(TransactionType.EQUIPMENT_PURCHASE,
                   campaign().getLocalDate(), cost, "Purchase of " + part.getName())) {
                 addPart(part, transitDays, true, target);

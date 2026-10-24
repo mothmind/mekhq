@@ -48,13 +48,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import jakarta.annotation.Nullable;
 import megamek.common.TargetRollModifier;
-import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.options.IOption;
 import megamek.common.rolls.TargetRoll;
 import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
+import mekhq.campaign.ForceHumanResources;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.finances.Money;
@@ -142,7 +143,9 @@ public class RetirementDefectionTracker {
     public static int getHRStrain(Campaign campaign) {
         double personnel = 0;
 
-        for (Person person : campaign.getPlayerForce().getHumanResources().getActivePersonnel(false, false)) {
+        ForceHumanResources humanResources = campaign.getPlayerForce().getHumanResources();
+
+        for (Person person : humanResources.getActivePersonnel(false, false)) {
             PersonnelRole primaryRole = person.getPrimaryRole();
 
             if (primaryRole.isCivilian()) {
@@ -150,6 +153,10 @@ public class RetirementDefectionTracker {
             } else if (!(primaryRole.isAssistant() && person.getSecondaryRole().isNone())) {
                 personnel++;
             }
+        }
+
+        for (PersonnelRole role : humanResources.getTempCrewRoleKeys()) {
+            personnel += humanResources.getTempCrewPool(role);
         }
 
         return (int) round(personnel);
@@ -480,7 +487,7 @@ public class RetirementDefectionTracker {
             // Fatigue modifier
             if ((campaignOptions.get(CampaignOption.USE_FATIGUE)) &&
                       (campaignOptions.get(CampaignOption.USE_FATIGUE_MODIFIERS))) {
-                int fatigueModifier = Math.clamp(((person.getAdjustedFatigue() - 1) / 4) - 1, 0, 3);
+                int fatigueModifier = Fatigue.getTurnoverModifier(Fatigue.getEffectiveFatigue(person, campaign));
 
                 if (fatigueModifier > 0) {
                     targetNumber.addModifier(fatigueModifier, resources.getString("fatigue.text"));

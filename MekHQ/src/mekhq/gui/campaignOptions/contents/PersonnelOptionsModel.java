@@ -35,6 +35,7 @@ package mekhq.gui.campaignOptions.contents;
 import static mekhq.campaign.randomEvents.prisoners.PrisonerEventManager.DEFAULT_TEMPORARY_CAPACITY;
 
 import jakarta.annotation.Nonnull;
+import jakarta.annotation.Nullable;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
@@ -52,6 +53,12 @@ class PersonnelOptionsModel {
     boolean useRandomToughness;
     boolean useArtillery;
     boolean useAbilities;
+    boolean useSpaTrainingCosts;
+    boolean capTotalSpas;
+    boolean skillImprovementsCostCBills;
+    double professionSkillTrainingCostMultiplier;
+    double utilitySkillTrainingCostMultiplier;
+    double roleplaySkillTrainingCostMultiplier;
     boolean onlyCommandersMatterVehicles;
     boolean onlyCommandersMatterInfantry;
     boolean onlyCommandersMatterBattleArmor;
@@ -140,6 +147,7 @@ class PersonnelOptionsModel {
     boolean addDefaultKitToProcurement;
     boolean npcFactionArmorKits;
     boolean requireMekWarriorKitToDeploy;
+    boolean requireAerospaceKitToDeploy;
     String mekTechDefaultToolKit;
     String mechanicDefaultToolKit;
     String aeroTechDefaultToolKit;
@@ -159,6 +167,12 @@ class PersonnelOptionsModel {
         useRandomToughness = options.get(CampaignOption.USE_RANDOM_TOUGHNESS);
         useArtillery = options.get(CampaignOption.USE_ARTILLERY);
         useAbilities = options.get(CampaignOption.USE_ABILITIES);
+        useSpaTrainingCosts = options.get(CampaignOption.USE_SPA_TRAINING_COSTS);
+        capTotalSpas = options.get(CampaignOption.CAP_TOTAL_SPAS);
+        skillImprovementsCostCBills = options.get(CampaignOption.SKILL_IMPROVEMENTS_COST_C_BILLS);
+        professionSkillTrainingCostMultiplier = options.get(CampaignOption.PROFESSION_SKILL_TRAINING_COST_MULTIPLIER);
+        utilitySkillTrainingCostMultiplier = options.get(CampaignOption.UTILITY_SKILL_TRAINING_COST_MULTIPLIER);
+        roleplaySkillTrainingCostMultiplier = options.get(CampaignOption.ROLEPLAY_SKILL_TRAINING_COST_MULTIPLIER);
         onlyCommandersMatterVehicles = options.get(CampaignOption.ONLY_COMMANDERS_MATTER_VEHICLES);
         onlyCommandersMatterInfantry = options.get(CampaignOption.ONLY_COMMANDERS_MATTER_INFANTRY);
         onlyCommandersMatterBattleArmor = options.get(CampaignOption.ONLY_COMMANDERS_MATTER_BATTLE_ARMOR);
@@ -247,6 +261,7 @@ class PersonnelOptionsModel {
         addDefaultKitToProcurement = options.get(CampaignOption.ADD_DEFAULT_KIT_TO_PROCUREMENT);
         npcFactionArmorKits = options.get(CampaignOption.NPC_FACTION_ARMOR_KITS);
         requireMekWarriorKitToDeploy = options.get(CampaignOption.REQUIRE_MEKWARRIOR_KIT_TO_DEPLOY);
+        requireAerospaceKitToDeploy = options.get(CampaignOption.REQUIRE_AEROSPACE_KIT_TO_DEPLOY);
         mekTechDefaultToolKit = options.get(CampaignOption.MEK_TECH_DEFAULT_TOOL_KIT);
         mechanicDefaultToolKit = options.get(CampaignOption.MECHANIC_DEFAULT_TOOL_KIT);
         aeroTechDefaultToolKit = options.get(CampaignOption.AERO_TECH_DEFAULT_TOOL_KIT);
@@ -259,7 +274,7 @@ class PersonnelOptionsModel {
         techsNeedToolKit = options.get(CampaignOption.TECHS_NEED_TOOL_KIT);
     }
 
-    void applyTo(@Nonnull Campaign campaign, @Nonnull CampaignOptions options) {
+    void applyTo(@Nullable Campaign campaign, @Nonnull CampaignOptions options) {
         options.set(CampaignOption.USE_TACTICS, useTactics);
         options.set(CampaignOption.USE_INITIATIVE_BONUS, useInitiativeBonus);
         options.set(CampaignOption.USE_SENSIBLE_TACTICS, useSensibleTactics);
@@ -267,6 +282,12 @@ class PersonnelOptionsModel {
         options.set(CampaignOption.USE_RANDOM_TOUGHNESS, useRandomToughness);
         options.set(CampaignOption.USE_ARTILLERY, useArtillery);
         options.set(CampaignOption.USE_ABILITIES, useAbilities);
+        options.set(CampaignOption.USE_SPA_TRAINING_COSTS, useSpaTrainingCosts);
+        options.set(CampaignOption.CAP_TOTAL_SPAS, capTotalSpas);
+        options.set(CampaignOption.SKILL_IMPROVEMENTS_COST_C_BILLS, skillImprovementsCostCBills);
+        options.set(CampaignOption.PROFESSION_SKILL_TRAINING_COST_MULTIPLIER, professionSkillTrainingCostMultiplier);
+        options.set(CampaignOption.UTILITY_SKILL_TRAINING_COST_MULTIPLIER, utilitySkillTrainingCostMultiplier);
+        options.set(CampaignOption.ROLEPLAY_SKILL_TRAINING_COST_MULTIPLIER, roleplaySkillTrainingCostMultiplier);
         options.set(CampaignOption.ONLY_COMMANDERS_MATTER_VEHICLES, onlyCommandersMatterVehicles);
         options.set(CampaignOption.ONLY_COMMANDERS_MATTER_INFANTRY, onlyCommandersMatterInfantry);
         options.set(CampaignOption.ONLY_COMMANDERS_MATTER_BATTLE_ARMOR, onlyCommandersMatterBattleArmor);
@@ -343,7 +364,8 @@ class PersonnelOptionsModel {
         options.set(CampaignOption.PRISONER_CAPTURE_STYLE, prisonerCaptureStyle);
         options.set(CampaignOption.USE_FUNCTIONAL_ESCAPE_ARTIST, useFunctionalEscapeArtist);
         options.set(CampaignOption.USE_PRISONER_RECRUITMENT, usePrisonerRecruitment);
-        if (resetTemporaryPrisonerCapacity) {
+        // No campaign when saving a preset: the reset belongs to the running campaign, so it waits for Apply
+        if (resetTemporaryPrisonerCapacity && (campaign != null)) {
             campaign.getPlayerForce().setTemporaryPrisonerCapacity(DEFAULT_TEMPORARY_CAPACITY);
         }
         options.set(CampaignOption.USE_RANDOM_DEPENDENT_ADDITION, useRandomDependentAddition);
@@ -358,6 +380,7 @@ class PersonnelOptionsModel {
         options.set(CampaignOption.ADD_DEFAULT_KIT_TO_PROCUREMENT, addDefaultKitToProcurement);
         options.set(CampaignOption.NPC_FACTION_ARMOR_KITS, npcFactionArmorKits);
         options.set(CampaignOption.REQUIRE_MEKWARRIOR_KIT_TO_DEPLOY, requireMekWarriorKitToDeploy);
+        options.set(CampaignOption.REQUIRE_AEROSPACE_KIT_TO_DEPLOY, requireAerospaceKitToDeploy);
         options.set(CampaignOption.MEK_TECH_DEFAULT_TOOL_KIT, mekTechDefaultToolKit);
         options.set(CampaignOption.MECHANIC_DEFAULT_TOOL_KIT, mechanicDefaultToolKit);
         options.set(CampaignOption.AERO_TECH_DEFAULT_TOOL_KIT, aeroTechDefaultToolKit);

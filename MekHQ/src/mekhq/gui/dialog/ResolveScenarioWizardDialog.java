@@ -74,6 +74,7 @@ import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.util.UIUtil;
 import megamek.common.equipment.GunEmplacement;
 import megamek.common.ui.FastJScrollPane;
+import megamek.common.util.sorter.NaturalOrderComparator;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -85,6 +86,7 @@ import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.digitalGM.stratCon.StratConRulesManager;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
+import mekhq.campaign.mission.contract.contractSpecialRules.TwoConsecutiveTracks;
 import mekhq.campaign.mission.contract.utilities.MHQMorale;
 import mekhq.campaign.mission.contract.utilities.SalvageUtilities;
 import mekhq.campaign.mission.scenarios.AtBScenario;
@@ -98,6 +100,7 @@ import mekhq.campaign.unit.TestUnit;
 import mekhq.campaign.unit.Unit;
 import mekhq.gui.baseComponents.DefaultMHQScrollablePanel;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogConfirmation;
+import mekhq.gui.dialog.camOpsSalvage.SalvageRecoveryConsole;
 import mekhq.gui.utilities.MarkdownEditorPanel;
 import mekhq.gui.view.PersonViewPanel;
 import mekhq.utilities.ReportingUtilities;
@@ -201,7 +204,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
     // endregion Preview Panel components
     private boolean aborted = true;
 
-    private final boolean isUseCamOpsSalvage;
+    private final boolean isSalvageDeferred;
 
     private static final MMLogger logger = MMLogger.create(ResolveScenarioWizardDialog.class);
 
@@ -218,7 +221,11 @@ public class ResolveScenarioWizardDialog extends JDialog {
         objectiveProcessor = new ScenarioObjectiveProcessor();
         loots = tracker.getPotentialLoot();
         salvageableUnites = new ArrayList<>();
-        isUseCamOpsSalvage = campaign.getCampaignOptions().get(CampaignOption.IS_USE_CAM_OPS_SALVAGE);
+        // Other than under Legacy rules, salvage is decided after the wizard, in the salvage recovery console
+        isSalvageDeferred = !campaign.getCampaignOptions()
+                                    .get(CampaignOption.SALVAGE_SYSTEM)
+                                    .getSalvage()
+                                    .isSalvageClaimedInResolveWizard();
         if (tracker.getMission() != null) {
             salvageEmployer = tracker.getMission().getSalvagedByEmployerValue();
             salvageUnit = tracker.getMission().getSalvagedByUnitValue();
@@ -614,29 +621,29 @@ public class ResolveScenarioWizardDialog extends JDialog {
             gridBagConstraints.insets = new Insets(5, 5, 0, 0);
 
             JLabel lblSalvageValueUnit1 = new JLabel(resourceMap.getString("lblSalvageValueUnit1.text"));
-            lblSalvageValueUnit1.setVisible(!isUseCamOpsSalvage); // We're using setVisible to avoid null objects
+            lblSalvageValueUnit1.setVisible(!isSalvageDeferred); // We're using setVisible to avoid null objects
             gridBagConstraints.gridx = gridx++;
             gridBagConstraints.gridy = gridY++;
             pnlSalvageValue.add(lblSalvageValueUnit1, gridBagConstraints);
 
             lblSalvageValueUnit2 = new JLabel(salvageUnit.toAmountAndSymbolString());
-            lblSalvageValueUnit2.setVisible(!isUseCamOpsSalvage);
+            lblSalvageValueUnit2.setVisible(!isSalvageDeferred);
             gridBagConstraints.gridx = gridx--;
             pnlSalvageValue.add(lblSalvageValueUnit2, gridBagConstraints);
 
             JLabel lblSalvageValueEmployer1 = new JLabel(resourceMap.getString("lblSalvageValueEmployer1.text"));
-            lblSalvageValueEmployer1.setVisible(!isUseCamOpsSalvage);
+            lblSalvageValueEmployer1.setVisible(!isSalvageDeferred);
             gridBagConstraints.gridx = gridx++;
             gridBagConstraints.gridy = gridY++;
             pnlSalvageValue.add(lblSalvageValueEmployer1, gridBagConstraints);
 
             lblSalvageValueEmployer2 = new JLabel(salvageEmployer.toAmountAndSymbolString());
-            lblSalvageValueEmployer2.setVisible(!isUseCamOpsSalvage);
+            lblSalvageValueEmployer2.setVisible(!isSalvageDeferred);
             gridBagConstraints.gridx = gridx--;
             pnlSalvageValue.add(lblSalvageValueEmployer2, gridBagConstraints);
 
             JLabel lblSalvagePct1 = new JLabel(resourceMap.getString("lblSalvagePct1.text"));
-            lblSalvagePct1.setVisible(!isUseCamOpsSalvage);
+            lblSalvagePct1.setVisible(!isSalvageDeferred);
             gridBagConstraints.gridx = gridx++;
             gridBagConstraints.gridy = gridY++;
             pnlSalvageValue.add(lblSalvagePct1, gridBagConstraints);
@@ -655,7 +662,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
                                        maxSalvagePct +
                                        "%)</span></html>";
             lblSalvagePct2 = new JLabel(salvageUsed);
-            lblSalvagePct2.setVisible(!isUseCamOpsSalvage);
+            lblSalvagePct2.setVisible(!isSalvageDeferred);
             gridBagConstraints.gridx = gridx;
             pnlSalvageValue.add(lblSalvagePct2, gridBagConstraints);
 
@@ -682,11 +689,12 @@ public class ResolveScenarioWizardDialog extends JDialog {
 
         gridBagConstraints.gridx = gridx++;
 
-        pnlSalvage.add(new JLabel(resourceMap.getString(isUseCamOpsSalvage ? "lblWreck.text" : "lblSalvage.text")),
+        pnlSalvage.add(new JLabel(resourceMap.getString(isSalvageDeferred ? "lblWreck.text" : "lblSalvage.text")),
               gridBagConstraints);
 
         gridBagConstraints.gridx = gridx++;
-        pnlSalvage.add(new JLabel(isUseCamOpsSalvage ? "" : resourceMap.getString("lblSell.text")), gridBagConstraints);
+        pnlSalvage.add(new JLabel(isSalvageDeferred ? "" : resourceMap.getString("lblSell.text")),
+              gridBagConstraints);
 
         gridBagConstraints.gridx = gridx;
         pnlSalvage.add(new JLabel(resourceMap.getString("lblEscaped.text")), gridBagConstraints);
@@ -716,7 +724,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
             }
 
             // Now, we start creating the boxes
-            boolean automaticallySelectSalvage = (isUseCamOpsSalvage) ||
+            boolean automaticallySelectSalvage = (isSalvageDeferred) ||
                                                        (!tracker.usesSalvageExchange() && maxSalvagePct >= 100);
 
             JLabel salvageUnit = new JLabel(status.getDesc(true));
@@ -727,7 +735,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
             JCheckBox salvaged = new JCheckBox("");
             salvaged.setName("salvaged");
             salvaged.getAccessibleContext().setAccessibleName(resourceMap.getString("lblSalvage.text"));
-            salvaged.setEnabled(!tracker.usesSalvageExchange() || isUseCamOpsSalvage);
+            salvaged.setEnabled(!tracker.usesSalvageExchange() || isSalvageDeferred);
             salvaged.setSelected(automaticallySelectSalvage);
             salvaged.addItemListener(evt -> checkSalvageRights());
             salvageBoxes.add(salvaged);
@@ -740,7 +748,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
             sold.getAccessibleContext().setAccessibleName(resourceMap.getString("lblSell.text"));
             sold.setEnabled(!tracker.usesSalvageExchange() && tracker.getCampaign().getCampaignOptions().get(CampaignOption.SELL_UNITS));
             sold.addItemListener(evt -> checkSalvageRights());
-            sold.setVisible(!isUseCamOpsSalvage);
+            sold.setVisible(!isSalvageDeferred);
             soldUnitBoxes.add(sold);
             gridBagConstraints.gridx = gridx++;
             pnlSalvage.add(sold, gridBagConstraints);
@@ -931,7 +939,10 @@ public class ResolveScenarioWizardDialog extends JDialog {
         DefaultComboBoxModel<String> assignModel;
         int gridY = 2;
         int killIndex = 0;
-        for (String killName : tracker.getKillCredits().keySet()) {
+
+        List<String> sortedKillNames = new ArrayList<>(tracker.getKillCredits().keySet());
+        sortedKillNames.sort(new NaturalOrderComparator());
+        for (String killName : sortedKillNames) {
             JLabel nameLbl = new JLabel(killName);
             assignModel = new DefaultComboBoxModel<>();
             assignModel.addElement(resourceMap.getString("none"));
@@ -1662,7 +1673,8 @@ public class ResolveScenarioWizardDialog extends JDialog {
         }
 
         // now process
-        tracker.resolveScenario((ScenarioStatus) choiceStatus.getSelectedItem(), txtReport.getText());
+        tracker.resolveScenario((ScenarioStatus) choiceStatus.getSelectedItem(), txtReport.getText(),
+              SalvageRecoveryConsole::showRecovery);
 
         if (tracker.getScenario().hasObjectives()) {
             // process objectives here
@@ -1686,6 +1698,13 @@ public class ResolveScenarioWizardDialog extends JDialog {
             }
         }
 
+        // Runs before processScenarioCompletion so the Essential (strategic-objective) lookup can still resolve the
+        // scenario against its StratCon track, which processScenarioCompletion removes it from.
+        if (tracker.getScenario() instanceof AtBScenario preCompletionScenario) {
+            TwoConsecutiveTracks.processScenarioResolution(campaign,
+                  preCompletionScenario.getContract(campaign), preCompletionScenario);
+        }
+
         StratConRulesManager.processScenarioCompletion(tracker);
 
         if (reinforcementsSent &&
@@ -1698,11 +1717,10 @@ public class ResolveScenarioWizardDialog extends JDialog {
         aborted = false;
         this.setVisible(false);
 
+        // Whether the outcome moves morale at all is decided inside, for every caller.
         if (tracker.getScenario() instanceof AtBScenario atBScenario) {
-            if (atBScenario.getStratConScenarioType().isScenarioOutcomeAffectsMorale()) {
-                MHQMorale.processMoraleChangeFromScenario(campaign, atBScenario.getContract(campaign),
-                      atBScenario.getStatus(), atBScenario.getStratConScenarioType());
-            }
+            MHQMorale.processMoraleChangeFromScenario(campaign, atBScenario.getContract(campaign),
+                  atBScenario.getStatus(), atBScenario.getStratConScenarioType());
         }
     }
 
@@ -1724,7 +1742,10 @@ public class ResolveScenarioWizardDialog extends JDialog {
                 case PRISONER_PANEL -> !tracker.getOppositionPersonnel().isEmpty();
                 case SALVAGE_PANEL -> !tracker.getPotentialSalvage().isEmpty() &&
                                             tracker.getMission() != null &&
-                                            tracker.getMission().canSalvage();
+                                            campaign.getCampaignOptions()
+                                                  .get(CampaignOption.SALVAGE_SYSTEM)
+                                                  .getSalvage()
+                                                  .canRecoverSalvage(tracker.getMission());
                 case KILLS_PANEL -> !tracker.getKillCredits().isEmpty();
                 case REWARD_PANEL -> !loots.isEmpty();
                 case PREVIEW_PANEL -> true;
@@ -1830,7 +1851,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
                 escaped.setSelected(false);
                 escaped.setEnabled(false);
             } else {
-                salvaged.setEnabled(!tracker.usesSalvageExchange() || isUseCamOpsSalvage);
+                salvaged.setEnabled(!tracker.usesSalvageExchange() || isSalvageDeferred);
                 sold.setEnabled(!tracker.usesSalvageExchange() &&
                                       tracker.getCampaign().getCampaignOptions().get(CampaignOption.SELL_UNITS));
                 escaped.setEnabled(true);
@@ -1865,7 +1886,7 @@ public class ResolveScenarioWizardDialog extends JDialog {
                 continue;
             }
 
-            if (!isUseCamOpsSalvage) {
+            if (!isSalvageDeferred) {
                 // always eligible with 100% salvage rights even when current == max
                 if ((currentSalvagePct > maxSalvagePct) && (maxSalvagePct < 100)) {
                     if (!salvageBoxes.get(i).isSelected()) {

@@ -88,6 +88,7 @@ class PersonnelEquipmentPage {
     private MMComboBox<String> cboAircraftDefaultKit;
     private JCheckBox chkNpcFactionArmorKits;
     private JCheckBox chkRequireMekWarriorKitToDeploy;
+    private JCheckBox chkRequireAerospaceKitToDeploy;
 
     private JLabel lblMekTechDefaultToolKit;
     private MMComboBox<String> cboMekTechDefaultToolKit;
@@ -126,15 +127,18 @@ class PersonnelEquipmentPage {
         cboMekWarriorDefaultKit = armorKitCombo("mekWarriorDefaultKit", Category.MEKWARRIOR);
         cboVehicleCrewDefaultKit = armorKitCombo("vehicleCrewDefaultKit", Category.INFANTRY);
         cboAircraftDefaultKit = armorKitCombo("aircraftDefaultKit", Category.AIRCRAFT);
-        cboMekTechDefaultToolKit = toolKitCombo("mekTechDefaultToolKit");
-        cboMechanicDefaultToolKit = toolKitCombo("mechanicDefaultToolKit");
-        cboAeroTechDefaultToolKit = toolKitCombo("aeroTechDefaultToolKit");
-        cboBATechDefaultToolKit = toolKitCombo("baTechDefaultToolKit");
-        cboVesselCrewDefaultToolKit = toolKitCombo("vesselCrewDefaultToolKit");
-        cboAstechDefaultToolKit = toolKitCombo("astechDefaultToolKit");
-        cboDoctorDefaultToolKit = toolKitCombo("doctorDefaultToolKit");
-        cboMedicDefaultToolKit = toolKitCombo("medicDefaultToolKit");
-        cboAdminDefaultToolKit = toolKitCombo("adminDefaultToolKit");
+        // A technician's default goes into the slot they repair from, so only kits that count as a tool kit are offered
+        List<String> technicianKits = EquipmentKitCatalog.technicianOptionKitNames();
+        List<String> everyKit = EquipmentKitCatalog.optionKitNames();
+        cboMekTechDefaultToolKit = toolKitCombo("mekTechDefaultToolKit", technicianKits);
+        cboMechanicDefaultToolKit = toolKitCombo("mechanicDefaultToolKit", technicianKits);
+        cboAeroTechDefaultToolKit = toolKitCombo("aeroTechDefaultToolKit", technicianKits);
+        cboBATechDefaultToolKit = toolKitCombo("baTechDefaultToolKit", technicianKits);
+        cboVesselCrewDefaultToolKit = toolKitCombo("vesselCrewDefaultToolKit", technicianKits);
+        cboAstechDefaultToolKit = toolKitCombo("astechDefaultToolKit", everyKit);
+        cboDoctorDefaultToolKit = toolKitCombo("doctorDefaultToolKit", everyKit);
+        cboMedicDefaultToolKit = toolKitCombo("medicDefaultToolKit", everyKit);
+        cboAdminDefaultToolKit = toolKitCombo("adminDefaultToolKit", everyKit);
 
         JPanel pnlGeneral = createGeneralPanel();
         JPanel pnlArmorKits = createArmorKitsPanel();
@@ -197,6 +201,10 @@ class PersonnelEquipmentPage {
               getMetadata(new Version(0, 51, 1)));
         chkRequireMekWarriorKitToDeploy.addMouseListener(createTipPanelUpdater("RequireMekWarriorKitToDeploy"));
 
+        chkRequireAerospaceKitToDeploy = new CampaignOptionsCheckBox("RequireAerospaceKitToDeploy",
+              getMetadata(new Version(0, 51, 1)));
+        chkRequireAerospaceKitToDeploy.addMouseListener(createTipPanelUpdater("RequireAerospaceKitToDeploy"));
+
         final SettingsFormPanel panel = new SettingsFormPanel("ArmorKitsPanel",
               LABEL_COLUMN_WIDTH,
               CONTROL_COLUMN_WIDTH);
@@ -205,6 +213,7 @@ class PersonnelEquipmentPage {
         panel.addRow(lblAircraftDefaultKit, cboAircraftDefaultKit);
         panel.addCheckBox(chkNpcFactionArmorKits);
         panel.addCheckBox(chkRequireMekWarriorKitToDeploy);
+        panel.addCheckBox(chkRequireAerospaceKitToDeploy);
 
         return panel;
     }
@@ -290,8 +299,8 @@ class PersonnelEquipmentPage {
         }
     }
 
-    private MMComboBox<String> toolKitCombo(String name) {
-        MMComboBox<String> combo = new MMComboBox<>(name, EquipmentKitCatalog.optionKitNames().toArray(new String[0]));
+    private MMComboBox<String> toolKitCombo(String name, List<String> kitNames) {
+        MMComboBox<String> combo = new MMComboBox<>(name, kitNames.toArray(new String[0]));
         combo.setRenderer(new ToolKitRenderer());
         return combo;
     }
@@ -404,6 +413,7 @@ class PersonnelEquipmentPage {
         cboAircraftDefaultKit.setSelectedItem(model.aircraftDefaultKit);
         chkNpcFactionArmorKits.setSelected(model.npcFactionArmorKits);
         chkRequireMekWarriorKitToDeploy.setSelected(model.requireMekWarriorKitToDeploy);
+        chkRequireAerospaceKitToDeploy.setSelected(model.requireAerospaceKitToDeploy);
         cboMekTechDefaultToolKit.setSelectedItem(model.mekTechDefaultToolKit);
         cboMechanicDefaultToolKit.setSelectedItem(model.mechanicDefaultToolKit);
         cboAeroTechDefaultToolKit.setSelectedItem(model.aeroTechDefaultToolKit);
@@ -433,8 +443,10 @@ class PersonnelEquipmentPage {
         model.aircraftDefaultKit = cboAircraftDefaultKit.getSelectedItem();
         model.npcFactionArmorKits = chkNpcFactionArmorKits.isSelected();
         model.requireMekWarriorKitToDeploy = chkRequireMekWarriorKitToDeploy.isSelected();
+        model.requireAerospaceKitToDeploy = chkRequireAerospaceKitToDeploy.isSelected();
         model.mekTechDefaultToolKit = cboMekTechDefaultToolKit.getSelectedItem();
         model.mechanicDefaultToolKit = cboMechanicDefaultToolKit.getSelectedItem();
+        model.aeroTechDefaultToolKit = cboAeroTechDefaultToolKit.getSelectedItem();
         model.vesselCrewDefaultToolKit = cboVesselCrewDefaultToolKit.getSelectedItem();
         model.baTechDefaultToolKit = cboBATechDefaultToolKit.getSelectedItem();
         model.astechDefaultToolKit = cboAstechDefaultToolKit.getSelectedItem();

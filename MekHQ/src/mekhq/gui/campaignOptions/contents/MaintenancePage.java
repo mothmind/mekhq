@@ -32,21 +32,28 @@
  */
 package mekhq.gui.campaignOptions.contents;
 
+import static megamek.client.ui.WrapLayout.wordWrap;
 import static mekhq.gui.campaignOptions.CampaignOptionsUtilities.LEGACY_RULE_BEFORE_METADATA;
 import static mekhq.gui.campaignOptions.CampaignOptionsUtilities.createTipPanelUpdater;
 import static mekhq.gui.campaignOptions.CampaignOptionsUtilities.getImageDirectory;
 import static mekhq.gui.campaignOptions.CampaignOptionsUtilities.getMetadata;
 
+import java.awt.Component;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import megamek.Version;
+import megamek.client.ui.comboBoxes.MMComboBox;
+import megamek.client.ui.settings.SettingsFormPanel;
+import mekhq.campaign.enums.LithiumFusionBatteryMode;
 import mekhq.gui.campaignOptions.CampaignOptionFlag;
 import mekhq.gui.campaignOptions.components.CampaignOptionsCheckBox;
-import megamek.client.ui.settings.SettingsFormPanel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsHeaderPanel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsLabel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsPagePanel;
@@ -54,8 +61,8 @@ import mekhq.gui.campaignOptions.components.CampaignOptionsSpinner;
 
 /**
  * The {@code MaintenancePage} class builds and manages the Maintenance leaf page of the Campaign Options dialog. It owns
- * the widgets for maintenance configuration - cycle scheduling, maintenance bonuses, quality standards, planetary
- * modifiers, and unofficial maintenance rules - and synchronises them with a shared
+ * the widgets for maintenance configuration - cycle scheduling, situational maintenance and costs, maintenance bonuses,
+ * quality standards, planetary modifiers, and unofficial maintenance rules - and synchronises them with a shared
  * {@link RepairAndMaintenanceOptionsModel}.
  *
  * <p>This view is a sub-component of {@link RepairAndMaintenancePages}: the model snapshot and the overall load/apply
@@ -82,6 +89,16 @@ class MaintenancePage {
     private JCheckBox chkUsePlanetaryModifiers;
     private JCheckBox useUnofficialMaintenance;
     private JCheckBox logMaintenance;
+    private JCheckBox chkTechsMaintainConventionalInfantry;
+    private JCheckBox chkMaintenanceOnContract;
+    private JCheckBox chkMaintenanceOffContract;
+    private JCheckBox chkMaintenanceInTransit;
+    private JLabel lblCombatContractMaintenanceCostMultiplier;
+    private JSpinner spnCombatContractMaintenanceCostMultiplier;
+    private JLabel lblInTransitMaintenanceCostMultiplier;
+    private JSpinner spnInTransitMaintenanceCostMultiplier;
+    private JLabel lblLithiumFusionBatteryMode;
+    private MMComboBox<LithiumFusionBatteryMode> comboLithiumFusionBatteryMode;
 
     private boolean created;
 
@@ -149,8 +166,15 @@ class MaintenancePage {
         logMaintenance = new CampaignOptionsCheckBox("LogMaintenance");
         logMaintenance.addMouseListener(createTipPanelUpdater("LogMaintenance"));
 
+        chkTechsMaintainConventionalInfantry = new CampaignOptionsCheckBox("TechsMaintainConventionalInfantry",
+                getMetadata(new Version(0, 51, 1), CampaignOptionFlag.CUSTOM_SYSTEM, CampaignOptionFlag.IMPORTANT));
+        chkTechsMaintainConventionalInfantry.addMouseListener(
+                createTipPanelUpdater("TechsMaintainConventionalInfantry"));
+
         JPanel schedulePanel = createMaintenanceSchedulePanel();
+        JPanel situationPanel = createMaintenanceSituationPanel();
         JPanel qualityPanel = createMaintenanceQualityPanel();
+        JPanel interstellarTravelPanel = createInterstellarTravelPanel();
 
         created = true;
         readFromModel(model);
@@ -161,10 +185,17 @@ class MaintenancePage {
                 .section("lblMaintenancePage.text",
                         "lblMaintenancePage.summary",
                         schedulePanel)
+                .section("lblMaintenanceSituationPanel.text",
+                        "lblMaintenanceSituationPanel.summary",
+                        situationPanel,
+                        getMetadata(new Version(0, 51, 1), CampaignOptionFlag.CUSTOM_SYSTEM))
                 .section("lblMaintenanceQualityPanel.text",
                         "lblMaintenanceQualityPanel.summary",
                         qualityPanel,
                         getMetadata(LEGACY_RULE_BEFORE_METADATA, CampaignOptionFlag.CUSTOM_SYSTEM))
+                .section("lblInterstellarTravelPanel.text",
+                        "lblInterstellarTravelPanel.summary",
+                        interstellarTravelPanel)
                 .build();
     }
 
@@ -177,6 +208,54 @@ class MaintenancePage {
         panel.addRow(lblMaintenanceBonus, spnMaintenanceBonus);
         panel.addRow(lblDefaultMaintenanceTime, spnDefaultMaintenanceTime);
         panel.addCheckBox(logMaintenance);
+        panel.addCheckBox(chkTechsMaintainConventionalInfantry);
+
+        return panel;
+    }
+
+    /**
+     * Builds the Maintenance Situations section, which controls whether maintenance runs on contract, off contract,
+     * and in transit, and how its cost scales in those situations.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private @Nonnull JPanel createMaintenanceSituationPanel() {
+        chkMaintenanceOnContract = new CampaignOptionsCheckBox("MaintenanceOnContract", getMetadata(new Version(0, 51, 1)));
+        chkMaintenanceOnContract.addMouseListener(createTipPanelUpdater("MaintenanceOnContract"));
+
+        chkMaintenanceOffContract = new CampaignOptionsCheckBox("MaintenanceOffContract", getMetadata(new Version(0, 51, 1)));
+        chkMaintenanceOffContract.addMouseListener(createTipPanelUpdater("MaintenanceOffContract"));
+
+        chkMaintenanceInTransit = new CampaignOptionsCheckBox("MaintenanceInTransit", getMetadata(new Version(0, 51, 1)));
+        chkMaintenanceInTransit.addMouseListener(createTipPanelUpdater("MaintenanceInTransit"));
+
+        lblCombatContractMaintenanceCostMultiplier =
+                new CampaignOptionsLabel("CombatContractMaintenanceCostMultiplier", getMetadata(new Version(0, 51, 1)));
+        lblCombatContractMaintenanceCostMultiplier.addMouseListener(
+                createTipPanelUpdater("CombatContractMaintenanceCostMultiplier"));
+        spnCombatContractMaintenanceCostMultiplier = new CampaignOptionsSpinner(
+                "CombatContractMaintenanceCostMultiplier", 0.25, 0.0, 10.0, 0.05);
+        spnCombatContractMaintenanceCostMultiplier.addMouseListener(
+                createTipPanelUpdater("CombatContractMaintenanceCostMultiplier"));
+
+        lblInTransitMaintenanceCostMultiplier = new CampaignOptionsLabel("InTransitMaintenanceCostMultiplier", getMetadata(new Version(0, 51, 1)));
+        lblInTransitMaintenanceCostMultiplier.addMouseListener(
+                createTipPanelUpdater("InTransitMaintenanceCostMultiplier"));
+        spnInTransitMaintenanceCostMultiplier = new CampaignOptionsSpinner("InTransitMaintenanceCostMultiplier",
+                1.0, 0.0, 10.0, 0.05);
+        spnInTransitMaintenanceCostMultiplier.addMouseListener(
+                createTipPanelUpdater("InTransitMaintenanceCostMultiplier"));
+
+        final SettingsFormPanel panel = new SettingsFormPanel("MaintenanceSituationPanel",
+                LABEL_COLUMN_WIDTH,
+                CONTROL_COLUMN_WIDTH);
+        panel.addCheckBoxGrid(3,
+                chkMaintenanceOnContract,
+                chkMaintenanceOffContract,
+                chkMaintenanceInTransit);
+        panel.addRow(lblCombatContractMaintenanceCostMultiplier, spnCombatContractMaintenanceCostMultiplier);
+        panel.addRow(lblInTransitMaintenanceCostMultiplier, spnInTransitMaintenanceCostMultiplier);
 
         return panel;
     }
@@ -196,6 +275,39 @@ class MaintenancePage {
     }
 
     /**
+     * Builds the Interstellar Travel section, which controls how Lithium-Fusion batteries affect jumps.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private @Nonnull JPanel createInterstellarTravelPanel() {
+        lblLithiumFusionBatteryMode = new CampaignOptionsLabel("LithiumFusionBatteryMode",
+                getMetadata(new Version(0, 51, 1), CampaignOptionFlag.CUSTOM_SYSTEM));
+        lblLithiumFusionBatteryMode.addMouseListener(createTipPanelUpdater("LithiumFusionBatteryMode"));
+        comboLithiumFusionBatteryMode = new MMComboBox<>("comboLithiumFusionBatteryMode",
+                LithiumFusionBatteryMode.values());
+        comboLithiumFusionBatteryMode.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(final JList<?> list, final Object value, final int index,
+                    final boolean isSelected, final boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value instanceof LithiumFusionBatteryMode lithiumFusionBatteryMode) {
+                    list.setToolTipText(wordWrap(lithiumFusionBatteryMode.getTooltip()));
+                }
+                return this;
+            }
+        });
+        comboLithiumFusionBatteryMode.addMouseListener(createTipPanelUpdater("LithiumFusionBatteryMode"));
+
+        final SettingsFormPanel panel = new SettingsFormPanel("InterstellarTravelPanel",
+                LABEL_COLUMN_WIDTH,
+                CONTROL_COLUMN_WIDTH);
+        panel.addRow(lblLithiumFusionBatteryMode, comboLithiumFusionBatteryMode);
+
+        return panel;
+    }
+
+    /**
      * Copies maintenance values from the shared model into this page's controls. This is a no-op until the page has been
      * built.
      *
@@ -208,6 +320,11 @@ class MaintenancePage {
 
         checkMaintenance.setSelected(model.checkMaintenance);
         spnMaintenanceDays.setValue(model.maintenanceCycleDays);
+        chkMaintenanceOnContract.setSelected(model.maintenanceOnContract);
+        chkMaintenanceOffContract.setSelected(model.maintenanceOffContract);
+        chkMaintenanceInTransit.setSelected(model.maintenanceInTransit);
+        spnCombatContractMaintenanceCostMultiplier.setValue(model.combatContractMaintenanceCostMultiplier);
+        spnInTransitMaintenanceCostMultiplier.setValue(model.inTransitMaintenanceCostMultiplier);
         spnMaintenanceBonus.setValue(model.maintenanceBonus);
         spnDefaultMaintenanceTime.setValue(model.defaultMaintenanceTime);
         useQualityMaintenance.setSelected(model.useQualityMaintenance);
@@ -216,6 +333,8 @@ class MaintenancePage {
         chkUsePlanetaryModifiers.setSelected(model.usePlanetaryModifiers);
         useUnofficialMaintenance.setSelected(model.useUnofficialMaintenance);
         logMaintenance.setSelected(model.logMaintenance);
+        chkTechsMaintainConventionalInfantry.setSelected(model.techsMaintainConventionalInfantry);
+        comboLithiumFusionBatteryMode.setSelectedItem(model.lithiumFusionBatteryMode);
     }
 
     /**
@@ -231,6 +350,11 @@ class MaintenancePage {
 
         model.checkMaintenance = checkMaintenance.isSelected();
         model.maintenanceCycleDays = (int) spnMaintenanceDays.getValue();
+        model.maintenanceOnContract = chkMaintenanceOnContract.isSelected();
+        model.maintenanceOffContract = chkMaintenanceOffContract.isSelected();
+        model.maintenanceInTransit = chkMaintenanceInTransit.isSelected();
+        model.combatContractMaintenanceCostMultiplier = (double) spnCombatContractMaintenanceCostMultiplier.getValue();
+        model.inTransitMaintenanceCostMultiplier = (double) spnInTransitMaintenanceCostMultiplier.getValue();
         model.maintenanceBonus = (int) spnMaintenanceBonus.getValue();
         model.defaultMaintenanceTime = (int) spnDefaultMaintenanceTime.getValue();
         model.useQualityMaintenance = useQualityMaintenance.isSelected();
@@ -239,5 +363,7 @@ class MaintenancePage {
         model.usePlanetaryModifiers = chkUsePlanetaryModifiers.isSelected();
         model.useUnofficialMaintenance = useUnofficialMaintenance.isSelected();
         model.logMaintenance = logMaintenance.isSelected();
+        model.techsMaintainConventionalInfantry = chkTechsMaintainConventionalInfantry.isSelected();
+        model.lithiumFusionBatteryMode = comboLithiumFusionBatteryMode.getSelectedItem();
     }
 }

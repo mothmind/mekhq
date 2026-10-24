@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2009 Jay Lawson (jaylawson39 at yahoo.com). All rights reserved.
- * Copyright (C) 2013-2025 The MegaMek Team. All Rights Reserved.
+ * Copyright (C) 2013-2026 The MegaMek Team. All Rights Reserved.
  *
  * This file is part of MekHQ.
  *
@@ -66,7 +66,7 @@ public class MissingMASC extends MissingEquipmentPart {
     public void setUnit(Unit u) {
         super.setUnit(u);
         if (null != unit && null != unit.getEntity().getEngine()) {
-            engineRating = unit.getEntity().getEngine().getRating();
+            engineRating = (int) Math.floor(unit.getEntity().getEngine().getRating(unit.getEntity()));
         }
     }
 
@@ -136,7 +136,7 @@ public class MissingMASC extends MissingEquipmentPart {
     public MASC getNewPart() {
         MASC ePart = new MASC(getUnitTonnage(), type, -1, campaign, engineRating, omniPodded);
         ePart.setEquipTonnage(equipTonnage);
-        return ePart;
+        return withArmoringOfSlot(ePart);
     }
 
     @Override

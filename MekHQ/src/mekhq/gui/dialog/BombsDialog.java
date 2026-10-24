@@ -33,15 +33,20 @@
  */
 package mekhq.gui.dialog;
 
+import static mekhq.utilities.MHQInternationalization.getTextAt;
+
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
@@ -62,6 +67,8 @@ import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.parts.AmmoStorage;
 import mekhq.campaign.parts.equipment.EquipmentPart;
+import mekhq.campaign.unit.PreferredBombLoadout;
+import mekhq.campaign.unit.Unit;
 
 /**
  * @author Deric Page (dericpage@users.sourceforge.net)
@@ -71,7 +78,10 @@ import mekhq.campaign.parts.equipment.EquipmentPart;
 public class BombsDialog extends JDialog implements ActionListener {
     private static final MMLogger LOGGER = MMLogger.create(BombsDialog.class);
 
+    private static final String RESOURCE_BUNDLE = "mekhq.resources.BombRearmer";
+
     private BombChoicePanel bombPanel;
+    private final Unit unit;
     private final IBomber bomber;
     private final Campaign campaign;
 
@@ -80,14 +90,19 @@ public class BombsDialog extends JDialog implements ActionListener {
     private final BombLoadout maxAvailable = new BombLoadout();
 
     // Maps bomb types to warehouse part IDs
-    private final EnumMap<BombTypeEnum, Integer> bombCatalog = new EnumMap<>(BombTypeEnum.class);
+    private final EnumMap<BombTypeEnum, List<Integer>> bombCatalog = new EnumMap<>(BombTypeEnum.class);
 
     private JButton okayButton;
     private JButton cancelButton;
+    private JCheckBox rearmAfterScenariosBox;
 
-    public BombsDialog(IBomber iBomber, Campaign campaign, JFrame parent) {
+    /**
+     * @param unit the aircraft whose bombs are chosen; its entity must be an {@link IBomber}
+     */
+    public BombsDialog(Unit unit, Campaign campaign, JFrame parent) {
         super(parent, "Select Bombs", true);
-        this.bomber = iBomber;
+        this.unit = unit;
+        this.bomber = (IBomber) unit.getEntity();
         this.campaign = campaign;
         this.initialBombChoices = new BombLoadout(bomber.getBombChoices());
 
@@ -135,9 +150,10 @@ public class BombsDialog extends JDialog implements ActionListener {
 
                 if ((bombType != null) && (bombType != BombTypeEnum.NONE)) {
                     // Using bombCatalog to store the part ID's of the bombs so don't have to keep full spare list in memory and
-                    // for ease of access later
-                    bombCatalog.put(bombType, spare.getId());
-                    availableBombs.put(bombType, ammoStorage.getShots());
+                    // for ease of access later. IMPORTANT: A bomb type may be split across several warehouse stacks
+                    // (e.g. differing quality), so track every stack and total their shots
+                    bombCatalog.computeIfAbsent(bombType, key -> new ArrayList<>()).add(spare.getId());
+                    availableBombs.addBombs(bombType, ammoStorage.getShots());
                 }
             }
         });
@@ -171,6 +187,12 @@ public class BombsDialog extends JDialog implements ActionListener {
 
     private JPanel buildButtonPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 2));
+
+        rearmAfterScenariosBox = new JCheckBox(getTextAt(RESOURCE_BUNDLE, "BombRearmer.rearmAfterScenarios"));
+        rearmAfterScenariosBox.setToolTipText(getTextAt(RESOURCE_BUNDLE,
+              "BombRearmer.rearmAfterScenarios.tooltip"));
+        rearmAfterScenariosBox.setSelected(unit.getPreferredBombLoadout() != null);
+        panel.add(rearmAfterScenariosBox);
 
         okayButton = new JButton("Okay");
         okayButton.setMnemonic('o');
@@ -224,8 +246,21 @@ public class BombsDialog extends JDialog implements ActionListener {
 
         // Update warehouse based on the delta
         updateWarehouse(warehouseDelta);
+        savePreferredLoadout();
 
         setVisible(false);
+    }
+
+    /**
+     * Keeps the bombs just chosen as the ones to rearm with after each scenario when the box is ticked, and stops
+     * rearming when it is not. A loadout with no bombs is not kept, since there would be nothing to rearm.
+     */
+    private void savePreferredLoadout() {
+        PreferredBombLoadout chosenLoadout = new PreferredBombLoadout(bomber.getIntBombChoices(),
+              bomber.getExtBombChoices());
+        boolean isRearmWanted = rearmAfterScenariosBox.isSelected() && chosenLoadout.hasBombs();
+        unit.setPreferredBombLoadout(isRearmWanted ? chosenLoadout : null);
+        LOGGER.debug("[BombRearm] {}: rearm after scenarios {}", unit.getName(), isRearmWanted ? "on" : "off");
     }
 
     /**
@@ -271,11 +306,11 @@ public class BombsDialog extends JDialog implements ActionListener {
      * Updates warehouse for a specific bomb type.
      */
     private void updateWarehouseBombType(BombTypeEnum bombType, int deltaCount) {
-        Integer partId = bombCatalog.get(bombType);
+        List<Integer> partIds = bombCatalog.get(bombType);
 
-        if (partId != null && partId > 0) {
-            // Existing warehouse entry
-            updateExistingWarehouseEntry(partId, deltaCount);
+        if ((partIds != null) && !partIds.isEmpty()) {
+            // Existing warehouse entries
+            updateExistingWarehouseEntries(partIds, deltaCount);
         } else if (deltaCount > 0) {
             // No existing entry but adding bombs - create new warehouse entry
             createNewWarehouseEntry(bombType, deltaCount);
@@ -287,16 +322,46 @@ public class BombsDialog extends JDialog implements ActionListener {
     }
 
     /**
-     * Updates an existing warehouse entry.
+     * Updates existing warehouse entries for a bomb type. Returned bombs go to the first stack; removed bombs are drawn
+     * from each stack in turn until the full amount is taken.
+     *
+     * @param partIds    the warehouse part IDs of every stack holding this bomb type
+     * @param deltaCount positive to return bombs to the warehouse, negative to take them
+     *
+     * @author Illiani
+     * @since 0.51.01
      */
-    private void updateExistingWarehouseEntry(int partId, int deltaCount) {
-        AmmoStorage storedBombs = (AmmoStorage) campaign.getPlayerForce().getWarehouse().getPart(partId);
-        if (storedBombs != null) {
-            storedBombs.changeShots(deltaCount);
+    private void updateExistingWarehouseEntries(List<Integer> partIds, int deltaCount) {
+        if (deltaCount > 0) {
+            AmmoStorage storedBombs = (AmmoStorage) campaign.getPlayerForce().getWarehouse().getPart(partIds.get(0));
+            if (storedBombs != null) {
+                storedBombs.changeShots(deltaCount);
+            }
+            return;
+        }
+
+        int remainingToRemove = -deltaCount;
+        for (int partId : partIds) {
+            if (remainingToRemove <= 0) {
+                break;
+            }
+
+            AmmoStorage storedBombs = (AmmoStorage) campaign.getPlayerForce().getWarehouse().getPart(partId);
+            if (storedBombs == null) {
+                continue;
+            }
+
+            int removedFromStack = Math.min(remainingToRemove, storedBombs.getShots());
+            storedBombs.changeShots(-removedFromStack);
+            remainingToRemove -= removedFromStack;
 
             if (storedBombs.getShots() <= 0) {
                 campaign.getPlayerForce().getWarehouse().removePart(storedBombs);
             }
+        }
+
+        if (remainingToRemove > 0) {
+            LOGGER.warn("Could not remove {} bombs from the warehouse; not enough stock.", remainingToRemove);
         }
     }
 

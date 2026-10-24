@@ -33,9 +33,6 @@
 package mekhq.gui.commandGeneration;
 
 import static megamek.client.ui.util.FlatLafStyleBuilder.setFontScaling;
-import static mekhq.campaign.personnel.PersonUtility.overrideSkills;
-import static mekhq.campaign.personnel.PersonUtility.reRollAdvantages;
-import static mekhq.campaign.personnel.PersonUtility.reRollLoyalty;
 import static mekhq.campaign.universe.Faction.MERCENARY_FACTION_CODE;
 
 import java.awt.BorderLayout;
@@ -63,6 +60,7 @@ import javax.swing.JSplitPane;
 import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 
+import jakarta.annotation.Nullable;
 import megamek.client.ratgenerator.ForceDescriptor;
 import megamek.client.ratgenerator.Ruleset;
 import megamek.client.ui.buttons.MMButton;
@@ -71,9 +69,7 @@ import megamek.client.ui.enums.ValidationState;
 import megamek.client.ui.preferences.JSplitPanePreference;
 import megamek.client.ui.preferences.PreferencesNode;
 import megamek.client.ui.util.UIUtil;
-import megamek.common.annotations.Nullable;
 import megamek.common.enums.Gender;
-import megamek.common.enums.SkillLevel;
 import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
@@ -508,13 +504,13 @@ public class CommandGenerationDialog extends AbstractMHQValidationButtonDialog {
     private void runStartingSimulationThen(CommandGenerationOptions options, List<Person> generatedPersons) {
         if (!options.isRunStartingSimulation()) {
             LOGGER.info("[CompanyGen][Simulation] off; the command starts with no history");
-            applyPostGenerationExtras(options, generatedPersons);
+            applyPostGenerationExtras(generatedPersons);
             return;
         }
         runGenerationPhase("Simulating the command's history...",
               simulationListener -> StartingSimulation.run(getCampaign(), options, generatedPersons,
                     simulationListener),
-              simulationResult -> applyPostGenerationExtras(options, generatedPersons));
+              simulationResult -> applyPostGenerationExtras(generatedPersons));
     }
 
     /**
@@ -705,7 +701,7 @@ public class CommandGenerationDialog extends AbstractMHQValidationButtonDialog {
      * units) after {@link CommandGenerator#generate} completes. Split out of {@link #okAction()} so
      * the EDT-side cleanup is the only thing the {@link SwingWorker#done()} callback has to do.
      */
-    private void applyPostGenerationExtras(CommandGenerationOptions options, List<Person> generatedPersons) {
+    private void applyPostGenerationExtras(List<Person> generatedPersons) {
         long startNanos = System.nanoTime();
         LOGGER.info("[CompanyGen][PostGen] START (thread={}, generatedPersons={})",
               Thread.currentThread().getName(), generatedPersons.size());
@@ -724,36 +720,13 @@ public class CommandGenerationDialog extends AbstractMHQValidationButtonDialog {
         campaign.getPlayerForce().setCamOpsReputation(reputationController);
 
         LOGGER.info("[CompanyGen][PostGen] running processBonusUnitsBasedOnCampaignOptions");
-        processBonusUnitsBasedOnCampaignOptions(generatedPersons, options);
+        processBonusUnitsBasedOnCampaignOptions();
         long totalMs = (System.nanoTime() - startNanos) / 1_000_000;
         LOGGER.info("[CompanyGen][PostGen] DONE in {}ms", totalMs);
     }
 
-    private void processBonusUnitsBasedOnCampaignOptions(List<Person> generatedPersons,
-          CommandGenerationOptions options) {
+    private void processBonusUnitsBasedOnCampaignOptions() {
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        // Medical reserve: a generation-only option (independent of the campaign-wide Alternative
-        // Advanced Medical rule). Creates spare unassigned MekWarriors as injury replacements, sized
-        // as a percentage of the generated combatants.
-        if (options.isGenerateMedicalReserve()) {
-            int combatants = 0;
-            for (Person person : generatedPersons) {
-                if (person.isCombat()) {
-                    combatants++;
-                }
-            }
-
-            int spares = (int) Math.ceil(combatants * options.getMedicalReservePercent() / 100.0);
-            if (spares > 0) {
-                new ImmersiveDialogNotification(campaign,
-                      resources.getString("CommandGenerationDialog.campaignOptions.altAdvancedMedical"),
-                      true);
-                for (int i = 0; i < spares; i++) {
-                    generateSparePersonnel(options);
-                }
-            }
-        }
-
         // Support-vehicle generation (salvage, MASH, fatigue, StratCon convoy, security) is handled
         // during generation by SupportPersonnelToTOE and SupportUnitGenerator, so it is not repeated
         // here. The settings-panel confirmation dialogs still cover toggling those options later.
@@ -761,27 +734,6 @@ public class CommandGenerationDialog extends AbstractMHQValidationButtonDialog {
         if (campaignOptions.get(CampaignOption.USE_ADVANCED_SCOUTING) && campaignOptions.isUseStratCon()) {
             AdvancedScoutingCampaignOptionsChangedConfirmationDialog.processFreeSkills(campaign, true);
         }
-    }
-
-    private void generateSparePersonnel(CommandGenerationOptions options) {
-        Person person = campaign.getPlayerForce().getHumanResources().newPerson(campaign, PersonnelRole.MEKWARRIOR);
-
-        overrideSkills(campaign, person, PersonnelRole.MEKWARRIOR, SkillLevel.GREEN, true);
-
-        SkillLevel actualSkillLevel = person.getSkillLevel(campaign, false);
-        reRollLoyalty(person, actualSkillLevel);
-        reRollAdvantages(campaign, person, actualSkillLevel);
-
-        if (options.isAutomaticallyAssignRanks()) {
-            final Faction faction = options.isUseSpecifiedFactionToAssignRanks()
-                                          ? options.getSpecifiedFaction()
-                                          : campaign.getPlayerForce().getFaction();
-            person.setRank((faction.isComStarOrWoB() || faction.isClan())
-                                 ? 4
-                                 : 12);
-        }
-
-        campaign.getPlayerForce().getHumanResources().recruitPerson(campaign, person, true, true);
     }
 
     @Override

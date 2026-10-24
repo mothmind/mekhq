@@ -41,6 +41,9 @@ import megamek.common.preference.PreferenceManager;
 import mekhq.MHQConstants;
 import mekhq.MHQOptions;
 import mekhq.MekHQ;
+import mekhq.campaign.mission.contract.contractData.ContractObjectiveType;
+import mekhq.campaign.work.WorkTimeDisplay;
+import mekhq.gui.dialog.nagDialogs.ContractSpecialMechanicsNagDialog;
 import mekhq.gui.enums.FormationIconOperationalStatusStyle;
 import mekhq.gui.enums.PersonnelFilterStyle;
 import mekhq.pilotChatter.Chattiness;
@@ -49,7 +52,7 @@ import mekhq.pilotChatter.Chattiness;
  * Plain data-transfer object holding an editable snapshot of every MekHQ client option shown by {@link MHQOptionsPane},
  * mirroring the model pattern the Campaign Options dialog uses (for example
  * {@link mekhq.gui.campaignOptions.contents.PersonnelOptionsModel}). The constructor reads the current values from
- * {@link MHQOptions} (and the two stores that back options which do not live on {@code MHQOptions} - the GUI scale in
+ * {@link MHQOptions} (and the two stores that back options which do not live on {@code MHQOptions} - UI preferences in
  * {@link GUIPreferences} and the user directory in {@link PreferenceManager}); {@link #applyTo(MHQOptions)} writes the
  * edited values back to those same stores.
  *
@@ -73,7 +76,9 @@ class MHQOptionsModel {
           MHQConstants.NAG_INSUFFICIENT_MEDICS,
           MHQConstants.NAG_COMBAT_CHALLENGE,
           MHQConstants.NAG_UNRESOLVED_STRAT_CON_CONTACTS,
+          MHQConstants.NAG_STRATCON_FACILITY_BRIEFING,
           MHQConstants.NAG_OUTSTANDING_SCENARIOS,
+          MHQConstants.NAG_EXPIRING_NAV_POINTS,
           MHQConstants.NAG_INVALID_FACTION,
           MHQConstants.NAG_UNABLE_TO_AFFORD_EXPENSES,
           MHQConstants.NAG_UNABLE_TO_AFFORD_RENT,
@@ -86,6 +91,7 @@ class MHQOptionsModel {
           MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_CIVILIAN,
           MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_CAMP_FOLLOWER,
           MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_RETIREE,
+          MHQConstants.NAG_CONTRACT_JOURNAL_PROMPT,
           MHQConstants.CONFIRMATION_ACCEPT_CONTRACT,
           MHQConstants.CONFIRMATION_FACTION_STANDINGS_ULTIMATUM,
           MHQConstants.CONFIRMATION_BEGIN_TRANSIT,
@@ -106,7 +112,9 @@ class MHQOptionsModel {
     // region Display - General
     String displayDateFormat;
     String longDisplayDateFormat;
+    WorkTimeDisplay workTimeDisplay;
     int guiScaleValue;
+    boolean expandOptionSections;
     boolean hideUnitFluff;
     boolean useAlternateStratConFogOfWarDisplay;
     boolean historicalDailyLog;
@@ -173,6 +181,8 @@ class MHQOptionsModel {
     boolean newDayOptimizeMedicalAssignments;
     boolean newDayAutomaticallyAssignUnmaintainedUnits;
     boolean selfCorrectMaintenance;
+    boolean doNotMothballUnitsInBays;
+    boolean doNotMothballSalvage;
     // endregion New Day - Automation
 
     // region New Day - Training
@@ -228,7 +238,9 @@ class MHQOptionsModel {
         // Display - General
         displayDateFormat = options.getDisplayDateFormat();
         longDisplayDateFormat = options.getLongDisplayDateFormat();
+        workTimeDisplay = options.getWorkTimeDisplay();
         guiScaleValue = (int) (GUIPreferences.getInstance().getGUIScale() * 10);
+        expandOptionSections = GUIPreferences.getInstance().getExpandOptionSections();
         hideUnitFluff = options.getHideUnitFluff();
         useAlternateStratConFogOfWarDisplay = options.getUseAlternateStratConFogOfWarDisplay();
         historicalDailyLog = options.getHistoricalDailyLog();
@@ -276,6 +288,8 @@ class MHQOptionsModel {
         statusColours.put("optionInTransitBackground", options.getInTransitBackground());
         statusColours.put("optionQueuedForTravelForeground", options.getQueuedForTravelForeground());
         statusColours.put("optionQueuedForTravelBackground", options.getQueuedForTravelBackground());
+        statusColours.put("optionPendingRefitForeground", options.getPendingRefitForeground());
+        statusColours.put("optionPendingRefitBackground", options.getPendingRefitBackground());
         statusColours.put("optionRefittingForeground", options.getRefittingForeground());
         statusColours.put("optionRefittingBackground", options.getRefittingBackground());
         statusColours.put("optionMothballingForeground", options.getMothballingForeground());
@@ -306,6 +320,8 @@ class MHQOptionsModel {
         statusColours.put("optionAbsentBackground", options.getAbsentBackground());
         statusColours.put("optionFatiguedForeground", options.getFatiguedForeground());
         statusColours.put("optionFatiguedBackground", options.getFatiguedBackground());
+        statusColours.put("optionWorkingForeground", options.getWorkingForeground());
+        statusColours.put("optionWorkingBackground", options.getWorkingBackground());
         statusColours.put("optionAwayFromMainForceForeground", options.getAwayFromMainForceForeground());
         statusColours.put("optionAwayFromMainForceBackground", options.getAwayFromMainForceBackground());
         statusColours.put("optionStratConHexCoordForeground", options.getStratConHexCoordForeground());
@@ -357,6 +373,8 @@ class MHQOptionsModel {
         newDayOptimizeMedicalAssignments = options.getNewDayOptimizeMedicalAssignments();
         newDayAutomaticallyAssignUnmaintainedUnits = options.getNewDayAutomaticallyAssignUnmaintainedUnits();
         selfCorrectMaintenance = options.getSelfCorrectMaintenance();
+        doNotMothballUnitsInBays = options.getDoNotMothballUnitsInBays();
+        doNotMothballSalvage = options.getDoNotMothballSalvage();
 
         // New Day - Training
         newMonthQuickTrain = options.getNewMonthQuickTrain();
@@ -381,6 +399,10 @@ class MHQOptionsModel {
 
         // Reminders & Confirmations
         for (String key : NAG_IGNORE_KEYS) {
+            nagIgnores.put(key, options.getNagDialogIgnore(key));
+        }
+        for (ContractObjectiveType objectiveType : ContractSpecialMechanicsNagDialog.getBriefedContractTypes()) {
+            String key = ContractSpecialMechanicsNagDialog.getNagKey(objectiveType);
             nagIgnores.put(key, options.getNagDialogIgnore(key));
         }
 
@@ -416,6 +438,8 @@ class MHQOptionsModel {
         // Display - General
         options.setDisplayDateFormat(displayDateFormat);
         options.setLongDisplayDateFormat(longDisplayDateFormat);
+        options.setWorkTimeDisplay(workTimeDisplay);
+        GUIPreferences.getInstance().setExpandOptionSections(expandOptionSections);
         // Compare on the integer scale (the slider's units) so floating-point noise in the stored scale cannot trigger
         // a spurious rescale; the look-and-feel is only refreshed when the value actually changed.
         if ((int) (GUIPreferences.getInstance().getGUIScale() * 10) != guiScaleValue) {
@@ -468,6 +492,8 @@ class MHQOptionsModel {
         options.setInTransitBackground(statusColours.get("optionInTransitBackground"));
         options.setQueuedForTravelForeground(statusColours.get("optionQueuedForTravelForeground"));
         options.setQueuedForTravelBackground(statusColours.get("optionQueuedForTravelBackground"));
+        options.setPendingRefitForeground(statusColours.get("optionPendingRefitForeground"));
+        options.setPendingRefitBackground(statusColours.get("optionPendingRefitBackground"));
         options.setRefittingForeground(statusColours.get("optionRefittingForeground"));
         options.setRefittingBackground(statusColours.get("optionRefittingBackground"));
         options.setMothballingForeground(statusColours.get("optionMothballingForeground"));
@@ -498,6 +524,8 @@ class MHQOptionsModel {
         options.setAbsentBackground(statusColours.get("optionAbsentBackground"));
         options.setFatiguedForeground(statusColours.get("optionFatiguedForeground"));
         options.setFatiguedBackground(statusColours.get("optionFatiguedBackground"));
+        options.setWorkingForeground(statusColours.get("optionWorkingForeground"));
+        options.setWorkingBackground(statusColours.get("optionWorkingBackground"));
         options.setAwayFromMainForceForeground(statusColours.get("optionAwayFromMainForceForeground"));
         options.setAwayFromMainForceBackground(statusColours.get("optionAwayFromMainForceBackground"));
         options.setStratConHexCoordForeground(statusColours.get("optionStratConHexCoordForeground"));
@@ -549,6 +577,8 @@ class MHQOptionsModel {
         options.setNewDayOptimizeMedicalAssignments(newDayOptimizeMedicalAssignments);
         options.setNewDayAutomaticallyAssignUnmaintainedUnits(newDayAutomaticallyAssignUnmaintainedUnits);
         options.setSelfCorrectMaintenance(selfCorrectMaintenance);
+        options.setDoNotMothballUnitsInBays(doNotMothballUnitsInBays);
+        options.setDoNotMothballSalvage(doNotMothballSalvage);
 
         // New Day - Training
         options.setNewMonthQuickTrain(newMonthQuickTrain);
@@ -573,6 +603,10 @@ class MHQOptionsModel {
 
         // Reminders & Confirmations
         for (String key : NAG_IGNORE_KEYS) {
+            options.setNagDialogIgnore(key, nagIgnores.get(key));
+        }
+        for (ContractObjectiveType objectiveType : ContractSpecialMechanicsNagDialog.getBriefedContractTypes()) {
+            String key = ContractSpecialMechanicsNagDialog.getNagKey(objectiveType);
             options.setNagDialogIgnore(key, nagIgnores.get(key));
         }
 

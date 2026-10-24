@@ -34,8 +34,8 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.units.Aero;
 import megamek.common.units.Entity;
 import megamek.common.units.Jumpship;
@@ -95,6 +95,15 @@ public class SpacecraftCoolingSystem extends Part {
     }
 
     // Getters for our various internal values
+    /**
+     * Sets the type of heat sink this cooling system holds, used when a refit changes a ship's heat sink type.
+     *
+     * @param sinkType the heat sink type, as in {@link AeroHeatSink}
+     */
+    public void setSinkType(int sinkType) {
+        this.sinkType = sinkType;
+    }
+
     public int getSinkType() {
         return sinkType;
     }

@@ -52,8 +52,8 @@ import java.time.LocalDate;
 import java.util.*;
 import javax.swing.ImageIcon;
 
+import jakarta.annotation.Nullable;
 import megamek.codeUtilities.MathUtility;
-import megamek.common.annotations.Nullable;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
 import mekhq.campaign.mission.contract.AbstractContract;
@@ -605,8 +605,9 @@ public class FactionStandings {
         factionRegard.put(factionCode, regardValue);
 
         if (includeReport) {
-            double change = regardValue - originalRegard;
+            // Both values must include climate, otherwise the delta can disagree in sign with the reported direction
             double newRegardAdjustedForClimate = getRegardForFaction(factionCode, true);
+            double change = newRegardAdjustedForClimate - originalRegard;
             return getRegardChangedReport(change, gameYear, factionCode, newRegardAdjustedForClimate, originalRegard);
         }
 

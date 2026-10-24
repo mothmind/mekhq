@@ -34,9 +34,9 @@
 package mekhq.campaign;
 
 import static java.lang.Math.ceil;
-import static mekhq.campaign.enums.DailyReportType.FINANCES;
 import static mekhq.campaign.enums.DailyReportType.PERSONNEL;
 import static mekhq.campaign.enums.DailyReportType.TECHNICAL;
+import static mekhq.campaign.mission.contract.contractData.ChaosObjectiveSpecialRules.SIMULATED_DAMAGE;
 import static mekhq.campaign.mission.scenarios.Scenario.T_SPACE;
 import static mekhq.campaign.parts.enums.PartQuality.QUALITY_D;
 import static mekhq.campaign.randomEvents.prisoners.NonCombatPrisoners.getCivilianCaptives;
@@ -49,16 +49,16 @@ import java.util.*;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
+import jakarta.annotation.Nullable;
 import megamek.client.IClient;
 import megamek.common.CriticalSlot;
-import megamek.common.annotations.Nullable;
 import megamek.common.autoResolve.acar.SimulatedClient;
 import megamek.common.battleArmor.BattleArmor;
 import megamek.common.compute.Compute;
 import megamek.common.equipment.IArmorState;
 import megamek.common.equipment.MiscType;
-import megamek.common.equipment.Mounted;
 import megamek.common.event.PostGameResolution;
+import megamek.common.icons.Camouflage;
 import megamek.common.interfaces.IEntityRemovalConditions;
 import megamek.common.loaders.EntityLoadingException;
 import megamek.common.loaders.MULParser;
@@ -68,7 +68,6 @@ import megamek.common.loaders.MekSummaryCache;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.*;
 import megamek.logging.MMLogger;
-import mekhq.MHQConstants;
 import mekhq.MekHQ;
 import mekhq.Utilities;
 import mekhq.campaign.campaignOptions.CampaignOption;
@@ -80,12 +79,13 @@ import mekhq.campaign.force.Formation;
 import mekhq.campaign.log.ServiceLogger;
 import mekhq.campaign.log.UnitLogger;
 import mekhq.campaign.mission.contract.AbstractContract;
+import mekhq.campaign.mission.contract.contractSpecialRules.ContractSupportPayments;
 import mekhq.campaign.mission.scenarios.AtBScenario;
 import mekhq.campaign.mission.scenarios.BotForce;
 import mekhq.campaign.mission.scenarios.Loot;
 import mekhq.campaign.mission.scenarios.Scenario;
 import mekhq.campaign.mission.scenarios.ScenarioStatus;
-import mekhq.campaign.mission.scenarios.camOpsSalvage.CamOpsSalvageUtilities;
+import mekhq.campaign.mission.scenarios.salvage.SalvageRecoveryPresenter;
 import mekhq.campaign.parts.Part;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.enums.PersonnelRole;
@@ -95,13 +95,16 @@ import mekhq.campaign.personnel.familiarity.FamiliarityGainType;
 import mekhq.campaign.personnel.medical.InjurySPAUtility;
 import mekhq.campaign.personnel.turnoverAndRetention.Fatigue;
 import mekhq.campaign.randomEvents.prisoners.CapturePrisoners;
+import mekhq.campaign.unit.AerospaceRefueling;
+import mekhq.campaign.unit.BombRearmer;
+import mekhq.campaign.unit.SlotMounts;
 import mekhq.campaign.unit.TestUnit;
 import mekhq.campaign.unit.Unit;
+import mekhq.campaign.unit.VehicleLocations;
 import mekhq.campaign.unit.actions.AdjustLargeCraftAmmoAction;
 import mekhq.campaign.universe.Faction;
 import mekhq.gui.FileDialogs;
 import mekhq.gui.baseComponents.immersiveDialogs.ImmersiveDialogNotification;
-import mekhq.gui.dialog.camOpsSalvage.SalvagePostScenarioPicker;
 import mekhq.utilities.ReportingUtilities;
 
 /**
@@ -112,7 +115,6 @@ import mekhq.utilities.ReportingUtilities;
  */
 public class ResolveScenarioTracker {
     private static final String RESOURCE_BUNDLE = "mekhq.resources.ResolveScenarioTracker";
-    public static final double DAMANGED_PART_COMPENSATION_MODIFIER = 0.2;
     public static final int POSE_KILL_XP = 1;
 
     Map<UUID, Entity> entities;
@@ -142,7 +144,15 @@ public class ResolveScenarioTracker {
     /* AtB */ int contractBreaches = 0;
     int bonusRolls = 0;
 
-    /* Blob crew casualties */ Map<PersonnelRole, Integer> killedTempCrew = new HashMap<>();
+    /* Blob crew casualties */
+    Map<PersonnelRole, Integer> killedTempCrew = new HashMap<>();
+
+    /**
+     * Blob crew losses rolled for the unit currently being processed, but not yet applied to it. Applying each loss
+     * individually would reset the unit and fire a change event per casualty, so they are batched and applied by
+     * {@link #applyPendingBlobCrewLosses(Unit)} once the unit's casualties have all been assigned.
+     */
+    private final Map<PersonnelRole, Integer> pendingBlobCrewLosses = new EnumMap<>(PersonnelRole.class);
 
     Campaign campaign;
     Scenario scenario;
@@ -272,9 +282,43 @@ public class ResolveScenarioTracker {
         }
     }
 
+    /**
+     * Returns the camouflage MekHQ assigned to an entity before the scenario started.
+     *
+     * <p>The entity is matched to its unit in the scenario's bot forces. That unit's own camouflage is used if it has
+     * one; otherwise the bot force's camouflage is used. Changes made in the MegaMek lobby are deliberately ignored. If
+     * the entity isn't part of a bot force, its in-game camouflage is used.</p>
+     *
+     * @param entity the entity to check
+     *
+     * @return the camouflage assigned before the scenario started
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    Camouflage getPreScenarioCamouflage(Entity entity) {
+        String externalId = entity.getExternalIdAsString();
+        if (!"-1".equals(externalId)) {
+            for (BotForce botForce : scenario.getBotForces()) {
+                for (Entity botEntity : botForce.getFullEntityList(campaign)) {
+                    if ((botEntity != null) && externalId.equals(botEntity.getExternalIdAsString())) {
+                        Camouflage unitCamouflage = botEntity.getCamouflage();
+                        Camouflage forceCamouflage = botForce.getCamouflage();
+                        if (unitCamouflage.hasDefaultCategory() && (forceCamouflage != null)) {
+                            return forceCamouflage;
+                        }
+                        return unitCamouflage;
+                    }
+                }
+            }
+        }
+
+        return entity.getCamouflage();
+    }
+
     private TestUnit generateNewTestUnit(Entity e) {
         TestUnit nu = new TestUnit(e, campaign, true);
-        nu.getEntity().setCamouflage(e.getCamouflage().clone());
+        nu.getEntity().setCamouflage(getPreScenarioCamouflage(e).clone());
         /* AtB uses id to track status of allied units */
         if (e.getExternalIdAsString().equals("-1")) {
             UUID id = UUID.randomUUID();
@@ -290,16 +334,110 @@ public class ResolveScenarioTracker {
         return nu;
     }
 
+    /**
+     * Checks whether an entity has already been processed while resolving this scenario, recording it if not.
+     *
+     * <p>MegaMek can occasionally report the same entity more than once at the end of a game (seen after resuming a
+     * saved game). Processing it twice would list its salvage twice, with both copies sharing a unit ID, and would
+     * duplicate kill credits.</p>
+     *
+     * @param entity             the entity about to be processed
+     * @param processedEntityIds the game IDs of entities already processed
+     *
+     * @return {@code true} if the entity is a duplicate and should be skipped
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isDuplicateEntity(Entity entity, Set<Integer> processedEntityIds) {
+        int entityId = entity.getId();
+        if (entityId == Entity.NONE) {
+            return false; // Without a game ID we can't tell duplicates apart, so process it
+        }
+
+        if (processedEntityIds.add(entityId)) {
+            return false;
+        }
+
+        logger.warn("Entity {} (id {}) was reported more than once at the end of the scenario; ignoring the duplicate",
+              entity.getDisplayName(), entityId);
+        return true;
+    }
+
+    /**
+     * Checks whether an entity is also reported in an end-of-game list with a more final status, in which case that
+     * later list's report is used instead of this one.
+     *
+     * <p>Lists are ranked devastated, then graveyard/salvage, then retreated, then live. Must be checked before
+     * {@link #isDuplicateEntity(Entity, Set)} so a superseded report doesn't claim the entity's ID.</p>
+     *
+     * @param entity             the entity about to be processed
+     * @param laterListEntityIds the game IDs of entities reported in a list with a more final status
+     *
+     * @return {@code true} if the entity should be skipped here
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isSupersededEntity(Entity entity, Set<Integer> laterListEntityIds) {
+        int entityId = entity.getId();
+        if ((entityId == Entity.NONE) || !laterListEntityIds.contains(entityId)) {
+            return false;
+        }
+
+        logger.warn("Entity {} (id {}) was reported in more than one end-of-game list; using its most final status",
+              entity.getDisplayName(), entityId);
+        return true;
+    }
+
+    /**
+     * Collects the game IDs of every entity in the given end-of-game lists.
+     *
+     * @param entityLists the lists to collect from
+     *
+     * @return the game IDs, excluding {@link Entity#NONE}
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    @SafeVarargs
+    static Set<Integer> collectEntityIds(Collection<Entity>... entityLists) {
+        Set<Integer> entityIds = new HashSet<>();
+        for (Collection<Entity> entityList : entityLists) {
+            for (Entity entity : entityList) {
+                if (entity.getId() != Entity.NONE) {
+                    entityIds.add(entity.getId());
+                }
+            }
+        }
+        return entityIds;
+    }
+
     public void processGame() {
         int playerId = client.getLocalPlayer().getId();
         int team = client.getLocalPlayer().getTeam();
 
         sanitizeAllEntityExternalIds();
 
+        // MegaMek can occasionally report the same entity more than once (seen after resuming a saved game), which
+        // would otherwise duplicate salvage and kill credits. When an entity appears in more than one list, the most
+        // final status wins: devastated, then graveyard, then retreated, then live.
+        Set<Integer> processedEntityIds = new HashSet<>();
+        Set<Integer> supersededLiveEntityIds = collectEntityIds(Collections.list(victoryEvent.getDevastatedEntities()),
+              Collections.list(victoryEvent.getRetreatedEntities()),
+              Collections.list(victoryEvent.getGraveyardEntities()));
+        Set<Integer> supersededRetreatedEntityIds =
+              collectEntityIds(Collections.list(victoryEvent.getGraveyardEntities()));
+
         for (Enumeration<Entity> entityIterator = victoryEvent.getEntities(); entityIterator.hasMoreElements(); ) {
             Entity entity = entityIterator.nextElement();
             if (!entity.getSubEntities().isEmpty()) {
                 // Sub-entities have their own entry in the VictoryEvent data
+                continue;
+            }
+
+            if (isSupersededEntity(entity, supersededLiveEntityIds) ||
+                      isDuplicateEntity(entity, processedEntityIds)) {
                 continue;
             }
 
@@ -349,11 +487,15 @@ public class ResolveScenarioTracker {
                         }
                     }
 
-                    TestUnit newUnit = generateNewTestUnit(entity);
-                    UnitStatus unitStatus = new UnitStatus(newUnit);
-                    unitStatus.setTotalLoss(false);
-                    salvageStatus.put(newUnit.getId(), unitStatus);
-                    potentialSalvage.add(newUnit);
+                    // Under SIMULATED_DAMAGE the enemy took no lasting damage either, so nothing is left behind to
+                    // salvage.
+                    if (!voidsCombatDamage()) {
+                        TestUnit newUnit = generateNewTestUnit(entity);
+                        UnitStatus unitStatus = new UnitStatus(newUnit);
+                        unitStatus.setTotalLoss(false);
+                        salvageStatus.put(newUnit.getId(), unitStatus);
+                        potentialSalvage.add(newUnit);
+                    }
                 }
             }
             // Kill credit automatically assigned only if they can't escape
@@ -383,6 +525,10 @@ public class ResolveScenarioTracker {
             Entity entity = entityIterator.nextElement();
             if (!entity.getSubEntities().isEmpty()) {
                 // Sub-entities have their own entry in the VictoryEvent data
+                continue;
+            }
+
+            if (isDuplicateEntity(entity, processedEntityIds)) {
                 continue;
             }
 
@@ -428,6 +574,11 @@ public class ResolveScenarioTracker {
                 continue;
             }
 
+            if (isSupersededEntity(entity, supersededRetreatedEntityIds) ||
+                      isDuplicateEntity(entity, processedEntityIds)) {
+                continue;
+            }
+
             entities.put(UUID.fromString(entity.getExternalIdAsString()), entity);
 
             checkForLostLimbs(entity, control);
@@ -461,6 +612,10 @@ public class ResolveScenarioTracker {
             Entity wreck = wrecks.nextElement();
             if (!wreck.getSubEntities().isEmpty()) {
                 // Sub-entities have their own entry in the VictoryEvent data
+                continue;
+            }
+
+            if (isDuplicateEntity(wreck, processedEntityIds)) {
                 continue;
             }
 
@@ -517,7 +672,9 @@ public class ResolveScenarioTracker {
                     enemyEjections.put(UUID.fromString(wreck.getCrew().getExternalIdAsString()), (EjectedCrew) wreck);
                     continue;
                 }
-                if (control) {
+                // Under SIMULATED_DAMAGE the enemy took no lasting damage either, so nothing is left behind to
+                // salvage.
+                if (control && !voidsCombatDamage()) {
                     TestUnit nu = generateNewTestUnit(wreck);
                     UnitStatus us = new UnitStatus(nu);
                     us.setTotalLoss(false);
@@ -656,18 +813,12 @@ public class ResolveScenarioTracker {
                 if (null == cs || !cs.isEverHittable()) {
                     continue;
                 }
-                Mounted<?> m = cs.getMount();
                 if (cs.isMissing()) {
                     if (controlsField) {
                         cs.setMissing(false);
-                        if (null != m) {
-                            m.setMissing(false);
-                        }
-                    } else {
-                        if (null != m) {
-                            m.setMissing(true);
-                        }
                     }
+                    // Both items in a superheavy's shared slot are found, or lost, with it
+                    SlotMounts.forEach(cs, mount -> mount.setMissing(!controlsField));
                 }
             }
         }
@@ -827,6 +978,8 @@ public class ResolveScenarioTracker {
                     pilot = mia.get(UUID.fromString(en.getCrew().getExternalIdAsString()));
                     missingCrew = true;
                 }
+                boolean isBattleArmor = en instanceof BattleArmor;
+                Set<UUID> lostTrooperIds = findLostBattleArmorTroopers(u, en, crew, unitStatus.isTotalLoss());
                 for (Person p : crew) {
                     PersonStatus status = new PersonStatus(p.getFullName(),
                           u.getEntity().getDisplayName(),
@@ -857,10 +1010,10 @@ public class ResolveScenarioTracker {
                         boolean wounded = false;
                         // tanks need to be handled specially because of the special crits and because
                         // tank destruction should "kill" the crew
-                        if (en instanceof Tank) {
+                        if (en instanceof Tank tank) {
                             boolean destroyed = false;
                             for (int loc = 0; loc < en.locations(); loc++) {
-                                if (loc == Tank.LOC_TURRET || loc == Tank.LOC_TURRET_2 || loc == Tank.LOC_BODY) {
+                                if (VehicleLocations.canLoseWithoutWrecking(tank, loc)) {
                                     continue;
                                 }
                                 if (en.getInternal(loc) <= 0) {
@@ -902,7 +1055,15 @@ public class ResolveScenarioTracker {
                                 }
                             }
                         }
-                        if (casualtiesAssigned < casualties) {
+                        if (isBattleArmor) {
+                            // a battle armor casualty is the person whose suit was lost, not someone picked at random
+                            if (lostTrooperIds.contains(p.getId())) {
+                                casualtiesAssigned++;
+                                if (rollPersonCasualty(status) == CasualtyAssignment.PERSON_WOUNDED) {
+                                    wounded = true;
+                                }
+                            }
+                        } else if (casualtiesAssigned < casualties) {
                             CasualtyAssignment assignment = assignTempCrewCasualty(u, status);
                             casualtiesAssigned++;
                             if (assignment == CasualtyAssignment.PERSON_WOUNDED) {
@@ -925,11 +1086,35 @@ public class ResolveScenarioTracker {
                     status.setDeployed(!en.wasNeverDeployed());
                     peopleStatus.put(p.getId(), status);
                 }
+
+                // Distribute remaining casualties among the blob crew
+                while (casualtiesAssigned < casualties && killOneBlobCrew(u)) {
+                    casualtiesAssigned++;
+                }
+
+                // Vehicle temp (blob) crew are not Person records, so the crit-based vehicle crew handling above never
+                // touches them. When the vehicle is lost with its crew, its temp crew are at risk too: each rolls to
+                // survive on the same odds as named vehicle crew (2d6 >= 7 survives, otherwise killed).
+                int remainingTempCrew = getRemainingBlobCrew(u);
+                if ((en instanceof Tank) && (remainingTempCrew > 0)) {
+                    boolean crewLost = (pilot == null) || unitStatus.isTotalLoss() || isVehicleCrewLost(en);
+                    if (crewLost) {
+                        for (int i = 0; i < remainingTempCrew; i++) {
+                            if ((Compute.d6(2) < 7) && !killOneBlobCrew(u)) {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                applyPendingBlobCrewLosses(u);
             }
         }
 
-        // And now we have potential prisoners that are crewing a unit...
-        if (!campaign.getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE).isNone()) {
+        // And now we have potential prisoners that are crewing a unit... Under SIMULATED_DAMAGE the combat was only
+        // simulated, so nobody - on either side - can be taken prisoner.
+        if (!campaign.getCampaignOptions().get(CampaignOption.PRISONER_CAPTURE_STYLE).isNone() &&
+                  !voidsCombatDamage()) {
             processPrisonerCapture(potentialSalvage);
             processPrisonerCapture(devastatedEnemyUnits);
         }
@@ -959,18 +1144,9 @@ public class ResolveScenarioTracker {
      * @return The type of casualty assignment that occurred
      */
     private CasualtyAssignment assignTempCrewCasualty(Unit unit, PersonStatus status) {
-        int totalCrew = unit.getTotalCrewSize();
-
-        // Calculate total blob crew across all PersonnelRole types
-        int totalBlobCrew = 0;
-        Map<PersonnelRole, Integer> tempCrewCounts = new HashMap<>();
-        for (PersonnelRole role : PersonnelRole.values()) {
-            int count = unit.getTempCrewByPersonnelRole(role);
-            if (count > 0) {
-                tempCrewCounts.put(role, count);
-                totalBlobCrew += count;
-            }
-        }
+        // Blob crew already killed but not yet applied to the unit are no longer available to take hits
+        int totalBlobCrew = getRemainingBlobCrew(unit);
+        int totalCrew = unit.getTotalCrewSize() - (unit.getTotalTempCrew() - totalBlobCrew);
 
         // Determine if blob crew is hit (proportional to blob crew / total crew)
         boolean hitBlobCrew = false;
@@ -978,23 +1154,21 @@ public class ResolveScenarioTracker {
             hitBlobCrew = Compute.randomInt(totalCrew) < totalBlobCrew;
         }
 
-        if (hitBlobCrew) {
-            // Randomly select which PersonnelRole to decrement (proportional to their counts)
-            int roll = Compute.randomInt(totalBlobCrew);
-            int cumulative = 0;
-
-            for (Map.Entry<PersonnelRole, Integer> entry : tempCrewCounts.entrySet()) {
-                cumulative += entry.getValue();
-                if (roll < cumulative) {
-                    PersonnelRole role = entry.getKey();
-                    unit.setTempCrew(role, entry.getValue() - 1);
-                    killedTempCrew.merge(role, 1, Integer::sum);
-                    return CasualtyAssignment.BLOB_CREW;
-                }
-            }
+        if (hitBlobCrew && killOneBlobCrew(unit)) {
+            return CasualtyAssignment.BLOB_CREW;
         }
 
-        // Casualty goes to a Person - determine if wounded or dead
+        return rollPersonCasualty(status);
+    }
+
+    /**
+     * Rolls whether a person who became a casualty is wounded or killed.
+     *
+     * @param status the person's status, marked dead if they are killed
+     *
+     * @return {@link CasualtyAssignment#PERSON_WOUNDED} or {@link CasualtyAssignment#PERSON_DEAD}
+     */
+    private CasualtyAssignment rollPersonCasualty(PersonStatus status) {
         if (Compute.d6(2) >= 7) {
             return CasualtyAssignment.PERSON_WOUNDED;
         } else {
@@ -1002,6 +1176,160 @@ public class ResolveScenarioTracker {
             status.setDead(true);
             return CasualtyAssignment.PERSON_DEAD;
         }
+    }
+
+    /**
+     * Finds the people in a battle armor squad who lost their suit in the battle. They, and only they, are the squad's
+     * named casualties; any further casualties fall on the squad's temporary troopers. When the whole squad is lost,
+     * everyone in it is a casualty.
+     *
+     * @param unit         the squad
+     * @param battleEntity the squad as it came back from the battle
+     * @param crew         the people who fought in it
+     * @param isTotalLoss  whether the whole squad was lost
+     *
+     * @return the ids of the people who lost their suit, empty if the unit is not battle armor
+     */
+    private Set<UUID> findLostBattleArmorTroopers(Unit unit, Entity battleEntity, List<Person> crew,
+          boolean isTotalLoss) {
+        if (!(battleEntity instanceof BattleArmor battleArmor)) {
+            return Set.of();
+        }
+        Set<UUID> lostTrooperIds = new HashSet<>();
+        if (isTotalLoss) {
+            for (Person person : crew) {
+                lostTrooperIds.add(person.getId());
+            }
+        } else {
+            lostTrooperIds.addAll(unit.getTrooperSlots().findWearersOfLostSuits(battleArmor));
+        }
+        logger.debug("[TrooperSlots] {}: {} of {} people lost their suit (total loss: {})", unit.getName(),
+              lostTrooperIds.size(), crew.size(), isTotalLoss);
+        return lostTrooperIds;
+    }
+
+    /**
+     * Kills a single blob (temp) crew member on the given unit, selected at random and weighted by how many temp crew
+     * occupy each {@link PersonnelRole}. The loss is recorded for death benefits and queued in
+     * {@link #pendingBlobCrewLosses}; it is removed from the unit and the campaign temp crew pool when
+     * {@link #applyPendingBlobCrewLosses(Unit)} is called.
+     *
+     * @param unit the unit to remove a temp crew member from
+     *
+     * @return {@code true} if a temp crew member was killed; {@code false} if the unit had no temp crew remaining
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private boolean killOneBlobCrew(Unit unit) {
+        // EnumMap so iteration order (and therefore which role a given roll selects) is deterministic
+        Map<PersonnelRole, Integer> tempCrewCounts = new EnumMap<>(PersonnelRole.class);
+        int totalBlobCrew = 0;
+        for (PersonnelRole role : PersonnelRole.values()) {
+            int count = unit.getTempCrewByPersonnelRole(role) - pendingBlobCrewLosses.getOrDefault(role, 0);
+            if (count > 0) {
+                tempCrewCounts.put(role, count);
+                totalBlobCrew += count;
+            }
+        }
+
+        if (totalBlobCrew <= 0) {
+            return false;
+        }
+
+        // Randomly select which PersonnelRole to decrement (proportional to their counts)
+        int roll = Compute.randomInt(totalBlobCrew);
+        int cumulative = 0;
+        for (Map.Entry<PersonnelRole, Integer> entry : tempCrewCounts.entrySet()) {
+            cumulative += entry.getValue();
+            if (roll < cumulative) {
+                PersonnelRole role = entry.getKey();
+                pendingBlobCrewLosses.merge(role, 1, Integer::sum);
+                killedTempCrew.merge(role, 1, Integer::sum);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns how many blob (temp) crew remain on the given unit once the losses queued in
+     * {@link #pendingBlobCrewLosses} are taken into account.
+     *
+     * @param unit the unit to count temp crew for
+     *
+     * @return the number of temp crew still available to take casualties
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private int getRemainingBlobCrew(Unit unit) {
+        int pendingLosses = 0;
+        for (int count : pendingBlobCrewLosses.values()) {
+            pendingLosses += count;
+        }
+        return unit.getTotalTempCrew() - pendingLosses;
+    }
+
+    /**
+     * Applies all blob (temp) crew losses queued in {@link #pendingBlobCrewLosses} to the given unit, making a single
+     * update per {@link PersonnelRole}, then clears the queue. Under {@code SIMULATED_DAMAGE} the losses are discarded
+     * instead, as no one actually dies in a simulated battle.
+     *
+     * @param unit the unit the queued losses were rolled against
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private void applyPendingBlobCrewLosses(Unit unit) {
+        if (voidsCombatDamage()) {
+            pendingBlobCrewLosses.clear();
+            return;
+        }
+
+        for (Map.Entry<PersonnelRole, Integer> entry : pendingBlobCrewLosses.entrySet()) {
+            PersonnelRole role = entry.getKey();
+            int losses = entry.getValue();
+            unit.setTempCrew(role, unit.getTempCrewByPersonnelRole(role) - losses);
+            // Remove the casualties from the campaign pool too. Otherwise the daily empty/fill cycle in
+            // CampaignNewDayManager silently refills the losses for free and the total temp crew count never drops.
+            campaign.decreaseTempCrewPool(role, losses);
+        }
+        pendingBlobCrewLosses.clear();
+    }
+
+    /**
+     * Determines whether a vehicle has lost its crew, using the same criteria as the crit-based handling for named
+     * vehicle crew: the crew is gone if the crew object is missing or dead, or if any non-turret, non-body location has
+     * been breached (internal structure reduced to zero or below).
+     *
+     * @param entity the post-battle entity to inspect
+     *
+     * @return {@code true} if the vehicle's crew is considered lost; {@code false} otherwise
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private boolean isVehicleCrewLost(Entity entity) {
+        if (!(entity instanceof Tank tank)) {
+            return false;
+        }
+
+        if ((entity.getCrew() == null) || entity.getCrew().isDead()) {
+            return true;
+        }
+
+        for (int loc = 0; loc < entity.locations(); loc++) {
+            if (VehicleLocations.canLoseWithoutWrecking(tank, loc)) {
+                continue;
+            }
+            if (entity.getInternal(loc) <= 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1083,11 +1411,10 @@ public class ResolveScenarioTracker {
             boolean wounded = false;
             if (casualtiesAssigned < casualties) {
                 casualtiesAssigned++;
-                if (Compute.d6(2) >= 7) {
+                // Route through the shared assignment so casualties can fall on temp (blob) crew proportionally
+                // rather than always landing on the named crew.
+                if (assignTempCrewCasualty(ship, status) == CasualtyAssignment.PERSON_WOUNDED) {
                     wounded = true;
-                } else {
-                    status.setHits(6);
-                    status.setDead(true);
                 }
             }
 
@@ -1106,6 +1433,13 @@ public class ResolveScenarioTracker {
             status.setDeployed(!en.wasNeverDeployed());
             peopleStatus.put(p.getId(), status);
         }
+
+        // Casualties beyond the named crew fall on the temp (blob) crew, which are not Person records and so are never
+        // visited by the loop above.
+        while (casualtiesAssigned < casualties && killOneBlobCrew(ship)) {
+            casualtiesAssigned++;
+        }
+        applyPendingBlobCrewLosses(ship);
 
         // Now, did the passengers take any hits?
         // We'll assume that if units in transport bays were hit, their crews and techs
@@ -1342,10 +1676,10 @@ public class ResolveScenarioTracker {
                 } else {
                     // we have a multi-crewed vee
                     boolean wounded = false;
-                    if (entity instanceof Tank) {
+                    if (entity instanceof Tank tank) {
                         boolean destroyed = false;
                         for (int loc = 0; loc < entity.locations(); loc++) {
-                            if (loc == Tank.LOC_TURRET || loc == Tank.LOC_TURRET_2 || loc == Tank.LOC_BODY) {
+                            if (VehicleLocations.canLoseWithoutWrecking(tank, loc)) {
                                 continue;
                             }
                             if (entity.getInternal(loc) <= 0) {
@@ -1418,6 +1752,7 @@ public class ResolveScenarioTracker {
                 status.setXP(campaign.getCampaignOptions().get(CampaignOption.SCENARIO_XP));
                 oppositionPersonnel.put(person.getId(), status);
             }
+            applyPendingBlobCrewLosses(unit);
         }
     }
 
@@ -1445,6 +1780,13 @@ public class ResolveScenarioTracker {
             }
         }
 
+        // MUL files are written from the same end-of-game data as the live path, so the same entity can be listed
+        // more than once; see processGame()
+        Set<Integer> processedEntityIds = new HashSet<>();
+        Set<Integer> supersededLiveEntityIds = collectEntityIds(parser.getDevastated(),
+              parser.getSalvage(),
+              parser.getRetreated());
+
         // Map everyone's ID to External ID
         for (Entity e : parser.getEntities()) {
             idMap.put(e.getId(), UUID.fromString(e.getExternalIdAsString()));
@@ -1471,6 +1813,10 @@ public class ResolveScenarioTracker {
         }
 
         for (Entity e : parser.getSurvivors()) {
+            if (isSupersededEntity(e, supersededLiveEntityIds) || isDuplicateEntity(e, processedEntityIds)) {
+                continue;
+            }
+
             entities.put(UUID.fromString(e.getExternalIdAsString()), e);
             checkForLostLimbs(e, control);
             if (!"-1".equals(e.getExternalIdAsString())) {
@@ -1500,6 +1846,10 @@ public class ResolveScenarioTracker {
         }
 
         for (Entity e : parser.getAllies()) {
+            if (isSupersededEntity(e, supersededLiveEntityIds) || isDuplicateEntity(e, processedEntityIds)) {
+                continue;
+            }
+
             entities.put(UUID.fromString(e.getExternalIdAsString()), e);
             checkForLostLimbs(e, control);
             if (!"-1".equals(e.getExternalIdAsString())) {
@@ -1528,6 +1878,10 @@ public class ResolveScenarioTracker {
 
         // Utterly destroyed entities
         for (Entity e : parser.getDevastated()) {
+            if (isDuplicateEntity(e, processedEntityIds)) {
+                continue;
+            }
+
             entities.put(UUID.fromString(e.getExternalIdAsString()), e);
             UnitStatus status = null;
             if (!"-1".equals(e.getExternalIdAsString())) {
@@ -1546,6 +1900,10 @@ public class ResolveScenarioTracker {
         }
 
         for (Entity e : parser.getSalvage()) {
+            if (isDuplicateEntity(e, processedEntityIds)) {
+                continue;
+            }
+
             entities.put(UUID.fromString(e.getExternalIdAsString()), e);
             checkForLostLimbs(e, control);
             UnitStatus status = null;
@@ -1597,7 +1955,9 @@ public class ResolveScenarioTracker {
                     }
                     continue;
                 }
-                if (control) {
+                // Under SIMULATED_DAMAGE the enemy took no lasting damage either, so nothing is left behind to
+                // salvage.
+                if (control && !voidsCombatDamage()) {
                     TestUnit nu = generateNewTestUnit(e);
                     UnitStatus us = new UnitStatus(nu);
                     us.setTotalLoss(false);
@@ -1608,6 +1968,10 @@ public class ResolveScenarioTracker {
         }
 
         for (Entity e : parser.getRetreated()) {
+            if (isDuplicateEntity(e, processedEntityIds)) {
+                continue;
+            }
+
             if (!"-1".equals(e.getExternalIdAsString())) {
                 UnitStatus status = unitsStatus.get(UUID.fromString(e.getExternalIdAsString()));
                 if (null == status && scenario instanceof AtBScenario) {
@@ -1743,15 +2107,35 @@ public class ResolveScenarioTracker {
         return campaign.getContract(scenario.getMissionId());
     }
 
+    /**
+     * Whether this scenario's mission carries the {@code SIMULATED_DAMAGE} contract special rule, which voids every
+     * combat consequence of the scenario: neither side's units take lasting damage or losses, so there is nothing
+     * for the player to salvage, and no prisoners are taken by either side.
+     *
+     * @return {@code true} when the scenario's mission uses the {@code SIMULATED_DAMAGE} special rule
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private boolean voidsCombatDamage() {
+        AbstractContract mission = getMission();
+        return (mission != null) && mission.usesSpecialRule(SIMULATED_DAMAGE);
+    }
+
     public @jakarta.annotation.Nullable UUID getMissionId() {
         return getMission() == null ? null : getMission().getId();
     }
 
     /**
      * Processes death payouts for killed temp crew (blob crew). Calculates appropriate compensation based on role base
-     * salaries and campaign payout settings.
+     * salaries and campaign payout settings. Under {@code SIMULATED_DAMAGE} nothing is paid, as no one actually dies in
+     * a simulated battle.
      */
-    private void processTempCrewDeathPayouts() {
+    void processTempCrewDeathPayouts() {
+        if (voidsCombatDamage() || killedTempCrew.isEmpty()) {
+            return;
+        }
+
         CampaignOptions options = campaign.getCampaignOptions();
         Money totalPayout = Money.zero();
         int totalKilled = 0;
@@ -1820,7 +2204,16 @@ public class ResolveScenarioTracker {
         return units;
     }
 
-    public void resolveScenario(ScenarioStatus resolution, String report) {
+    /**
+     * Resolves the scenario: settles the fate of every unit and person in it, then its salvage and loot.
+     *
+     * @param resolution        the scenario's outcome
+     * @param report            the player's after-action report
+     * @param recoveryPresenter shows the player the salvage recovery, for salvage systems that recover wrecks after
+     *                          the scenario
+     */
+    public void resolveScenario(ScenarioStatus resolution, String report,
+          SalvageRecoveryPresenter recoveryPresenter) {
         // let's start by generating a stub file for our records
         scenario.generateStub(campaign);
 
@@ -1832,9 +2225,11 @@ public class ResolveScenarioTracker {
 
         blc = mission.getBattlefieldLossMultiplier();
 
+        boolean voidsCombatDamage = voidsCombatDamage();
+
         // now lets update personnel
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
-        boolean isUseInjuryFatigue = campaignOptions.get(CampaignOption.USE_INJURY_FATIGUE);
+        boolean isUseInjuryFatigue = InjurySPAUtility.isUseInjuryFatigue(campaignOptions);
         int fatigueRate = campaignOptions.get(CampaignOption.FATIGUE_RATE);
         for (UUID pid : peopleStatus.keySet()) {
             Person person = campaign.getPlayerForce().getHumanResources().getPerson(pid);
@@ -1854,7 +2249,7 @@ public class ResolveScenarioTracker {
             // Medical injuries are stored separately, so writing severity back into `hits` would double-count.
             int priorHits = person.getHits();
             int newInjuryHits = 0;
-            if (status.getHits() > priorSeverity) {
+            if (!voidsCombatDamage && status.getHits() > priorSeverity) {
                 int newHits = status.getHits() - priorSeverity;
                 // Note: newInjuryHits modifies the newHits. It can increase or decrease the value.
                 newInjuryHits = InjurySPAUtility.adjustInjuriesAndFatigueForSPAs(person, isUseInjuryFatigue,
@@ -1881,31 +2276,39 @@ public class ResolveScenarioTracker {
                 getCampaign().addKill(k);
             }
 
-            if (status.isMissing()) {
-                if (control) {
-                    person.changeStatus(getCampaign(), getCampaign().getLocalDate(), PersonnelStatus.MIA);
-                } else {
-                    boolean isSpace = scenario.getBoardType() == T_SPACE;
-                    capturePrisoners.attemptCaptureOfPlayerCharacter(person, status.pickedUp, isSpace);
+            boolean hasCheatedDeath = false;
+            if (!voidsCombatDamage) {
+                if (status.isMissing()) {
+                    if (control) {
+                        person.changeStatus(getCampaign(), getCampaign().getLocalDate(), PersonnelStatus.MIA);
+                    } else {
+                        boolean isSpace = scenario.getBoardType() == T_SPACE;
+                        capturePrisoners.attemptCaptureOfPlayerCharacter(person, status.pickedUp, isSpace);
+                    }
+                } else if (status.isDead()) {
+                    person.changeStatus(getCampaign(), getCampaign().getLocalDate(), PersonnelStatus.KIA);
+
+                    hasCheatedDeath = !person.getStatus().isDead();
+                    if (!hasCheatedDeath) {
+                        getCampaign().getPlayerForce().getHumanResources().getRetirementDefectionTracker()
+                              .removeFromCampaign(person, true, false, getCampaign(), mission);
+                    }
                 }
-            } else if (status.isDead()) {
-                person.changeStatus(getCampaign(), getCampaign().getLocalDate(), PersonnelStatus.KIA);
-                getCampaign().getPlayerForce().getHumanResources().getRetirementDefectionTracker()
-                      .removeFromCampaign(person, true, false, getCampaign(), mission);
             }
 
-            if (!status.isDead()) {
+            if ((voidsCombatDamage || !status.isDead()) && campaignOptions.get(CampaignOption.USE_FATIGUE)) {
                 person.changeFatigue(fatigueRate);
-
-                if (campaignOptions.get(CampaignOption.USE_FATIGUE)) {
-                    Fatigue.processFatigueActions(campaign, person);
-                }
+                Fatigue.processFatigueActions(campaign, person);
             }
 
             if (campaignOptions.isUseAdvancedMedical()) {
                 // Pass only the hits suffered this scenario. status.getHits() is cumulative and would regenerate
                 // injuries for the pre-existing severity the person already carries, doubling their injuries.
                 person.diagnose(getCampaign(), newInjuryHits);
+
+                if (hasCheatedDeath && !person.getStatus().isDead()) {
+                    person.healExcessInjuriesAfterCheatingDeath(getCampaign());
+                }
             }
 
             if (status.toRemove()) {
@@ -1920,10 +2323,8 @@ public class ResolveScenarioTracker {
             processFamiliarity(familiarityDice, familiarity);
         }
 
-        // Process payouts for killed temp crew (blob crew)
-        if (!killedTempCrew.isEmpty()) {
-            processTempCrewDeathPayouts();
-        }
+        // Process payouts for killed temp crew (blob crew).
+        processTempCrewDeathPayouts();
 
         // region Prisoners
         for (UUID pid : oppositionPersonnel.keySet()) {
@@ -1951,7 +2352,7 @@ public class ResolveScenarioTracker {
             }
         }
 
-        if (scenario.getStratConScenarioType().isHostileFacility() && control) {
+        if (scenario.getStratConScenarioType().isHostileFacility() && control && !voidsCombatDamage) {
             new ImmersiveDialogNotification(campaign,
                   getTextAt(RESOURCE_BUNDLE, "ResolveScenarioTracker.civilianCaptives"), true);
 
@@ -1991,101 +2392,44 @@ public class ResolveScenarioTracker {
                 unitValue = unit.getSellValue();
             }
 
-            if (unitStatus.isTotalLoss()) {
-                // missing unit
-                if (blc > 0) {
-                    Money value = unitValue.multipliedBy(blc);
-                    campaign.getPlayerForce().getFinances()
-                          .credit(TransactionType.BATTLE_LOSS_COMPENSATION,
-                                getCampaign().getLocalDate(),
-                                value,
-                                "Battle loss compensation for " + unit.getName());
-                    campaign.addReport(FINANCES, value.toAmountAndSymbolString() +
-                                                       " in battle loss compensation for " +
-                                                       unit.getName() +
-                                                       " has been credited to your account.");
-                }
+            if (voidsCombatDamage) {
+                // The unit's own entity is left untouched - the battle's damage is never applied to it - so it comes
+                // back from the scenario exactly as it went in.
+                unit.runDiagnostic(true);
+                unit.resetPilotAndEntity();
+                campaign.addReport(TECHNICAL, unit.getHyperlinkedName() + " has been recovered.");
+            } else if (unitStatus.isTotalLoss()) {
+                // The unit is destroyed beyond recovery: pay battle loss compensation on its purchase (or sale) value.
+                ContractSupportPayments.payBattlefieldLoss(campaign, mission, unitValue.multipliedBy(blc),
+                      unit.getName());
                 campaign.removeUnit(unit.getId());
             } else {
-                Money currentValue = unit.getValueOfAllMissingParts();
-                Money repairBLC = Money.zero();
                 campaign.clearGameData(en);
-                // FIXME: Need to implement a "fuel" part just like the "armor" part
-                if (en.isAero()) {
-                    ((IAero) en).setFuelTonnage(((IAero) unitStatus.getBaseEntity()).getFuelTonnage());
-                }
-                if (campaign.getCampaignOptions().get(CampaignOption.PAY_FOR_REPAIRS)) {
-                    Money amount = unit.getValueOfAllDamagedParts()
-                                         .multipliedBy(DAMANGED_PART_COMPENSATION_MODIFIER);
-                    repairBLC = repairBLC.minus(amount);
-                }
+                AerospaceRefueling.refuel(en, unitStatus.getBaseEntity());
                 unit.setEntity(en);
                 if (en.usesWeaponBays()) {
                     new AdjustLargeCraftAmmoAction().execute(campaign, unit);
                 }
                 unit.runDiagnostic(true);
                 unit.resetPilotAndEntity();
+                campaign.addReport(TECHNICAL, unit.getHyperlinkedName() + " has been recovered.");
                 if (!unit.isRepairable()) {
                     unit.setSalvage(true);
-                }
-                campaign.addReport(TECHNICAL, unit.getHyperlinkedName() + " has been recovered.");
-                // check for BLC
-                Money newValue = unit.getValueOfAllMissingParts();
-                Money blcValue = newValue.minus(currentValue);
-                String blcString = "battle loss compensation (parts) for " + unit.getName();
-                if (!unit.isRepairable()) {
-                    // if the unit is not repairable, you should get BLC for it, but we should
-                    // subtract
-                    // the value of salvageable parts
-                    blcValue = unitValue.minus(unit.getSellValue());
-                    blcString = "battle loss compensation for " + unit.getName();
-                }
-                if (campaignOptions.get(CampaignOption.PAY_FOR_REPAIRS)) {
-                    Money amount = unit.getValueOfAllDamagedParts()
-                                         .multipliedBy(DAMANGED_PART_COMPENSATION_MODIFIER);
-                    repairBLC = repairBLC.minus(amount);
-                }
-                blcValue = blcValue.plus(repairBLC);
-                if ((blc > 0) && blcValue.isPositive()) {
-                    Money finalValue = blcValue.multipliedBy(blc);
-                    getCampaign().getPlayerForce().getFinances()
-                          .credit(TransactionType.BATTLE_LOSS_COMPENSATION,
-                                getCampaign().getLocalDate(),
-                                finalValue,
-                                blcString.substring(0, 1).toUpperCase() + blcString.substring(1));
-                    campaign.addReport(FINANCES, finalValue.toAmountAndSymbolString() +
-                                                       " in " +
-                                                       blcString +
-                                                       " has been credited to your account.");
+                    // A recovered unit that cannot be repaired is a battle loss: pay compensation on its purchase (or
+                    // sale) value. Repairable units are instead covered by the straight-support reimbursement applied
+                    // as their repairs are carried out.
+                    ContractSupportPayments.payBattlefieldLoss(campaign, mission, unitValue.multipliedBy(blc),
+                          unit.getName());
+                } else {
+                    BombRearmer.rearmAfterScenario(campaign, unit);
                 }
             }
         }
 
-        if (campaignOptions.get(CampaignOption.IS_USE_CAM_OPS_SALVAGE)) {
-            boolean hasAssignedSalvageForce = !scenario.getSalvageFormations().isEmpty();
-            boolean hasAssignedSalvageTechs = !scenario.getSalvageTechs().isEmpty();
-
-            // There is no point presenting the dialog if there are no techs or teams assigned, or if the player
-            // doesn't control the field
-            boolean showSalvageDialog = control && hasAssignedSalvageForce && hasAssignedSalvageTechs;
-
-            if (showSalvageDialog) {
-                SalvagePostScenarioPicker picker = new SalvagePostScenarioPicker(campaign, mission, scenario,
-                      getActualSalvage(), getSoldSalvage());
-
-                List<UUID> techUUIDs = scenario.getSalvageTechs();
-                if (campaignOptions.get(CampaignOption.IS_USE_RISKY_SALVAGE)) {
-                    CamOpsSalvageUtilities.performRiskySalvageChecks(campaign,
-                          techUUIDs,
-                          picker.getCountOfSalvageUnits());
-                }
-
-                CamOpsSalvageUtilities.depleteTechMinutes(campaign, techUUIDs);
-            }
-        } else {
-            CamOpsSalvageUtilities.resolveSalvage(campaign, mission, scenario, getActualSalvage(), getSoldSalvage(),
-                  getLeftoverSalvage());
-        }
+        campaignOptions.get(CampaignOption.SALVAGE_SYSTEM)
+              .getSalvage()
+              .resolveScenarioSalvage(campaign, mission, scenario, control, getActualSalvage(), getSoldSalvage(),
+                    getLeftoverSalvage(), recoveryPresenter);
 
         for (Loot loot : actualLoot) {
             loot.getLoot(campaign, scenario, unitsStatus);
@@ -2217,32 +2561,17 @@ public class ResolveScenarioTracker {
     /**
      * Determines whether a salvage exchange is used based on the current contract's conditions.
      *
-     * <p>This method checks the type of the mission and evaluates specific conditions to determine if a salvage
-     * exchange approach applies. For AtB (Against the Bot) contracts, it evaluates if the enemy and employer's factions
-     * are Clan and if the date is before the Battle of Tukayyid. If these conditions are met, it returns true.</p>
-     *
-     * <p>Additionally, in general contracts, it checks if the salvage exchange is explicitly enabled.</p>
+     * <p>Salvage is exchange if the contract has salvage exchange rights, or if the employer is evoking the special
+     * Clan salvage clause (see {@link AbstractContract#isSalvageTreatedAsExchange(Campaign)}).</p>
      *
      * @return {@code true} if the current mission uses a salvage exchange, {@code false} otherwise.
      */
     public boolean usesSalvageExchange() {
-        if (getMission().isSalvageExchange()) {
-            return true;
-        }
-
-        return isEmployerEvokingSpecialClause();
+        return (getMission() != null) && getMission().isSalvageTreatedAsExchange(campaign);
     }
 
     public boolean isEmployerEvokingSpecialClause() {
-        if (getMission() != null) {
-            boolean enemyIsClan = getMission().getEnemyFaction().isClan();
-            boolean employerIsClan = getMission().getEmployerFaction().isClan();
-            boolean isBeforeTukayyid = campaign.getLocalDate().isBefore(MHQConstants.BATTLE_OF_TUKAYYID);
-
-            return enemyIsClan && !employerIsClan && isBeforeTukayyid;
-        }
-
-        return false;
+        return (getMission() != null) && getMission().isEmployerEvokingClanSalvageClause(campaign);
     }
 
     /**
@@ -2317,8 +2646,8 @@ public class ResolveScenarioTracker {
          *
          * <p>Unlike {@link #getHits()}, which is cumulative and includes any injury severity the person was
          * already carrying when they deployed, this value covers only the new wound. It is populated by
-         * {@link ResolveScenarioTracker#resolveScenario(ScenarioStatus, String)} and is therefore {@code 0} until the
-         * scenario has been resolved.</p>
+         * {@link ResolveScenarioTracker#resolveScenario(ScenarioStatus, String, SalvageRecoveryPresenter)} and is
+         * therefore {@code 0} until the scenario has been resolved.</p>
          *
          * @return the number of hits suffered during this scenario
          */
@@ -2448,13 +2777,12 @@ public class ResolveScenarioTracker {
             model = unit.getEntity().getModel();
             // assume it's a total loss until we find something that says otherwise
             totalLoss = true;
-            // create a brand-new entity until we find one
+            // The unit's own entity is always usable; the unit cache is only needed for the pristine base entity, so a
+            // cache miss (custom design, cache reloading, etc.) must not leave the status without an entity.
+            entity = unit.getEntity();
             MekSummary summary = MekSummaryCache.getInstance().getMek(getLookupName());
             if (null != summary) {
                 try {
-                    entity = unit.getEntity() == null ?
-                                   new MekFileParser(summary.getSourceFile(), summary.getEntryName()).getEntity() :
-                                   unit.getEntity();
                     baseEntity = new MekFileParser(summary.getSourceFile(), summary.getEntryName()).getEntity();
                 } catch (EntityLoadingException e) {
                     logger.error("", e);

@@ -39,9 +39,7 @@ import static megamek.common.compute.Compute.randomInt;
 import static megamek.common.enums.SkillLevel.ELITE;
 import static megamek.common.enums.SkillLevel.GREEN;
 import static megamek.common.enums.SkillLevel.LEGENDARY;
-import static mekhq.MHQConstants.BATTLE_OF_TUKAYYID;
 import static mekhq.campaign.digitalGM.stratCon.StratConContractDefinition.getContractDefinition;
-import static mekhq.campaign.enums.DailyReportType.GENERAL;
 import static mekhq.campaign.enums.DailyReportType.POLITICS;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.ADVANCING;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.DOMINATING;
@@ -60,7 +58,7 @@ import static mekhq.utilities.ReportingUtilities.spanOpeningWithCustomColor;
 import java.time.LocalDate;
 import java.util.List;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.rolls.TargetRoll;
 import megamek.logging.MMLogger;
@@ -70,9 +68,10 @@ import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
 import mekhq.campaign.digitalGM.stratCon.StratConContractDefinition;
 import mekhq.campaign.digitalGM.stratCon.StratConContractInitializer;
+import mekhq.campaign.digitalGM.stratCon.StratConContractMechanics;
+import mekhq.campaign.digitalGM.stratCon.StratConEscalation;
 import mekhq.campaign.digitalGM.stratCon.StratConTrackState;
 import mekhq.campaign.mission.contract.AbstractContract;
-import mekhq.campaign.mission.contract.contractData.ChaosContractStepsTable;
 import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
 import mekhq.campaign.mission.contract.contractData.EnemyData;
 import mekhq.campaign.mission.contract.contractGeneration.ChaosContractDeterminationEnemy;
@@ -529,6 +528,34 @@ public class MHQMorale {
     }
 
     /**
+     * Decides whether a scenario's outcome shifts the enemy's morale directly (see
+     * {@link #processMoraleChangeFromScenario}). That is up to the scenario's type, with one exception: a riot moves
+     * morale only on a Riot Duty contract, where quelling riots is the work. Riots fought elsewhere - such as a scheduled
+     * parade disrupted on a Retainer contract - leave morale to the ordinary morale check.
+     *
+     * @param stratConScenarioType the scenario's type
+     * @param contract             the contract the scenario belongs to, or {@code null} if it has none
+     *
+     * @return {@code true} if the scenario's outcome shifts the enemy's morale
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static boolean isScenarioOutcomeAffectingMorale(ScenarioType stratConScenarioType,
+          @Nullable AbstractContract contract) {
+        if (stratConScenarioType.isRiot()) {
+            boolean isRiotAffectingMorale = (contract != null)
+                                                  && StratConContractMechanics.forContract(contract)
+                                                           .isRiotAffectingMorale();
+            if (!isRiotAffectingMorale) {
+                return false;
+            }
+        }
+
+        return stratConScenarioType.isScenarioOutcomeAffectsMorale();
+    }
+
+    /**
      * Applies a simplified morale check as the result of a combat challenge, updating the contract's morale level and
      * triggering routed behavior if necessary.
      *
@@ -554,6 +581,10 @@ public class MHQMorale {
      */
     public static void processMoraleChangeFromScenario(Campaign campaign, AbstractContract contract,
           ScenarioStatus scenarioStatus, ScenarioType stratConScenarioType) {
+        if (!isScenarioOutcomeAffectingMorale(stratConScenarioType, contract)) {
+            return;
+        }
+
         boolean moraleCheckOnVictory = stratConScenarioType.isScenarioOutcomeAffectsMoraleOnVictory();
         boolean moraleCheckOnDefeat = stratConScenarioType.isScenarioOutcomeAffectsMoraleOnDefeat();
 
@@ -637,7 +668,8 @@ public class MHQMorale {
                 new ImmersiveDialogNotification(campaign, getFormattedTextAt(RESOURCE_BUNDLE,
                       "stratCon.earlyContractEnd.objectives", contract.getName()), true);
                 int remainingMonths = (int) contract.getMonthsLeft(campaign.getLocalDate().plusDays(1));
-                contract.changeMorale(today.plusDays(1), contract.getMonthlyPayOut().multipliedBy(remainingMonths));
+                contract.endContractEarly(today.plusDays(1),
+                      contract.getMonthlyPayOut().multipliedBy(remainingMonths));
             }
         }
     }
@@ -658,7 +690,8 @@ public class MHQMorale {
             }
 
             if (today.isAfter(contract.getRoutEndDate())) {
-                int roll = randomInt(8);
+                // 0-8 inclusive, so every case in the switch below (including OVERWHELMING on 8) is reachable
+                int roll = randomInt(9);
 
                 // We use variable morale levels to spike morale up to a value above Stalemate. This works with the
                 // regenerated Scenario Odds to create very high intensity spikes in otherwise low-key Garrison-type
@@ -676,7 +709,7 @@ public class MHQMorale {
 
                     if (contractDefinition != null) {
                         for (StratConTrackState trackState : contract.getStratConCampaignState().getTracks()) {
-                            int scenarioOdds = StratConContractInitializer.getScenarioOdds(contractDefinition);
+                            int scenarioOdds = StratConContractInitializer.getDeploymentEncounterOdds(contractDefinition);
 
                             trackState.setScenarioOdds(scenarioOdds);
                         }
@@ -715,6 +748,14 @@ public class MHQMorale {
               campaignOptions.get(CampaignOption.MORALE_VICTORY_EFFECT),
               campaignOptions.get(CampaignOption.MORALE_DECISIVE_DEFEAT_EFFECT),
               campaignOptions.get(CampaignOption.MORALE_DEFEAT_EFFECT));
+
+        // Escalation may raise morale a further level. It is rolled before the rout is handled, so it can pull an enemy
+        // this check routed back from the brink.
+        String escalationReport = StratConEscalation.rollForMorale(campaign, contract);
+        if (escalationReport != null) {
+            moraleReport += "<br><br>" + escalationReport;
+        }
+
         String flavorText = MHQMorale.getFormattedTitle()
                                   + "<h2 style='text-align:center;'>" + contract.getName() + "</h2>"
                                   + MoraleBar.getMoraleDisplay(contract).tooltip();
@@ -778,7 +819,7 @@ public class MHQMorale {
                           today.getYear(), regardMultiplier);
 
                     for (String report : reports) {
-                        campaign.addReport(GENERAL, report);
+                        campaign.addReport(POLITICS, report);
                     }
                 }
                 newEnemyData = new EnemyData(newEnemyData, acceptedBatchall);
@@ -805,41 +846,34 @@ public class MHQMorale {
         // Check for emergency clause (this can trigger multiple times if the enemy faction keeps changing to a Clan
         // faction. This can be seen as the employer getting increasingly desperate and wanting to keep the player on
         // side.
-        checkForSpecialClanSalvageClause(campaign, today, newEnemyFaction, contract);
+        checkForSpecialClanSalvageClause(campaign, contract);
     }
 
     /**
-     * Checks for and applies a special emergency salvage clause when fighting Clan forces prior to or during the Battle
-     * of Tukayyid.
+     * Informs the player when their employer evokes the special Clan salvage clause, when fighting Clan forces prior to
+     * or during the Battle of Tukayyid.
      *
-     * <p>If the employer is non-Clan and the enemy is Clan, and the current date is on or before the Battle of
-     * Tukayyid, the salvage percentage is increased by 25% (up to a minimum of 100%) and salvage exchange is enabled.
-     * An immersive dialog is displayed to inform the player of the contract adjustment.</p>
+     * <p>The contract's salvage terms are left unchanged: while the clause is in effect, salvage is treated as
+     * exchange (see {@link AbstractContract#isEmployerEvokingClanSalvageClause(Campaign)}).</p>
      *
-     * @param campaign     The current campaign instance.
-     * @param today        The current game date to check against the Tukayyid threshold.
-     * @param enemyFaction The faction being fought in the current contract or mission.
+     * @param campaign The current campaign instance.
+     * @param contract The contract whose enemy has just changed.
      *
      * @author Illiani
      * @since 0.50.11
      */
-    private static void checkForSpecialClanSalvageClause(Campaign campaign, LocalDate today, Faction enemyFaction,
-          AbstractContract contract) {
-        if (!contract.getEmployerFaction().isClan() && enemyFaction.isClan()) {
-            if (!today.isAfter(BATTLE_OF_TUKAYYID)) {
-                contract.setContractTerms(
-                      contract.getContractTerms().withSalvageRights(ChaosContractStepsTable.STEP_FIVE));
-
-                String message = getTextAt(RESOURCE_BUNDLE, "emergencySalvageClause.message");
-                new ImmersiveDialogSimple(campaign,
-                      contract.getEmployerLiaison(),
-                      null,
-                      message,
-                      null,
-                      null,
-                      null,
-                      false);
-            }
+    private static void checkForSpecialClanSalvageClause(Campaign campaign, AbstractContract contract) {
+        if (contract.isEmployerEvokingClanSalvageClause(campaign)) {
+            String message = getFormattedTextAt(RESOURCE_BUNDLE, "emergencySalvageClause.message",
+                  campaign.getCommanderAddress());
+            new ImmersiveDialogSimple(campaign,
+                  contract.getEmployerLiaison(),
+                  null,
+                  message,
+                  null,
+                  null,
+                  null,
+                  false);
         }
     }
 

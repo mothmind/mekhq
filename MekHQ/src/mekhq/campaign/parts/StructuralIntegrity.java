@@ -35,9 +35,9 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.SimpleTechLevel;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.enums.AvailabilityValue;
 import megamek.common.enums.Faction;
 import megamek.common.enums.TechBase;
@@ -51,6 +51,7 @@ import megamek.logging.MMLogger;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.parts.missing.MissingPart;
+import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.skills.SkillType;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Node;
@@ -108,9 +109,21 @@ public class StructuralIntegrity extends Part {
         this.name = "Structural Integrity";
     }
 
+    /**
+     * Structural Integrity is repaired with the unit's global technician skill: Tech/Vessel for DropShips and
+     * JumpShips (including WarShips and Space Stations), otherwise Tech/Aerospace.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_MECHANICAL);
+        String globalSkillName = Person.getGlobalTechSkillNameFor(getUnit());
+        if (globalSkillName == null) {
+            globalSkillName = SkillType.S_TECH_AERO;
+        }
+
+        return skillType.equals(globalSkillName);
     }
 
     @Override
@@ -252,9 +265,14 @@ public class StructuralIntegrity extends Part {
     }
 
     @Override
+    public boolean canTakeMaintenanceDamage() {
+        return ((Aero) unit.getEntity()).getSI() >= 1;
+    }
+
+    @Override
     public void doMaintenanceDamage(int d) {
         int points = ((Aero) unit.getEntity()).getSI();
-        points = Math.max(points - d, 1);
+        points = getStructureAfterMaintenanceDamage(points, d);
         ((Aero) unit.getEntity()).setSI(points);
         updateConditionFromEntity(false);
     }

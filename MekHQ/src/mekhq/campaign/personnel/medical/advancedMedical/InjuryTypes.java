@@ -377,6 +377,19 @@ public final class InjuryTypes {
             InjuryType.register(244, "alt:OLD_WOUND", AlternateInjuries.OLD_WOUND);
             InjuryType.register(245, "alt:AMPUTATION_RECOVERY", AlternateInjuries.AMPUTATION_RECOVERY);
             InjuryType.register(246, "alt:MEDICAL_COMPLICATION", AlternateInjuries.MEDICAL_COMPLICATION);
+            InjuryType.register(247, "alt:FRACTURE_REPAIR", AlternateInjuries.FRACTURE_REPAIR);
+            InjuryType.register(248, "alt:FRACTURE_REPAIR_RECOVERY", AlternateInjuries.FRACTURE_REPAIR_RECOVERY);
+            InjuryType.register(249, "alt:TOXIN_EFFUSER", AlternateInjuries.TOXIN_EFFUSER);
+            InjuryType.register(250, "alt:EXPLOSIVE_SUICIDE_IMPLANT", AlternateInjuries.EXPLOSIVE_SUICIDE_IMPLANT);
+            InjuryType.register(251, "alt:ENHANCED_PROSTHETIC_LIMB", AlternateInjuries.ENHANCED_PROSTHETIC_LIMB);
+            InjuryType.register(252,
+                  "alt:IMPROVED_ENHANCED_PROSTHETIC_LIMB",
+                  AlternateInjuries.IMPROVED_ENHANCED_PROSTHETIC_LIMB);
+            InjuryType.register(253, "alt:PROSTHETIC_LEG_MASC", AlternateInjuries.PROSTHETIC_LEG_MASC);
+            InjuryType.register(254, "alt:ENHANCED_TAIL_PROSTHETIC", AlternateInjuries.ENHANCED_TAIL_PROSTHETIC);
+            InjuryType.register(255, "alt:EXTRANEOUS_PROSTHETIC_LIMBS", AlternateInjuries.EXTRANEOUS_PROSTHETIC_LIMBS);
+            InjuryType.register(256, "alt:GLIDER_WINGS", AlternateInjuries.GLIDER_WINGS);
+            InjuryType.register(257, "alt:POWERED_FLIGHT_WINGS", AlternateInjuries.POWERED_FLIGHT_WINGS);
 
 
             InjuryType.register("am:severed_spine", SEVERED_SPINE);
@@ -484,8 +497,10 @@ public final class InjuryTypes {
             if (hits > 4) {
                 return Collections.singletonList(new GameEffect("certain death", rnd -> {
                     p.changeStatus(c, c.getLocalDate(), PersonnelStatus.WOUNDS);
-                    MedicalLogEntry entry = MedicalLogger.diedDueToBrainTrauma(p, c.getLocalDate());
-                    LOGGER.info(entry.toString());
+                    if (p.getStatus().isDead()) {
+                        MedicalLogEntry entry = MedicalLogger.diedDueToBrainTrauma(p, c.getLocalDate());
+                        LOGGER.info(entry.toString());
+                    }
                 }));
             } else {
                 // We have a chance!
@@ -493,8 +508,10 @@ public final class InjuryTypes {
                       new GameEffect(deathChance + "% chance of death", rnd -> {
                           if (rnd.applyAsInt(6) + hits >= 5) {
                               p.changeStatus(c, c.getLocalDate(), PersonnelStatus.WOUNDS);
-                              MedicalLogEntry entry = MedicalLogger.diedDueToBrainTrauma(p, c.getLocalDate());
-                              LOGGER.info(entry.toString());
+                              if (p.getStatus().isDead()) {
+                                  MedicalLogEntry entry = MedicalLogger.diedDueToBrainTrauma(p, c.getLocalDate());
+                                  LOGGER.info(entry.toString());
+                              }
                           }
                       }));
             }
@@ -742,8 +759,10 @@ public final class InjuryTypes {
                 // Don't even bother doing anything else; we're dead
                 return Collections.singletonList(new GameEffect("certain death", rnd -> {
                     p.changeStatus(c, c.getLocalDate(), PersonnelStatus.WOUNDS);
-                    MedicalLogEntry entry = MedicalLogger.diedOfInternalBleeding(p, c.getLocalDate());
-                    LOGGER.info(entry.toString());
+                    if (p.getStatus().isDead()) {
+                        MedicalLogEntry entry = MedicalLogger.diedOfInternalBleeding(p, c.getLocalDate());
+                        LOGGER.info(entry.toString());
+                    }
                 }));
             } else {
                 // We have a chance!
@@ -755,8 +774,10 @@ public final class InjuryTypes {
                             LOGGER.info(entry.toString());
                         } else {
                             p.changeStatus(c, c.getLocalDate(), PersonnelStatus.WOUNDS);
-                            MedicalLogEntry entry = MedicalLogger.diedOfInternalBleeding(p, c.getLocalDate());
-                            LOGGER.info(entry.toString());
+                            if (p.getStatus().isDead()) {
+                                MedicalLogEntry entry = MedicalLogger.diedOfInternalBleeding(p, c.getLocalDate());
+                                LOGGER.info(entry.toString());
+                            }
                         }
                     }
                 });
@@ -906,8 +927,10 @@ public final class InjuryTypes {
                       int rib = rnd.applyAsInt(100);
                       if (rib < 1) {
                           p.changeStatus(c, c.getLocalDate(), PersonnelStatus.WOUNDS);
-                          MedicalLogEntry entry = MedicalLogger.brokenRibPunctureDead(p, c.getLocalDate());
-                          LOGGER.info(entry.toString());
+                          if (p.getStatus().isDead()) {
+                              MedicalLogEntry entry = MedicalLogger.brokenRibPunctureDead(p, c.getLocalDate());
+                              LOGGER.info(entry.toString());
+                          }
                       } else if (rib < 10) {
                           Injury puncturedLung = PUNCTURED_LUNG.newInjury(c, p, BodyLocation.CHEST, 1);
                           p.addInjury(puncturedLung);

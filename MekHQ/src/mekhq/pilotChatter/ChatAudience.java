@@ -21,8 +21,8 @@ package mekhq.pilotChatter;
 import java.util.ArrayList;
 import java.util.List;
 
+import jakarta.annotation.Nullable;
 import megamek.common.Player;
-import megamek.common.annotations.Nullable;
 import megamek.common.game.Game;
 import megamek.common.options.OptionsConstants;
 import megamek.common.units.Entity;

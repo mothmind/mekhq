@@ -40,17 +40,9 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.logging.MMLogger;
-import mekhq.campaign.AbstractLocation;
-import mekhq.campaign.AbstractMobileLocation;
-import mekhq.campaign.Campaign;
-import mekhq.campaign.CampaignLocationManager;
-import mekhq.campaign.CurrentLocation;
-import mekhq.campaign.GroundTransitLocation;
-import mekhq.campaign.JumpPath;
-import mekhq.campaign.LocalHangar;
-import mekhq.campaign.LocalWarehouse;
+import mekhq.campaign.*;
 import mekhq.campaign.base.AbstractBase;
 import mekhq.campaign.parts.Part;
 import mekhq.campaign.personnel.Person;
@@ -76,6 +68,48 @@ public final class LocationDispatch {
     private static final double GROUND_TRANSIT_DAYS = 2.0;
 
     private LocationDispatch() {}
+
+    /**
+     * Moves a person directly to the same effective location as {@code anchor}, with no travel time.
+     *
+     * <p>Used when a person is created or recruited with the main force but is immediately meant to serve with
+     * something elsewhere, such as crew hired for a unit at a player base or in transit. The person is placed in the
+     * anchor's base personnel when it is at a base, onto the anchor's travel node when it is in transit, and otherwise
+     * with the main force's personnel.</p>
+     *
+     * @param campaign the current campaign
+     * @param person   the person to move
+     * @param anchor   the location item the person must end up alongside, typically a {@link Unit}
+     *
+     * @return {@code true} if the person is now at the same effective location as {@code anchor}, otherwise
+     *       {@code false}
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static boolean movePersonToLocationOf(Campaign campaign, Person person, ILocation anchor) {
+        if (LocationUtils.areSameEffectiveLocation(anchor, person)) {
+            return true;
+        }
+
+        AbstractBase anchorBase = LocationUtils.findEffectiveBase(anchor);
+        ILocation personnelDestination;
+        if (anchorBase != null) {
+            personnelDestination = anchorBase.getBasePersonnel();
+        } else if (LocationUtils.isInTransit(anchor)) {
+            personnelDestination = anchor.getCurrentLocation();
+        } else {
+            personnelDestination = campaign.getPlayerForce().getPersonnel();
+        }
+
+        person.setParent(personnelDestination);
+
+        if (!LocationUtils.areSameEffectiveLocation(anchor, person)) {
+            LOGGER.warn("Could not move {} to the location of {}", person.getFullName(), anchor);
+            return false;
+        }
+        return true;
+    }
 
     /**
      * Removes a spent travel node from the campaign: detaches it from the location tree and de-registers it from the
@@ -280,22 +314,10 @@ public final class LocationDispatch {
         dispatch(units, destination, campaign, LOG_DISPATCH_UNITS, arrivalHangar, group -> {
             for (Unit unit : group) {
                 LocalHangar sourceHangar = unit.getHangar();
-                // Capture the unit's current warehouse BEFORE moving it: Hangar.addUnit reparents the unit's node, after
-                // which each installed part's getWarehouse() (resolved through the unit) would already read the arrival
-                // warehouse and the move below would be skipped.
-                LocalWarehouse sourceWarehouse = unit.getWarehouse();
-                if (sourceWarehouse == null) {
-                    sourceWarehouse = campaign.getPlayerForce().getWarehouse();
-                }
                 (sourceHangar != null ? sourceHangar : campaign.getPlayerForce().getHangar()).removeUnit(unit.getId());
                 arrivalHangar.addUnit(unit);
-                // Installed parts live in the warehouse local to their unit; move them along.
-                if (sourceWarehouse != arrivalWarehouse) {
-                    for (Part part : unit.getParts()) {
-                        sourceWarehouse.removePart(part);
-                        arrivalWarehouse.addPart(part);
-                    }
-                }
+                // Its parts go with it, each from the warehouse that keeps it, with their links intact
+                UnitPartsTransfer.moveUnitParts(campaign, unit, arrivalWarehouse);
             }
         });
     }
@@ -323,11 +345,8 @@ public final class LocationDispatch {
 
         // Move the data structure immediately so warehouse filters stay correct.
         dispatch(parts, destination, campaign, LOG_DISPATCH_PARTS, arrivalWarehouse, group -> {
-            for (Part part : group) {
-                LocalWarehouse sourceWarehouse = part.getWarehouse();
-                (sourceWarehouse != null ? sourceWarehouse : campaign.getPlayerForce().getWarehouse()).removePart(part);
-                arrivalWarehouse.addPart(part);
-            }
+            // each spare goes with the parts that belong to it, such as a removed suit's equipment
+            UnitPartsTransfer.moveSpareParts(campaign, group, arrivalWarehouse);
         });
     }
 

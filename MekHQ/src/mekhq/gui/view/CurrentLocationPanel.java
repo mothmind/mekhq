@@ -57,6 +57,7 @@ import mekhq.campaign.JumpPath;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.events.LocationChangedEvent;
+import mekhq.campaign.events.PlanetarySystemsChangedEvent;
 import mekhq.campaign.events.TransitStatusChangedEvent;
 import mekhq.campaign.events.missions.MissionEvent;
 import mekhq.campaign.finances.Money;
@@ -208,7 +209,7 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
                 btnRecruitment.setText(getTextAt("recruitment.hiringHall.none"));
             } else {
                 btnRecruitment.setText(getFormattedTextAt("recruitment.hiringHall.some",
-                      StringUtils.capitalize(hiringHallLevel.name().toLowerCase())));
+                      hiringHallLevel.getLabel()));
             }
         }
         if (location.isOnPlanet()) {
@@ -246,7 +247,9 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
         String systemName = currentSystem.getPrintableName(date);
         if (location.isAtJumpPoint()) {
             boolean isUseCommandCircuit = campaign.isUseCommandCircuit();
-            double neededRechargeTime = currentSystem.getRechargeTime(date, isUseCommandCircuit);
+            double neededRechargeTime = campaign.getJumpDriveProfile(location)
+                                              .adjustRechargeTime(currentSystem.getRechargeTime(date,
+                                                    isUseCommandCircuit));
             if (Double.isInfinite(neededRechargeTime)) {
                 return getFormattedTextAt("title.chargingImpossible",
                       systemName, currentSystem.getRechargeTimeText(date, isUseCommandCircuit));
@@ -365,7 +368,7 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
         TransportCostCalculations calculation = campaign.getTransportCostCalculation(EXP_REGULAR);
         if (jumpPath.getJumps() > 0) {
             int duration = (int) Math.ceil(jumpPath.getTotalTime(campaign.getLocalDate(), location.getTransitTime(),
-                  campaign.isUseCommandCircuit()));
+                  campaign.isUseCommandCircuit(), campaign.getJumpDriveProfile(location)));
             Money jumpCost = calculation.calculateJumpCostForEntireJourney(duration, jumpPath.getJumps());
             return getFormattedTextAt("info.jumpCost.remaining", jumpCost.toAmountString());
         } else {
@@ -463,6 +466,13 @@ public class CurrentLocationPanel extends ScalingWidthConstrainedPanel {
     // ======================================
     // Event handlers for UI synchronization
     // ======================================
+
+    @Subscribe
+    public void handle(PlanetarySystemsChangedEvent event) {
+        if (event.getCampaign() == campaign) {
+            refresh();
+        }
+    }
 
     @Subscribe
     public void handle(LocationChangedEvent event) {

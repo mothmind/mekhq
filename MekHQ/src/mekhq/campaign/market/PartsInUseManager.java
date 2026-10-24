@@ -50,6 +50,7 @@ import megamek.common.equipment.enums.BombType.BombTypeEnum;
 import megamek.common.units.Entity;
 import megamek.common.units.IBomber;
 import megamek.common.units.Mek;
+import megamek.common.units.ProtoMek;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.LocalWarehouse;
 import mekhq.campaign.base.PlayerBase;
@@ -76,6 +77,11 @@ import mekhq.campaign.parts.meks.MekLifeSupport;
 import mekhq.campaign.parts.meks.MekLocation;
 import mekhq.campaign.parts.meks.MekSensor;
 import mekhq.campaign.parts.missing.MissingPart;
+import mekhq.campaign.parts.protomeks.ProtoMekArmActuator;
+import mekhq.campaign.parts.protomeks.ProtoMekJumpJet;
+import mekhq.campaign.parts.protomeks.ProtoMekLegActuator;
+import mekhq.campaign.parts.protomeks.ProtoMekLocation;
+import mekhq.campaign.parts.protomeks.ProtoMekSensor;
 import mekhq.campaign.personnel.Person;
 import mekhq.campaign.personnel.quartermaster.ArmorKitCatalog;
 import mekhq.campaign.personnel.quartermaster.EquipmentKitCatalog;
@@ -249,6 +255,16 @@ public class PartsInUseManager {
             }
 
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_MEK_LOCATION);
+        } else if (part instanceof ProtoMekLocation protoMekLocation) {
+            if (protoMekLocation.getLoc() == ProtoMek.LOC_HEAD) {
+                return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_MEK_HEAD);
+            }
+
+            if (protoMekLocation.getLoc() == ProtoMek.LOC_TORSO) {
+                return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_NON_REPAIRABLE_LOCATION);
+            }
+
+            return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_MEK_LOCATION);
         } else if (part instanceof TankLocation) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_NON_REPAIRABLE_LOCATION);
         } else if (part instanceof AmmoBin || part instanceof AmmoStorage) {
@@ -258,15 +274,20 @@ public class PartsInUseManager {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_AMMUNITION);
         } else if (part instanceof Armor) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_ARMOR);
-        } else if (part instanceof MekActuator) {
+        } else if (part instanceof MekActuator
+                         || part instanceof ProtoMekArmActuator
+                         || part instanceof ProtoMekLegActuator) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_ACTUATORS);
-        } else if (part instanceof JumpJet) {
+        } else if (part instanceof JumpJet || part instanceof ProtoMekJumpJet) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_JUMP_JETS);
         } else if (part instanceof EnginePart) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_ENGINES);
         } else if (part instanceof MekGyro) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_GYROS);
-        } else if (part instanceof MekCockpit || part instanceof MekSensor || part instanceof MekLifeSupport) {
+        } else if (part instanceof MekCockpit
+                         || part instanceof MekSensor
+                         || part instanceof MekLifeSupport
+                         || part instanceof ProtoMekSensor) {
             return campaignOptions.get(CampaignOption.AUTO_LOGISTICS_HEAD_COMPONENTS);
         } else if (part instanceof EquipmentPart equipmentPart) {
             if (equipmentPart.getType() instanceof WeaponType) {
@@ -321,6 +342,11 @@ public class PartsInUseManager {
         // Case 1: Part is associated with a unit or is a MissingPart
         if ((unit != null) || (incomingPart instanceof MissingPart)) {
             partInUse.setUseCount(partInUse.getUseCount() + incomingPart.getQuantityForPartsInUse());
+            // A MissingPart is a destroyed slot awaiting replacement. It needs to be tracked separately, so it can
+            // be given a greater weighting.
+            if (incomingPart instanceof MissingPart) {
+                partInUse.setMissingCount(partInUse.getMissingCount() + incomingPart.getQuantityForPartsInUse());
+            }
             return;
         }
 
@@ -329,7 +355,7 @@ public class PartsInUseManager {
         // real available warehouse stock, not parts committed to refits.
         if (incomingPart.isReservedForRefit()) {
             if (incomingPart.isPresent()) {
-                partInUse.setUseCount(partInUse.getUseCount() + incomingPart.getBaseQuantityForPartsInUse());
+                partInUse.setUseCount(partInUse.getUseCount() + findReservedUseCount(partInUse, incomingPart));
             } else {
                 partInUse.setTransferCount(
                       partInUse.getTransferCount() + incomingPart.getBaseQuantityForPartsInUse());
@@ -352,6 +378,24 @@ public class PartsInUseManager {
 
 
     /**
+     * How much a part set aside for a refit adds to the in-use count. Ammunition in use is counted by the bin, about
+     * a ton each, while a warehouse holds it as shots; reserved ammunition is turned into tons so that a ton of
+     * machine gun rounds counts as one, not two hundred.
+     *
+     * @param partInUse    the record being counted, which knows the weight of one shot
+     * @param reservedPart the part the refit has set aside
+     *
+     * @return the amount to add to the in-use count
+     */
+    private static int findReservedUseCount(PartInUse partInUse, Part reservedPart) {
+        int baseQuantity = reservedPart.getBaseQuantityForPartsInUse();
+        if (!(reservedPart instanceof AmmoStorage)) {
+            return baseQuantity;
+        }
+        return (int) Math.ceil(baseQuantity * partInUse.getTonnagePerItem());
+    }
+
+    /**
      * Find all the parts that match this PartInUse and update their data
      *
      * @param partInUse                part in use record to update
@@ -364,6 +408,7 @@ public class PartsInUseManager {
         partInUse.setStoreCount(0);
         partInUse.setTransferCount(0);
         partInUse.setPlannedCount(0);
+        partInUse.setMissingCount(0);
         forEachPartAtPlace(incomingPart -> {
             PartInUse newPartInUse = getPartInUse(incomingPart);
             if (partInUse.equals(newPartInUse)) {
@@ -623,6 +668,7 @@ public class PartsInUseManager {
             if (placeOf(person) == place) {
                 addWornKit(counts, person.getArmorKitName(), 1);
                 addWornKit(counts, person.getRepairKitName(), 1);
+                addWornKit(counts, person.getSecondaryKitName(), 1);
             }
         }
         for (Unit unit : campaign.getUnits()) {

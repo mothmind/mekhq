@@ -43,7 +43,10 @@ import javax.swing.JPanel;
 
 import megamek.client.ui.settings.SettingsCheckBox;
 import megamek.client.ui.settings.SettingsFormPanel;
+import megamek.client.ui.settings.SettingsTextProvider;
 import mekhq.MHQConstants;
+import mekhq.campaign.mission.contract.contractData.ContractObjectiveType;
+import mekhq.gui.dialog.nagDialogs.ContractSpecialMechanicsNagDialog;
 
 /**
  * The Reminders &amp; Confirmations page of the MekHQ Client Options dialog: two sections of "ignore this warning"
@@ -54,6 +57,9 @@ class MHQRemindersPage extends MHQOptionsPage {
     // Reminders & Confirmations (keyed by MHQConstants nag/confirmation key, matching MHQOptionsModel.nagIgnores)
     private final Map<String, SettingsCheckBox> nagCheckBoxes = new HashMap<>();
 
+    /** The resource name whose text and tooltip every contract briefing check box shares. */
+    private static final String CONTRACT_BRIEFING_RESOURCE = "optionContractSpecialMechanicsNag";
+
     MHQRemindersPage(MHQOptionsModel model) {
         super(model);
     }
@@ -61,13 +67,17 @@ class MHQRemindersPage extends MHQOptionsPage {
     @Override
     Component createPage() {
         JComponent nagsContent = createRemindersNagsSection();
+        JComponent contractBriefingsContent = createContractBriefingsSection();
         JComponent confirmationsContent = createRemindersConfirmationsSection();
         // Register each section body's tips before the page is built; |= always evaluates its right side, so no
         // section's registration is skipped.
         boolean hasTooltips = registerDetailsTips(nagsContent);
+        hasTooltips |= registerDetailsTips(contractBriefingsContent);
         hasTooltips |= registerDetailsTips(confirmationsContent);
         Component page = pageBuilder("MHQRemindersPage", hasTooltips)
                      .section("lblMHQNagSection.text", "lblMHQNagSection.summary", nagsContent)
+                     .section("lblMHQContractBriefingSection.text", "lblMHQContractBriefingSection.summary",
+                           contractBriefingsContent)
                      .section("lblMHQConfirmationSection.text", "lblMHQConfirmationSection.summary",
                            confirmationsContent)
                      .build();
@@ -94,6 +104,7 @@ class MHQRemindersPage extends MHQOptionsPage {
               { "optionCombatChallengeNag", MHQConstants.NAG_COMBAT_CHALLENGE },
               { "optionUnresolvedStratConContactsNag", MHQConstants.NAG_UNRESOLVED_STRAT_CON_CONTACTS },
               { "optionOutstandingScenariosNag", MHQConstants.NAG_OUTSTANDING_SCENARIOS },
+              { "optionExpiringNavPointsNag", MHQConstants.NAG_EXPIRING_NAV_POINTS },
               { "optionInvalidFactionNag", MHQConstants.NAG_INVALID_FACTION },
               { "optionUnableToAffordExpensesNag", MHQConstants.NAG_UNABLE_TO_AFFORD_EXPENSES },
               { "optionUnableToAffordRentNag", MHQConstants.NAG_UNABLE_TO_AFFORD_RENT },
@@ -106,8 +117,34 @@ class MHQRemindersPage extends MHQOptionsPage {
               { "optionSomeoneRandomlyDiedCivilianNag", MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_CIVILIAN },
               { "optionSomeoneRandomlyDiedCampFollowerNag", MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_CAMP_FOLLOWER },
               { "optionSomeoneRandomlyDiedRetiredNag", MHQConstants.NAG_SOMEONE_RANDOMLY_DIED_RETIREE },
+              { "optionContractJournalPromptNag", MHQConstants.NAG_CONTRACT_JOURNAL_PROMPT },
+              { "optionStratConFacilityBriefingNag", MHQConstants.NAG_STRATCON_FACILITY_BRIEFING },
         };
         return nagCheckBoxGrid("MHQNagContent", nagOptions);
+    }
+
+    /**
+     * Builds one check box per contract type with a special mechanics briefing (see
+     * {@link ContractSpecialMechanicsNagDialog}), each suppressing only that contract type's briefing. The check boxes
+     * share one text and tooltip, the text naming the contract type.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private JPanel createContractBriefingsSection() {
+        List<JCheckBox> checkBoxes = new ArrayList<>();
+        for (ContractObjectiveType objectiveType : ContractSpecialMechanicsNagDialog.getBriefedContractTypes()) {
+            String ignoreKey = ContractSpecialMechanicsNagDialog.getNagKey(objectiveType);
+            SettingsCheckBox checkBox = new SettingsCheckBox(new ContractBriefingTextProvider(objectiveType),
+                  CONTRACT_BRIEFING_RESOURCE + '.' + objectiveType.name());
+            checkBox.setSelected(Boolean.TRUE.equals(model.nagIgnores.get(ignoreKey)));
+            nagCheckBoxes.put(ignoreKey, checkBox);
+            checkBoxes.add(checkBox);
+        }
+        SettingsFormPanel panel = new SettingsFormPanel("MHQContractBriefingContent", FORM_LABEL_WIDTH,
+              FORM_CONTROL_WIDTH);
+        panel.addCheckBoxGrid(2, checkBoxes.toArray(new JCheckBox[0]));
+        return panel;
     }
 
     private JPanel createRemindersConfirmationsSection() {
@@ -144,6 +181,41 @@ class MHQRemindersPage extends MHQOptionsPage {
         SettingsFormPanel panel = new SettingsFormPanel(name, FORM_LABEL_WIDTH, FORM_CONTROL_WIDTH);
         panel.addCheckBoxGrid(2, checkBoxes.toArray(new JCheckBox[0]));
         return panel;
+    }
+
+    /**
+     * Resolves a contract briefing check box's text and tooltip from the shared {@value #CONTRACT_BRIEFING_RESOURCE}
+     * entries, naming its contract type in the text; any other key is looked up as usual.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static final class ContractBriefingTextProvider implements SettingsTextProvider {
+        private final ContractObjectiveType objectiveType;
+        private final String keyBase;
+
+        private ContractBriefingTextProvider(ContractObjectiveType objectiveType) {
+            this.objectiveType = objectiveType;
+            this.keyBase = CONTRACT_BRIEFING_RESOURCE + '.' + objectiveType.name();
+        }
+
+        @Override
+        public boolean containsKey(String key) {
+            return TEXT_PROVIDER.containsKey(toSharedKey(key));
+        }
+
+        @Override
+        public String getText(String key) {
+            String sharedKey = toSharedKey(key);
+            if (sharedKey.equals(CONTRACT_BRIEFING_RESOURCE + ".text")) {
+                return TEXT_PROVIDER.getFormattedText(sharedKey, objectiveType.toString());
+            }
+            return TEXT_PROVIDER.getText(sharedKey);
+        }
+
+        private String toSharedKey(String key) {
+            return key.startsWith(keyBase) ? CONTRACT_BRIEFING_RESOURCE + key.substring(keyBase.length()) : key;
+        }
     }
 
     @Override

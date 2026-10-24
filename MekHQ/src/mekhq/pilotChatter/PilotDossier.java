@@ -25,8 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import jakarta.annotation.Nullable;
 import megamek.common.Player;
-import megamek.common.annotations.Nullable;
 import megamek.common.enums.SkillLevel;
 import megamek.common.game.Game;
 import megamek.common.options.IOption;

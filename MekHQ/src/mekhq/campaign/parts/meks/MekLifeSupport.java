@@ -35,10 +35,9 @@ package mekhq.campaign.parts.meks;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.CriticalSlot;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
-import megamek.common.compute.Compute;
 import megamek.common.units.Entity;
 import megamek.common.units.Mek;
 import mekhq.campaign.Campaign;
@@ -61,8 +60,7 @@ public class MekLifeSupport extends Part {
 
     public MekLifeSupport(int tonnage, Campaign c) {
         super(tonnage, c);
-        // CHECKSTYLE IGNORE ForbiddenWords FOR 1 LINES
-        this.name = "Mech Life Support System";
+        this.name = "Mek Life Support System";
     }
 
     @Override
@@ -150,7 +148,7 @@ public class MekLifeSupport extends Part {
             }
             if (checkForDestruction
                       && hits > priorHits && hits >= 2
-                      && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
+                      && campaign.getDice().d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                 remove(false);
             }
         }

@@ -36,9 +36,9 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.SimpleTechLevel;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.enums.AvailabilityValue;
 import megamek.common.enums.BuildingType;
 import megamek.common.enums.Faction;
@@ -370,7 +370,7 @@ public class BuildingLocation extends Part {
 
     @Override
     public boolean isRightTechType(String skillType) {
-        return skillType.equals(SkillType.S_TECH_MECHANICAL);
+        return skillType.equals(SkillType.S_TECH_VEHICLE);
     }
 
     @Override

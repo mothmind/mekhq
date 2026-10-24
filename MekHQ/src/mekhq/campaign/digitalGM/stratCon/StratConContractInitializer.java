@@ -42,12 +42,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.util.weightedMaps.WeightedIntMap;
 import megamek.logging.MMLogger;
@@ -55,11 +56,25 @@ import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.digitalGM.stratCon.StratConContractDefinition.ObjectiveParameters;
+import mekhq.campaign.digitalGM.stratCon.StratConContractDefinition.PointOfInterestParameters;
 import mekhq.campaign.digitalGM.stratCon.StratConContractDefinition.StrategicObjectiveType;
 import mekhq.campaign.digitalGM.stratCon.biome.StratConBiomeManifest;
+import mekhq.campaign.digitalGM.stratCon.facility.FacilityTrait;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConContractFacilityProfile;
 import mekhq.campaign.digitalGM.stratCon.facility.StratConFacility;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConFacility.FacilityTier;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConFacility.FacilityType;
 import mekhq.campaign.digitalGM.stratCon.facility.StratConFacilityFactory;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConFacilityOrder;
 import mekhq.campaign.digitalGM.stratCon.gm.StratConGMs;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.IStratConPointOfInterestBehavior;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterest;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterestBehaviors;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterestDefinition;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterestDefinitions;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterestPlacer;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConPointOfInterestRules;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConScheduledPointOfInterest;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.LatitudeBand;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.PlanetProfile;
 import mekhq.campaign.digitalGM.stratCon.sectorGeneration.SectorShapeProfile;
@@ -71,6 +86,7 @@ import mekhq.campaign.digitalGM.stratCon.sectorGeneration.StratConSectorShape;
 import mekhq.campaign.force.Formation;
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.contract.contractGeneration.AbstractContractGeneration;
+import mekhq.campaign.mission.contract.contractGeneration.TrackIntensityTable;
 import mekhq.campaign.mission.contract.utilities.ContractCharacteristics;
 import mekhq.campaign.mission.scenarios.AtBDynamicScenario;
 import mekhq.campaign.mission.scenarios.Scenario;
@@ -147,10 +163,6 @@ public class StratConContractInitializer {
     public static void initializeCampaignState(AbstractContract contract, Campaign campaign,
           StratConContractDefinition contractDefinition) {
         StratConCampaignState campaignState = new StratConCampaignState(contract);
-        campaignState.setBriefingText(contractDefinition.getBriefing() +
-                                            "<br/>" +
-                                            contract.getCommandRights().getStratConText());
-        campaignState.setAllowEarlyVictory(contractDefinition.isAllowEarlyVictory());
 
         // dependency: this is required here in order for scenario initialization to
         // work properly
@@ -193,7 +205,7 @@ public class StratConContractInitializer {
         int[] letterSeen = new int[greekLetters.length];
 
         for (int index = 0; index < sectorSpecs.size(); index++) {
-            int scenarioOdds = getScenarioOdds(contractDefinition);
+            int scenarioOdds = getDeploymentEncounterOdds(contractDefinition);
             int deploymentTime = isUseMaplessMode ? 0 : getDeploymentTime(contractDefinition);
 
             StratConTrackState track = initializeTrackState(sectorSpecs.get(index),
@@ -213,13 +225,50 @@ public class StratConContractInitializer {
             campaignState.addTrack(track);
         }
 
+        seedCampaignState(contract, campaign, contractDefinition, campaignState);
+    }
+
+    /**
+     * Seeds a campaign state's existing tracks with everything the contract definition calls for: the briefing,
+     * objectives and facilities, global scenario modifiers, the scheduled strategic scenarios and points of interest,
+     * any special mechanics, required victory points, and starting Support Points.
+     *
+     * <p>Split out of {@link #initializeCampaignState} so a running contract whose objective changes can have its new
+     * objectives laid over the map it already has (see {@link #reseedForNewObjective}).</p>
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static void seedCampaignState(AbstractContract contract, Campaign campaign,
+          StratConContractDefinition contractDefinition, StratConCampaignState campaignState) {
+        StratConContractFacilityProfile facilityProfile = contractDefinition.getFacilityProfile();
+        String facilityBriefing = ((facilityProfile == null) || (facilityProfile.getBriefing() == null)) ?
+                                        "" :
+                                        "<br/>" + facilityProfile.getBriefing();
+        campaignState.setBriefingText(contractDefinition.getBriefing() +
+                                            facilityBriefing +
+                                            "<br/>" +
+                                            contract.getCommandRights().getStratConText());
+        campaignState.setAllowEarlyVictory(contractDefinition.isAllowEarlyVictory());
+
+        CampaignOptions campaignOptions = campaign.getCampaignOptions();
+        boolean isUseMaplessMode = campaignOptions.isUseStratConMaplessMode();
+
         // now seed the tracks with objectives and facilities
+        boolean isFactorSupportPointsIntoScale =
+              campaignOptions.get(CampaignOption.USE_CHAOS_SCALE_SUPPORT_POINT_CONVERSION);
+        FacilityTier objectiveTier = adjustTier(facilityProfile,
+              getFacilityTier(contract.getScale(), isFactorSupportPointsIntoScale, true));
         if (!isUseMaplessMode) {
             for (ObjectiveParameters objectiveParams : contractDefinition.getObjectiveParameters()) {
-                int objectiveCount = objectiveParams.objectiveCount > 0 ?
-                                           (int) objectiveParams.objectiveCount :
-                                           (int) max(1,
-                                                 -objectiveParams.objectiveCount * contract.getScale());
+                int objectiveCount;
+                if (objectiveParams.objectiveCount > 0) {
+                    objectiveCount = (int) objectiveParams.objectiveCount;
+                } else if (isFacilityObjective(objectiveParams.objectiveType)) {
+                    objectiveCount = getObjectiveFacilityCount(contract.getScale(), isFactorSupportPointsIntoScale);
+                } else {
+                    objectiveCount = (int) max(1, -objectiveParams.objectiveCount * contract.getScale());
+                }
 
                 List<Integer> trackObjects = trackObjectDistribution(objectiveCount, campaignState.getTrackCount());
 
@@ -236,16 +285,24 @@ public class StratConContractInitializer {
                             initializeTrackFacilities(campaignState.getTrack(x),
                                   numObjects,
                                   ForceAlignment.Allied,
-                                  true,
-                                  objectiveParams.objectiveScenarioModifiers);
+                                  StrategicObjectiveType.AlliedFacilityControl,
+                                  objectiveParams.objectiveScenarioModifiers,
+                                  objectiveTier,
+                                  facilityProfile);
                             break;
                         case HostileFacilityControl:
                         case FacilityDestruction:
                             initializeTrackFacilities(campaignState.getTrack(x),
                                   numObjects,
                                   ForceAlignment.Opposing,
-                                  true,
-                                  objectiveParams.objectiveScenarioModifiers);
+                                  objectiveParams.objectiveType,
+                                  objectiveParams.objectiveScenarioModifiers,
+                                  objectiveTier,
+                                  facilityProfile);
+                            break;
+                        case PointOfInterest:
+                            // Point of interest objectives are not placed up front either. They appear over the
+                            // contract's months on a schedule rolled below - see schedulePointsOfInterest.
                             break;
                         case AnyScenarioVictory:
                             // set up a "win X scenarios" objective
@@ -281,41 +338,51 @@ public class StratConContractInitializer {
             }
         }
 
-        // non-objective allied facilities
+        // Non-objective facilities. Without a facility profile, they are the defender's: allied on a defensive contract
+        // and hostile on an offensive one. The objective facilities placed above are the only facilities so far. Those
+        // the defender owns count against the scale's share; the other side's objective facilities do not, or they
+        // would crowd out the defender's own. With a profile, the profile splits them between the sides, all objective
+        // facilities count against the share, and an anchor facility may be placed first.
         if (!isUseMaplessMode) {
-            int facilityCount = contractDefinition.getAlliedFacilityCount() > 0 ?
-                                      (int) contractDefinition.getAlliedFacilityCount() :
-                                      (int) (-contractDefinition.getAlliedFacilityCount() *
-                                                   contract.getScale());
+            FacilityTier facilityTier = adjustTier(facilityProfile,
+                  getFacilityTier(contract.getScale(), isFactorSupportPointsIntoScale, false));
+            double density = getFacilityDensity(campaignOptions, facilityProfile);
 
-            List<Integer> trackObjects = trackObjectDistribution(facilityCount, campaignState.getTrackCount());
+            if ((facilityProfile == null) || (facilityProfile.getAlliedShare() == null)) {
+                ForceAlignment facilityOwner = contract.isPlayerAttacker() ?
+                                                     ForceAlignment.Opposing :
+                                                     ForceAlignment.Allied;
+                int objectiveFacilityCount = countFacilitiesOwnedBy(campaignState.getTracks(), facilityOwner);
+                int facilityCount = getNonObjectiveFacilityCount(contract.getScale(),
+                      isFactorSupportPointsIntoScale,
+                      objectiveFacilityCount,
+                      density);
+                placeNonObjectiveFacilities(campaignState, facilityCount, facilityOwner, facilityTier,
+                      facilityProfile);
+            } else {
+                int objectiveFacilityCount = countFacilitiesOwnedBy(campaignState.getTracks(), ForceAlignment.Allied)
+                                                   + countFacilitiesOwnedBy(campaignState.getTracks(),
+                      ForceAlignment.Opposing);
+                int facilityCount = getNonObjectiveFacilityCount(contract.getScale(),
+                      isFactorSupportPointsIntoScale,
+                      objectiveFacilityCount,
+                      density);
+                int alliedCount = (int) Math.round(facilityCount * facilityProfile.getAlliedShare());
+                int hostileCount = facilityCount - alliedCount;
 
-            for (int x = 0; x < trackObjects.size(); x++) {
-                int numObjects = trackObjects.get(x);
+                FacilityType anchorType = facilityProfile.getAnchorType();
+                if ((anchorType != null) && placeAnchorFacility(campaignState, facilityProfile, facilityTier)) {
+                    if (facilityProfile.getAnchorOwner() == ForceAlignment.Opposing) {
+                        hostileCount = max(0, hostileCount - 1);
+                    } else {
+                        alliedCount = max(0, alliedCount - 1);
+                    }
+                }
 
-                initializeTrackFacilities(campaignState.getTrack(x),
-                      numObjects,
-                      ForceAlignment.Allied,
-                      false,
-                      Collections.emptyList());
-            }
-
-            // non-objective hostile facilities
-            facilityCount = contractDefinition.getHostileFacilityCount() > 0 ?
-                                  (int) contractDefinition.getHostileFacilityCount() :
-                                  (int) (-contractDefinition.getHostileFacilityCount() *
-                                               contract.getScale());
-
-            trackObjects = trackObjectDistribution(facilityCount, campaignState.getTrackCount());
-
-            for (int x = 0; x < trackObjects.size(); x++) {
-                int numObjects = trackObjects.get(x);
-
-                initializeTrackFacilities(campaignState.getTrack(x),
-                      numObjects,
-                      ForceAlignment.Opposing,
-                      false,
-                      Collections.emptyList());
+                placeNonObjectiveFacilities(campaignState, alliedCount, ForceAlignment.Allied, facilityTier,
+                      facilityProfile);
+                placeNonObjectiveFacilities(campaignState, hostileCount, ForceAlignment.Opposing, facilityTier,
+                      facilityProfile);
             }
         }
 
@@ -327,9 +394,54 @@ public class StratConContractInitializer {
             }
         }
 
-        // Pre-roll the days on which each strategic-objective scenario appears over the contract's run.
+        // A new contract has placed nothing yet, so its point of interest ledger starts empty rather than from the map.
+        campaignState.setPointOfInterestLedgerSeeded(true);
+
+        // Snapshot the options so every schedule below uses the same rules. Only editing the contract refreshes them.
+        campaignState.setMinimumOneTrackPerRoll(campaignOptions.get(CampaignOption.MINIMUM_ONE_TRACK_PER_ROLL));
+        campaignState.setRollTracksWeekly(campaignOptions.get(CampaignOption.ROLL_TRACKS_WEEKLY));
+
+        // Pre-roll the days on which the contract's ordinary scenarios appear. Mapless play has them too; Single Drop
+        // play keeps its own weekly pace instead.
+        if (!campaignOptions.isUseStratConSinglesMode()) {
+            StratConScenarioTempo.scheduleNormalScenarios(campaign, contract, campaignState, contract.getStartDate());
+        }
+
+        // Pre-roll the days on which each strategic-objective scenario, and each point of interest, appears over the
+        // contract's run.
         if (!isUseMaplessMode) {
-            scheduleStrategicScenarioSpawnDates(contract, campaignState);
+            boolean isContractsUseSpecialMechanics =
+                  campaignOptions.get(CampaignOption.CONTRACTS_USE_SPECIAL_MECHANICS);
+            // Fixed for the contract's life, so the rules acting on what is set up below match it even if the option
+            // is changed mid-contract. Left false in mapless play, where none of it is set up.
+            campaignState.setContractsUseSpecialMechanics(isContractsUseSpecialMechanics);
+
+            // Most contracts with special points of interest get no Essential scenarios: those points of interest, and
+            // the combat bonus paid for each one dealt with, take their place.
+            if (!isReplacingEssentialScenarios(contract, isContractsUseSpecialMechanics)) {
+                scheduleStrategicScenarioSpawnDates(contract, campaignState, contract.getStartDate());
+            }
+
+            schedulePointsOfInterest(contract,
+                  contractDefinition,
+                  campaignState,
+                  campaignOptions.get(CampaignOption.MULTIPLY_TRACK_INTENSITY_BY_SCALE),
+                  isContractsUseSpecialMechanics);
+
+            // A Diversionary Raid's strategic objective is to escalate the fighting, rather than to hit any one target.
+            if (isContractsUseSpecialMechanics && contract.getObjectiveType().isDiversionaryRaid()) {
+                StratConEscalation.addDiversionaryRaidObjective(contract, campaignState);
+            }
+
+            // A Garrison Duty contract starts with its Escalation - the unrest the garrison must calm - at its maximum.
+            if (isContractsUseSpecialMechanics) {
+                StratConEscalation.startEscalation(contract, campaignState);
+            }
+
+            // A Recon Raid's sectors must each be scouted, alongside its Essential scenarios.
+            if (StratConReconnaissance.usesReconnaissance(contract, isContractsUseSpecialMechanics)) {
+                StratConReconnaissance.addReconnaissanceObjectives(campaignState);
+            }
         }
 
         // Required victory points depend on the StratCon state
@@ -341,13 +453,62 @@ public class StratConContractInitializer {
     }
 
     /**
+     * Lays a running contract's new objectives over the StratCon map it already has, after its objective type has
+     * changed (for example, a defensive contract regenerated as Guerrilla Warfare when its employer loses the planet).
+     *
+     * <p>The sectors, their terrain, and any forces deployed to them are kept. Everything the old objective type set
+     * up is cleared: strategic objectives (facilities that were objectives remain, as ordinary facilities), points of
+     * interest, scheduled scenarios and points of interest, global scenario modifiers, Escalation, and Victory Points.
+     * The tracks' scenario odds and deployment times are re-rolled for the new definition, and then the map is seeded
+     * as a new contract's would be (see {@link #seedCampaignState}).</p>
+     *
+     * <p>Facility ownership is left to the caller; this method does not change who holds what.</p>
+     *
+     * @param contract           the contract, already carrying its new objective type, terms, and schedule
+     * @param campaign           the current campaign
+     * @param contractDefinition the StratCon definition of the contract's new objective type
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static void reseedForNewObjective(AbstractContract contract, Campaign campaign,
+          StratConContractDefinition contractDefinition) {
+        StratConCampaignState campaignState = contract.getStratConCampaignState();
+        if (campaignState == null) {
+            return;
+        }
+
+        boolean isUseMaplessMode = campaign.getCampaignOptions().isUseStratConMaplessMode();
+        for (StratConTrackState track : campaignState.getTracks()) {
+            track.setStrategicObjectives(new ArrayList<>());
+            for (StratConFacility facility : track.getFacilities().values()) {
+                facility.setStrategicObjective(false);
+            }
+            track.setPointsOfInterest(new ArrayList<>());
+
+            track.setScenarioOdds(getDeploymentEncounterOdds(contractDefinition));
+            track.setDeploymentTime(isUseMaplessMode ? 0 : getDeploymentTime(contractDefinition));
+        }
+
+        campaignState.getStrategicScenarioSpawnDates().clear();
+        campaignState.getScheduledPointsOfInterest().clear();
+        campaignState.setGlobalScenarioModifiers(new ArrayList<>());
+        campaignState.setEscalation(0);
+        campaignState.setVictoryPoints(0);
+        campaignState.setSupportPoints(0);
+
+        seedCampaignState(contract, campaign, contractDefinition, campaignState);
+    }
+
+    /**
      * Pre-rolls, at contract start, the calendar day each strategic-objective scenario will appear on.
      *
      * <p>The contract's scenario schedule ({@link mekhq.campaign.mission.contract.contractData.ContractIntensityData})
      * gives, per contract month, how many strategic scenarios appear that month. Each such scenario is assigned an
      * independent random day within that month's window, so they trickle in over the month rather than all landing on
      * the first day. The dates are stored on the campaign state and drained by the daily StratCon lifecycle, which
-     * spawns whatever is due via {@link #spawnScheduledStrategicScenarios}.</p>
+     * spawns whatever is due via {@link #spawnScheduledStrategicScenarios}. Only days on or after {@code fromDate} are
+     * kept, so a schedule rolled again partway through the contract leaves the days already past alone.</p>
      *
      * <p>Schedule entries at or beyond the contract's final month are folded into that final month's window, so a
      * schedule longer than the contract still delivers every scenario (its tail lands in the last month); a schedule
@@ -356,19 +517,48 @@ public class StratConContractInitializer {
      *
      * @param contract      the contract whose schedule is being laid out
      * @param campaignState the campaign state to store the rolled spawn dates on
+     * @param fromDate      the first day to keep; the contract's start date when it is accepted
      */
-    private static void scheduleStrategicScenarioSpawnDates(AbstractContract contract,
-          StratConCampaignState campaignState) {
+    static void scheduleStrategicScenarioSpawnDates(AbstractContract contract, StratConCampaignState campaignState,
+          @Nullable LocalDate fromDate) {
         LocalDate startDate = contract.getStartDate();
         List<Integer> schedule = contract.getScenarioSchedule();
         if ((startDate == null) || schedule.isEmpty()) {
             return;
         }
 
-        int contractMonths = max(1, contract.getLengthInMonths());
+        for (LocalDate spawnDate : rollSpawnDates(startDate, schedule, contract.getLengthInMonths())) {
+            if ((fromDate == null) || !spawnDate.isBefore(fromDate)) {
+                campaignState.addStrategicScenarioSpawnDate(spawnDate);
+            }
+        }
+    }
+
+    /**
+     * Turns a per-month schedule into calendar days: each item in a month gets an independent random day within that
+     * month's window, so items trickle in over the month rather than all landing on its first day.
+     *
+     * <p>Schedule entries at or beyond the contract's final month are folded into that final month's window, so a
+     * schedule longer than the contract still delivers every item (its tail lands in the last month); a schedule
+     * shorter than the contract simply leaves the later months empty.</p>
+     *
+     * @param startDate      the contract's start date, which opens its first month
+     * @param schedule       the per-month item counts
+     * @param lengthInMonths the contract's length in months
+     *
+     * @return one day per scheduled item, in schedule order
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the calendar rules can be tested directly.
+    static List<LocalDate> rollSpawnDates(LocalDate startDate, List<Integer> schedule, int lengthInMonths) {
+        List<LocalDate> spawnDates = new ArrayList<>();
+        int contractMonths = max(1, lengthInMonths);
+
         for (int entry = 0; entry < schedule.size(); entry++) {
-            int scenariosThisMonth = schedule.get(entry);
-            if (scenariosThisMonth <= 0) {
+            int itemsThisMonth = schedule.get(entry);
+            if (itemsThisMonth <= 0) {
                 continue;
             }
 
@@ -378,13 +568,822 @@ public class StratConContractInitializer {
             LocalDate windowEnd = startDate.plusMonths(month + 1L);
             int windowDays = (int) ChronoUnit.DAYS.between(windowStart, windowEnd);
 
-            for (int i = 0; i < scenariosThisMonth; i++) {
+            for (int item = 0; item < itemsThisMonth; item++) {
                 LocalDate spawnDate = (windowDays > 0) ?
                                             windowStart.plusDays(Compute.randomInt(windowDays)) :
                                             windowStart;
-                campaignState.addStrategicScenarioSpawnDate(spawnDate);
+                spawnDates.add(spawnDate);
             }
         }
+
+        return spawnDates;
+    }
+
+    /**
+     * Schedules every point of interest the contract definition asks for, both strategic objectives and ordinary ones,
+     * to appear over the contract's run instead of all at once - the way strategic-objective scenarios do.
+     *
+     * <p>Point of interest objectives are a fixed number, spread across the contract's months by the Track Intensity
+     * Tables (see {@link TrackIntensityTable#rollScheduleForCount}). Ordinary points of interest have no fixed number:
+     * it is rolled on the tables like the contract's scenarios (see {@link #scheduleOrdinaryPointsOfInterest}). Each
+     * month's points of interest then get random days within
+     * it (see {@link #rollSpawnDates}), and are stored on the campaign state for the daily StratCon lifecycle to
+     * place as their days come (see {@link #spawnScheduledPointOfInterest}). Which point of interest lands on which day
+     * is shuffled, so types are not bunched together.</p>
+     *
+     * <p>When the "Contracts Use Special Mechanics" option is on, a contract type with a special point of interest (see
+     * {@link #getSpecialPointOfInterestTypeId}) ignores its definition's points of interest and schedules its special
+     * ones instead (see {@link #scheduleSpecialPointsOfInterest}), and a Recon Raid schedules none at all (see
+     * {@link StratConReconnaissance}). With it off, every contract schedules its definition's points of interest.</p>
+     *
+     * <p>Does nothing if the contract asks for no points of interest, or has no settled start date.</p>
+     *
+     * @param contract                        the contract being accepted
+     * @param contractDefinition              its StratCon contract definition
+     * @param campaignState                   the campaign state to store the scheduled points of interest on
+     * @param isMultiplyTrackIntensityByScale whether the "Multiply Track Intensity by Scale" option is on
+     * @param isContractsUseSpecialMechanics  whether the "Contracts Use Special Mechanics" option is on
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so scheduling can be tested without standing up a whole contract.
+    static void schedulePointsOfInterest(AbstractContract contract, StratConContractDefinition contractDefinition,
+          StratConCampaignState campaignState, boolean isMultiplyTrackIntensityByScale,
+          boolean isContractsUseSpecialMechanics) {
+        schedulePointsOfInterest(contract, contractDefinition, campaignState, isMultiplyTrackIntensityByScale,
+              isContractsUseSpecialMechanics, contract.getStartDate(), 0, Map.of());
+    }
+
+    /**
+     * As {@link #schedulePointsOfInterest(AbstractContract, StratConContractDefinition, StratConCampaignState, boolean,
+     * boolean)}, but for a schedule rolled from a given day on, after some points of interest have already been placed
+     * or fallen due (see {@link StratConScenarioTempo#regenerateSchedules}).
+     *
+     * <p>Special points of interest are rolled for the whole contract as usual, and only the days from
+     * {@code fromDate} on are kept; the marks already made count against what is marked now. Ordinary points of
+     * interest are rolled for the whole contract the same way. A definition's point of interest objectives are a fixed
+     * number, so those already placed or due are taken off it, and the rest are spread across the contract's remaining
+     * months instead.</p>
+     *
+     * @param contract                        the contract
+     * @param contractDefinition              its StratCon contract definition
+     * @param campaignState                   the campaign state to store the scheduled points of interest on
+     * @param isMultiplyTrackIntensityByScale whether the "Multiply Track Intensity by Scale" option is on
+     * @param isContractsUseSpecialMechanics  whether the contract uses its type's special mechanics
+     * @param fromDate                        the first day to schedule on; the contract's start date when it is
+     *                                        accepted
+     * @param committedCount                  how many point of interest objectives have already been placed or fallen
+     *                                        due
+     * @param alreadyMarkedCounts             how many of those were marked under each initial state key
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static void schedulePointsOfInterest(AbstractContract contract, StratConContractDefinition contractDefinition,
+          StratConCampaignState campaignState, boolean isMultiplyTrackIntensityByScale,
+          boolean isContractsUseSpecialMechanics, @Nullable LocalDate fromDate, int committedCount,
+          Map<String, Integer> alreadyMarkedCounts) {
+        // A Recon Raid using special mechanics has no points of interest at all: its sectors are scouted instead.
+        if (StratConReconnaissance.usesReconnaissance(contract, isContractsUseSpecialMechanics)) {
+            return;
+        }
+
+        String specialTypeId = getSpecialPointOfInterestTypeId(contract, isContractsUseSpecialMechanics);
+        if (specialTypeId != null) {
+            scheduleSpecialPointsOfInterest(contract, campaignState, isMultiplyTrackIntensityByScale, specialTypeId,
+                  fromDate, alreadyMarkedCounts);
+            return;
+        }
+
+        scheduleOrdinaryPointsOfInterest(contract, contractDefinition, campaignState, isMultiplyTrackIntensityByScale,
+              fromDate);
+
+        List<StratConScheduledPointOfInterest> requestedPointsOfInterest =
+              getRequestedObjectivePointsOfInterest(contractDefinition, contract.getScale());
+        // Those already placed or due are taken off at random, since which type each was drawn as is not remembered.
+        int removedCount = min(committedCount, requestedPointsOfInterest.size());
+        for (int index = 0; index < removedCount; index++) {
+            requestedPointsOfInterest.remove(Compute.randomInt(requestedPointsOfInterest.size()));
+        }
+        if (requestedPointsOfInterest.isEmpty()) {
+            return;
+        }
+
+        LocalDate startDate = contract.getStartDate();
+        if (startDate == null) {
+            LOGGER.warn("Contract {} has no start date, so its {} points of interest cannot be scheduled.",
+                  contract.getName(),
+                  requestedPointsOfInterest.size());
+            return;
+        }
+
+        // Spread across the months still to come: from the start date on acceptance, from fromDate when rolled again.
+        LocalDate windowStart = ((fromDate == null) || fromDate.isBefore(startDate)) ? startDate : fromDate;
+        int elapsedMonths = (int) ChronoUnit.MONTHS.between(startDate, windowStart);
+        int remainingMonths = max(1, contract.getLengthInMonths() - elapsedMonths);
+        List<Integer> schedule = TrackIntensityTable.rollScheduleForCount(remainingMonths,
+              requestedPointsOfInterest.size());
+
+        List<LocalDate> spawnDates = rollSpawnDates(windowStart, schedule, remainingMonths);
+        LocalDate endDate = contract.getEndingDate();
+        if ((endDate != null) && endDate.isAfter(windowStart)) {
+            spawnDates.replaceAll(spawnDate -> spawnDate.isBefore(endDate) ? spawnDate : endDate.minusDays(1));
+        }
+
+        int scheduledCount = min(requestedPointsOfInterest.size(), spawnDates.size());
+        for (int index = 0; index < scheduledCount; index++) {
+            StratConScheduledPointOfInterest scheduledPointOfInterest =
+                  requestedPointsOfInterest.remove(Compute.randomInt(requestedPointsOfInterest.size()));
+            scheduledPointOfInterest.setSpawnDate(spawnDates.get(index));
+            campaignState.addScheduledPointOfInterest(scheduledPointOfInterest);
+        }
+    }
+
+    /**
+     * Schedules a contract definition's ordinary (non-objective) points of interest. Their number is not fixed: it is
+     * rolled on the Track Intensity Tables the way special points of interest are (see
+     * {@link #scheduleSpecialPointsOfInterest}), once per point of scale when "Multiply Track Intensity by Scale" is on
+     * and once otherwise, honoring the contract's Track Intensity Table options. Each one's type is drawn from the
+     * definition's {@code pointsOfInterest}, weighted by the size of each entry's count (see
+     * {@link #getOrdinaryPointOfInterestWeights}).
+     *
+     * <p>The schedule is rolled for the whole contract and only the days from {@code fromDate} on are kept, so a
+     * schedule rolled again partway through leaves the days already past alone.</p>
+     *
+     * @param contract                        the contract
+     * @param contractDefinition              its StratCon contract definition
+     * @param campaignState                   the campaign state to store the scheduled points of interest on
+     * @param isMultiplyTrackIntensityByScale whether the "Multiply Track Intensity by Scale" option is on
+     * @param fromDate                        the first day to keep; the contract's start date when it is accepted
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static void scheduleOrdinaryPointsOfInterest(AbstractContract contract,
+          StratConContractDefinition contractDefinition, StratConCampaignState campaignState,
+          boolean isMultiplyTrackIntensityByScale, @Nullable LocalDate fromDate) {
+        Map<String, Double> weights = getOrdinaryPointOfInterestWeights(contractDefinition);
+        LocalDate startDate = contract.getStartDate();
+        if (weights.isEmpty() || (startDate == null)) {
+            return;
+        }
+
+        double totalWeight = 0;
+        for (double weight : weights.values()) {
+            totalWeight += weight;
+        }
+
+        // A scale-0 contract (auto-scaled from an empty hangar) still rolls once, as special points of interest do.
+        int rollCount = isMultiplyTrackIntensityByScale ? max(1, contract.getScale()) : 1;
+        List<Integer> schedule = TrackIntensityTable.rollSchedule(contract.getLengthInMonths(),
+              contract.getTrackCount(),
+              rollCount,
+              campaignState.isMinimumOneTrackPerRoll(),
+              campaignState.isRollTracksWeekly());
+
+        LocalDate endDate = contract.getEndingDate();
+        for (LocalDate spawnDate : rollSpawnDates(startDate, schedule, contract.getLengthInMonths())) {
+            if ((fromDate != null) && spawnDate.isBefore(fromDate)) {
+                continue;
+            }
+            if ((endDate != null) && endDate.isAfter(startDate) && !spawnDate.isBefore(endDate)) {
+                spawnDate = endDate.minusDays(1);
+            }
+
+            String typeId = drawWeightedTypeId(weights, totalWeight);
+            campaignState.addScheduledPointOfInterest(new StratConScheduledPointOfInterest(spawnDate, typeId, false));
+        }
+    }
+
+    private static String drawWeightedTypeId(Map<String, Double> weights, double totalWeight) {
+        double roll = Compute.randomFloat() * totalWeight;
+        String lastTypeId = null;
+        for (Map.Entry<String, Double> entry : weights.entrySet()) {
+            lastTypeId = entry.getKey();
+            roll -= entry.getValue();
+            if (roll < 0) {
+                return lastTypeId;
+            }
+        }
+        // Only reached through rounding at the very top of the range.
+        return lastTypeId;
+    }
+
+    /**
+     * Decides which special point of interest, if any, a contract uses in place of its definition's own. Special points
+     * of interest belong to the "Contracts Use Special Mechanics" option; which contract types have one, and which, is
+     * set out in {@link StratConContractMechanics}.
+     *
+     * <p>A contract with special points of interest schedules them in place of its definition's points of interest
+     * (see {@link #scheduleSpecialPointsOfInterest}). Most also replace the contract's Essential scenarios (see
+     * {@link #isReplacingEssentialScenarios}).</p>
+     *
+     * @param contract                       the contract
+     * @param isContractsUseSpecialMechanics whether the "Contracts Use Special Mechanics" option is on
+     *
+     * @return the type ID of the contract's special point of interest, or {@code null} if it has none
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the decision can be tested directly.
+    static @Nullable String getSpecialPointOfInterestTypeId(AbstractContract contract,
+          boolean isContractsUseSpecialMechanics) {
+        if (!isContractsUseSpecialMechanics) {
+            return null;
+        }
+
+        return StratConContractMechanics.forContract(contract).pointOfInterestTypeId();
+    }
+
+    /**
+     * Decides whether a contract's special points of interest (see {@link #getSpecialPointOfInterestTypeId}) replace
+     * its Essential scenarios. Most do: such a contract gets no Essential scenarios, and the combat bonus is paid for
+     * each special point of interest dealt with instead. Relief Duty, Cadre Duty, Planetary Assault, Security Duty, and
+     * Garrison Duty contracts keep their Essential scenarios alongside theirs (see
+     * {@link StratConContractMechanics#isReplacingEssentialScenarios}).
+     *
+     * @param contract                       the contract
+     * @param isContractsUseSpecialMechanics whether the "Contracts Use Special Mechanics" option is on
+     *
+     * @return {@code true} if the contract gets no Essential scenarios
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the decision can be tested directly.
+    static boolean isReplacingEssentialScenarios(AbstractContract contract, boolean isContractsUseSpecialMechanics) {
+        return isContractsUseSpecialMechanics
+                     && StratConContractMechanics.forContract(contract).isReplacingEssentialScenarios();
+    }
+
+    /**
+     * Decides whether a special point of interest type is a strategic objective (see
+     * {@link StratConContractMechanics#isPointOfInterestObjective}). A type no contract uses as its special point of
+     * interest counts as one.
+     *
+     * @param typeId the type ID of a special point of interest
+     *
+     * @return {@code true} if each point of interest of the type is a strategic objective
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the decision can be tested directly.
+    static boolean isSpecialPointOfInterestObjective(String typeId) {
+        StratConContractMechanics mechanics = StratConContractMechanics.forPointOfInterestTypeId(typeId);
+        return (mechanics == null) || mechanics.isPointOfInterestObjective();
+    }
+
+    /**
+     * Schedules a contract's special points of interest (see {@link #getSpecialPointOfInterestTypeId}). Each is a
+     * strategic objective if its type is one (see {@link #isSpecialPointOfInterestObjective}).
+     *
+     * <p>They are scheduled the way the contract's Essential scenarios are: a roll on the Track Intensity Tables for the
+     * contract's length and track count (see {@link TrackIntensityTable#rollSchedule}), made once per point of scale
+     * when "Multiply Track Intensity by Scale" is on and once otherwise. That roll is independent of the scenarios' own.
+     * Each month's points of interest then get random days within it (see {@link #rollSpawnDates}), and the type's
+     * behavior is told of the whole schedule (see {@link IStratConPointOfInterestBehavior#onScheduled}).</p>
+     *
+     * <p>Does nothing if the contract has no settled start date.</p>
+     *
+     * @param contract                        the contract being accepted
+     * @param campaignState                   the campaign state to store the scheduled points of interest on
+     * @param isMultiplyTrackIntensityByScale whether the "Multiply Track Intensity by Scale" option is on
+     * @param typeId                          the type ID of the special point of interest to schedule
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so scheduling can be tested without standing up a whole contract.
+    static void scheduleSpecialPointsOfInterest(AbstractContract contract, StratConCampaignState campaignState,
+          boolean isMultiplyTrackIntensityByScale, String typeId) {
+        scheduleSpecialPointsOfInterest(contract, campaignState, isMultiplyTrackIntensityByScale, typeId,
+              contract.getStartDate(), Map.of());
+    }
+
+    /**
+     * As {@link #scheduleSpecialPointsOfInterest(AbstractContract, StratConCampaignState, boolean, String)}, but
+     * keeping only the days from {@code fromDate} on, with the marks already made earlier in the contract counting
+     * against what is marked now (see {@link IStratConPointOfInterestBehavior#onScheduled(List, AbstractContract,
+     * Map)}).
+     *
+     * @param contract                        the contract
+     * @param campaignState                   the campaign state to store the scheduled points of interest on
+     * @param isMultiplyTrackIntensityByScale whether the "Multiply Track Intensity by Scale" option is on
+     * @param typeId                          the type ID of the special point of interest to schedule
+     * @param fromDate                        the first day to keep; the contract's start date when it is accepted
+     * @param alreadyMarkedCounts             how many points of interest earlier in the contract were marked under
+     *                                        each initial state key
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static void scheduleSpecialPointsOfInterest(AbstractContract contract, StratConCampaignState campaignState,
+          boolean isMultiplyTrackIntensityByScale, String typeId, @Nullable LocalDate fromDate,
+          Map<String, Integer> alreadyMarkedCounts) {
+        LocalDate startDate = contract.getStartDate();
+        if (startDate == null) {
+            LOGGER.warn("Contract {} has no start date, so its {} points of interest cannot be scheduled.",
+                  contract.getName(),
+                  typeId);
+            return;
+        }
+
+        // A scale-0 contract (auto-scaled from an empty hangar) still rolls once, or it would have no objectives.
+        int rollCount = isMultiplyTrackIntensityByScale ? max(1, contract.getScale()) : 1;
+        List<Integer> schedule = TrackIntensityTable.rollSchedule(contract.getLengthInMonths(),
+              contract.getTrackCount(),
+              rollCount,
+              campaignState.isMinimumOneTrackPerRoll(),
+              campaignState.isRollTracksWeekly());
+
+        boolean isStrategicObjective = isSpecialPointOfInterestObjective(typeId);
+        List<StratConScheduledPointOfInterest> scheduledPointsOfInterest = new ArrayList<>();
+        for (LocalDate spawnDate : rollSpawnDates(startDate, schedule, contract.getLengthInMonths())) {
+            if ((fromDate == null) || !spawnDate.isBefore(fromDate)) {
+                scheduledPointsOfInterest.add(new StratConScheduledPointOfInterest(spawnDate, typeId,
+                      isStrategicObjective));
+            }
+        }
+
+        // Anything a type settles up front - such as which leads pan out - is settled now, so it cannot be gamed later.
+        // The behavior is found through the type's definition, as a placed point of interest's is, so the two agree.
+        StratConPointOfInterestDefinition definition = StratConPointOfInterestDefinitions.getDefinition(typeId);
+        if (definition == null) {
+            LOGGER.warn("Point of interest type {} is not defined, so nothing is settled for it when contract {} is "
+                              + "accepted.", typeId, contract.getName());
+        } else {
+            StratConPointOfInterestBehaviors.getBehavior(definition.getBehaviorId())
+                  .onScheduled(scheduledPointsOfInterest, contract, alreadyMarkedCounts);
+        }
+
+        for (StratConScheduledPointOfInterest scheduledPointOfInterest : scheduledPointsOfInterest) {
+            campaignState.addScheduledPointOfInterest(scheduledPointOfInterest);
+        }
+    }
+
+    /**
+     * Places a random hostile facility at an eligible hex of a sector, reveals it, and makes destroying it a strategic
+     * objective of the sector - as the contract's own objective facilities are, but revealed. Respects the sector's
+     * facility capacity.
+     *
+     * @param track    the sector to place the facility in
+     * @param contract the contract whose map holds the sector
+     * @param campaign the current campaign
+     *
+     * @return the hex the facility was placed on, or {@code null} if the sector had no room for it
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static @Nullable StratConCoords spawnObjectiveFacility(StratConTrackState track, AbstractContract contract,
+          Campaign campaign) {
+        if (track.getOccupiedHexCount() >= facilityCapacity(track)) {
+            return null;
+        }
+
+        StratConCoords coords = getUnoccupiedCoords(track);
+        if (coords == null) {
+            return null;
+        }
+
+        StratConFacility facility = createMidContractFacility(campaign, contract, ForceAlignment.Opposing, true);
+        if (facility == null) {
+            return null;
+        }
+
+        facility.setStrategicObjective(true);
+        facility.setVisible(true);
+        track.addFacility(coords, facility);
+        track.getRevealedCoords().add(coords);
+
+        StratConStrategicObjective objective = new StratConStrategicObjective();
+        objective.setObjectiveCoords(coords);
+        objective.setObjectiveType(StrategicObjectiveType.FacilityDestruction);
+        track.addStrategicObjective(objective);
+
+        // A new base belongs on the road grid if the planet's owner holds it, as any other placed base does.
+        connectFacilitiesToRoads(track, contract, campaign);
+        return coords;
+    }
+
+    /**
+     * Counts the facilities on the given tracks that belong to the given side.
+     *
+     * @param tracks the tracks to look over
+     * @param owner  the side whose facilities to count
+     *
+     * @return how many facilities that side owns across the tracks
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the non-objective share rule can be tested directly.
+    static int countFacilitiesOwnedBy(List<StratConTrackState> tracks, ForceAlignment owner) {
+        int count = 0;
+        for (StratConTrackState track : tracks) {
+            for (StratConFacility facility : track.getFacilities().values()) {
+                if (facility.getOwner() == owner) {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Spreads non-objective facilities for one side across the contract's sectors.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static void placeNonObjectiveFacilities(StratConCampaignState campaignState, int facilityCount,
+          ForceAlignment owner, FacilityTier tier, @Nullable StratConContractFacilityProfile facilityProfile) {
+        List<Integer> trackObjects = trackObjectDistribution(facilityCount, campaignState.getTrackCount());
+        for (int x = 0; x < trackObjects.size(); x++) {
+            initializeTrackFacilities(campaignState.getTrack(x),
+                  trackObjects.get(x),
+                  owner,
+                  null,
+                  Collections.emptyList(),
+                  tier,
+                  facilityProfile);
+        }
+    }
+
+    /**
+     * Places a contract profile's anchor facility - a single facility of its anchor type for its anchor owner - in a
+     * random sector with room for it.
+     *
+     * @return {@code true} if it was placed
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static boolean placeAnchorFacility(StratConCampaignState campaignState,
+          StratConContractFacilityProfile facilityProfile, FacilityTier tier) {
+        FacilityType anchorType = facilityProfile.getAnchorType();
+        if ((anchorType == null) || (campaignState.getTrackCount() == 0)) {
+            return false;
+        }
+
+        StratConFacility anchor = StratConContractFacilityProfile.createFacility(anchorType,
+              facilityProfile.getAnchorOwner());
+        if (anchor == null) {
+            return false;
+        }
+
+        // Start in a random sector, then try the others in turn, so one full sector doesn't cost the contract its
+        // anchor.
+        int trackCount = campaignState.getTrackCount();
+        int firstTrackIndex = Compute.randomInt(trackCount);
+        StratConTrackState track = null;
+        StratConCoords coords = null;
+        for (int offset = 0; (offset < trackCount) && (coords == null); offset++) {
+            track = campaignState.getTrack((firstTrackIndex + offset) % trackCount);
+            if (track.getOccupiedHexCount() < facilityCapacity(track)) {
+                coords = getUnoccupiedCoords(track);
+            }
+        }
+        if (coords == null) {
+            return false;
+        }
+
+        anchor.setTier(tier);
+        FacilityTrait.assignRandomTraits(anchor);
+        anchor.setGarrison(anchor.getGarrisonMaximum());
+        track.addFacility(coords, anchor);
+        return true;
+    }
+
+    /**
+     * Creates a facility for a scenario that brings one onto the map partway through a contract, made the same way as
+     * those placed when the contract began: its type is picked by the contract's facility profile, if it has one, its
+     * tier follows the contract's scale and profile, it rolls traits, and it starts with a full garrison.
+     *
+     * @param campaign the current campaign
+     * @param contract the contract whose map gets the facility
+     * @param owner    the side that holds it
+     *
+     * @return the facility, not yet placed, or {@code null} if no facility definition suits that side
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static @Nullable StratConFacility createMidContractFacility(Campaign campaign, AbstractContract contract,
+          ForceAlignment owner) {
+        return createMidContractFacility(campaign, contract, owner, false);
+    }
+
+    /**
+     * As {@link #createMidContractFacility(Campaign, AbstractContract, ForceAlignment)}, but for a facility that may be
+     * a strategic objective, which starts one tier larger.
+     *
+     * @param campaign    the current campaign
+     * @param contract    the contract whose map gets the facility
+     * @param owner       the side that holds it
+     * @param isObjective whether the facility is a strategic objective
+     *
+     * @return the facility, not yet placed, or {@code null} if no facility definition suits that side
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static @Nullable StratConFacility createMidContractFacility(Campaign campaign, AbstractContract contract,
+          ForceAlignment owner, boolean isObjective) {
+        StratConContractDefinition contractDefinition =
+              StratConContractDefinition.getContractDefinition(contract.getObjectiveType());
+        StratConContractFacilityProfile facilityProfile = (contractDefinition == null) ?
+                                                                null :
+                                                                contractDefinition.getFacilityProfile();
+
+        StratConFacility facility;
+        if (facilityProfile != null) {
+            facility = facilityProfile.createFacility(owner);
+        } else {
+            facility = (owner == ForceAlignment.Opposing) ?
+                             StratConFacilityFactory.getRandomHostileFacility() :
+                             StratConFacilityFactory.getRandomAlliedFacility();
+        }
+        if (facility == null) {
+            return null;
+        }
+
+        facility.setOwner(owner);
+        boolean isFactorSupportPointsIntoScale = campaign.getCampaignOptions()
+                                                       .get(CampaignOption.USE_CHAOS_SCALE_SUPPORT_POINT_CONVERSION);
+        facility.setTier(adjustTier(facilityProfile,
+              getFacilityTier(contract.getScale(), isFactorSupportPointsIntoScale, isObjective)));
+        FacilityTrait.assignRandomTraits(facility);
+        facility.setGarrison(facility.getGarrisonMaximum());
+        return facility;
+    }
+
+    /**
+     * @return the "Facility Density" option multiplied by the contract profile's own density, if there is a profile
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static double getFacilityDensity(CampaignOptions campaignOptions,
+          @Nullable StratConContractFacilityProfile facilityProfile) {
+        Double optionDensity = campaignOptions.get(CampaignOption.FACILITY_DENSITY);
+        double density = (optionDensity == null) ? 1.0 : optionDensity;
+        return (facilityProfile == null) ? density : density * facilityProfile.getDensityMultiplier();
+    }
+
+    private static FacilityTier adjustTier(@Nullable StratConContractFacilityProfile facilityProfile,
+          FacilityTier tier) {
+        return (facilityProfile == null) ? tier : facilityProfile.adjustTier(tier);
+    }
+
+    /** Normalized Scale (see {@link #getFacilityTier}) up to which facilities are Outposts. */
+    static final int OUTPOST_SCALE_LIMIT = 2;
+
+    /** Normalized Scale (see {@link #getFacilityTier}) up to which facilities are Bases; above it, Strongholds. */
+    static final int BASE_SCALE_LIMIT = 5;
+
+    /**
+     * Works out the tier of a facility placed for a contract. Scale is first normalized, as for the facility share:
+     * taken as it is when battlefield support points are factored into scale, and divided by three otherwise. Up to
+     * {@value #OUTPOST_SCALE_LIMIT} gives an Outpost, up to {@value #BASE_SCALE_LIMIT} a Base, and above that a
+     * Stronghold. An objective facility is one tier larger, up to a Stronghold.
+     *
+     * @param scale                          the contract's scale
+     * @param isFactorSupportPointsIntoScale whether battlefield support points are factored into scale
+     * @param isObjective                    whether the facility is a strategic objective
+     *
+     * @return the facility's tier
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static FacilityTier getFacilityTier(int scale, boolean isFactorSupportPointsIntoScale, boolean isObjective) {
+        int normalizedScale = isFactorSupportPointsIntoScale ?
+                                    scale :
+                                    scale / StratConScenarioTempo.SUPPORT_POINT_SCALE_ROLL_MULTIPLIER;
+
+        FacilityTier tier;
+        if (normalizedScale <= OUTPOST_SCALE_LIMIT) {
+            tier = FacilityTier.OUTPOST;
+        } else if (normalizedScale <= BASE_SCALE_LIMIT) {
+            tier = FacilityTier.BASE;
+        } else {
+            tier = FacilityTier.STRONGHOLD;
+        }
+
+        return isObjective ? tier.next() : tier;
+    }
+
+    /** Objective facilities are three times as scarce as the contract's whole share of facilities. */
+    static final int OBJECTIVE_FACILITY_SCALE_DIVISOR = 3;
+
+    /**
+     * @param objectiveType a strategic objective type
+     *
+     * @return {@code true} if the objective places facilities: allied to hold, or hostile to take or destroy
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isFacilityObjective(StrategicObjectiveType objectiveType) {
+        return (objectiveType == StrategicObjectiveType.AlliedFacilityControl) ||
+                     (objectiveType == StrategicObjectiveType.HostileFacilityControl) ||
+                     (objectiveType == StrategicObjectiveType.FacilityDestruction);
+    }
+
+    /**
+     * Works out how many facilities a facility objective with a scaled count places: one per three points of scale
+     * when battlefield support points are factored into scale, and one per nine points otherwise, rounded down. As for
+     * every other scaled objective, it never drops below one.
+     *
+     * @param scale                          the contract's scale
+     * @param isFactorSupportPointsIntoScale whether battlefield support points are factored into scale
+     *
+     * @return the number of objective facilities, at least one
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the counting rule can be tested directly.
+    static int getObjectiveFacilityCount(int scale, boolean isFactorSupportPointsIntoScale) {
+        int divisor = isFactorSupportPointsIntoScale ?
+                            OBJECTIVE_FACILITY_SCALE_DIVISOR :
+                            OBJECTIVE_FACILITY_SCALE_DIVISOR * StratConScenarioTempo.SUPPORT_POINT_SCALE_ROLL_MULTIPLIER;
+        return max(1, scale / divisor);
+    }
+
+    /**
+     * Works out how many non-objective facilities a contract places. The contract's share of facilities is one per
+     * point of scale when battlefield support points are factored into scale, since that makes for smaller scales, and
+     * one per three points otherwise, rounded down. Objective facilities owned by the same side count against that
+     * share; non-objective facilities only fill what they leave over.
+     *
+     * @param scale                          the contract's scale
+     * @param isFactorSupportPointsIntoScale whether battlefield support points are factored into scale
+     * @param objectiveFacilityCount         how many objective facilities the contract has already placed for the side
+     *                                       that owns the non-objective facilities
+     *
+     * @return the number of non-objective facilities, never negative
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the counting rule can be tested directly.
+    static int getNonObjectiveFacilityCount(int scale, boolean isFactorSupportPointsIntoScale,
+          int objectiveFacilityCount) {
+        return getNonObjectiveFacilityCount(scale, isFactorSupportPointsIntoScale, objectiveFacilityCount, 1.0);
+    }
+
+    /**
+     * As {@link #getNonObjectiveFacilityCount(int, boolean, int)}, with the contract's share of facilities multiplied
+     * by the given density and rounded to the nearest whole facility before the objective facilities are taken off.
+     *
+     * @param density how much to multiply the share by
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static int getNonObjectiveFacilityCount(int scale, boolean isFactorSupportPointsIntoScale,
+          int objectiveFacilityCount, double density) {
+        int facilityShare = isFactorSupportPointsIntoScale ?
+                                  scale :
+                                  scale / StratConScenarioTempo.SUPPORT_POINT_SCALE_ROLL_MULTIPLIER;
+        return max(0, (int) Math.round(facilityShare * density) - objectiveFacilityCount);
+    }
+
+    /**
+     * Lists every point of interest objective a contract definition asks for, without spawn dates: one per objective,
+     * its type drawn at random from that objective's {@code objectivePointsOfInterest}. Counts are worked out as for
+     * other objectives - a negative count is scaled by the contract's size, never below one. Ordinary points of
+     * interest are rolled instead (see {@link #scheduleOrdinaryPointsOfInterest}).
+     *
+     * <p>An objective with no types to choose from is skipped and logged.</p>
+     *
+     * @param contractDefinition the contract definition
+     * @param scale              the contract's scale
+     *
+     * @return the requested point of interest objectives, in definition order
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the counting rules can be tested directly.
+    static List<StratConScheduledPointOfInterest> getRequestedObjectivePointsOfInterest(
+          StratConContractDefinition contractDefinition, int scale) {
+        List<StratConScheduledPointOfInterest> requestedPointsOfInterest = new ArrayList<>();
+
+        List<ObjectiveParameters> objectiveParameters = contractDefinition.getObjectiveParameters();
+        if (objectiveParameters != null) {
+            for (ObjectiveParameters objectiveParams : objectiveParameters) {
+                if (objectiveParams.getObjectiveType() != StrategicObjectiveType.PointOfInterest) {
+                    continue;
+                }
+
+                List<String> typeIds = objectiveParams.getObjectivePointsOfInterest();
+                if (typeIds.isEmpty()) {
+                    LOGGER.warn("A point of interest objective in contract definition {} lists no types; skipping it.",
+                          contractDefinition.getContractTypeName());
+                    continue;
+                }
+
+                // As for every other objective type, a scaled count never drops below one.
+                int objectiveCount = (objectiveParams.getObjectiveCount() > 0) ?
+                                           (int) objectiveParams.getObjectiveCount() :
+                                           (int) max(1, -objectiveParams.getObjectiveCount() * scale);
+
+                for (int objectiveIndex = 0; objectiveIndex < objectiveCount; objectiveIndex++) {
+                    String typeId = typeIds.get(Compute.randomInt(typeIds.size()));
+                    requestedPointsOfInterest.add(new StratConScheduledPointOfInterest(null, typeId, true));
+                }
+            }
+        }
+
+        return requestedPointsOfInterest;
+    }
+
+    /**
+     * Works out how likely each of a contract definition's ordinary points of interest is to be drawn (see
+     * {@link #scheduleOrdinaryPointsOfInterest}). An entry's weight is the size of its count, so a negative (scaled)
+     * count weighs the same as the positive one; the count no longer sets how many appear. Entries of the same type
+     * add together. An entry with no type, or a count of zero, is skipped; one with no type is logged.
+     *
+     * @param contractDefinition the contract definition
+     *
+     * @return each ordinary point of interest type ID with its weight, in definition order; empty if there are none
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    // Package-private rather than private so the weighting rules can be tested directly.
+    static Map<String, Double> getOrdinaryPointOfInterestWeights(StratConContractDefinition contractDefinition) {
+        Map<String, Double> weights = new LinkedHashMap<>();
+        for (PointOfInterestParameters pointOfInterestParameters : contractDefinition.getPointsOfInterest()) {
+            String typeId = pointOfInterestParameters.getTypeId();
+            if ((typeId == null) || typeId.isBlank()) {
+                LOGGER.warn("A point of interest entry in contract definition {} has no type; skipping it.",
+                      contractDefinition.getContractTypeName());
+                continue;
+            }
+
+            double weight = Math.abs(pointOfInterestParameters.getCount());
+            if (weight > 0) {
+                weights.merge(typeId, weight, Double::sum);
+            }
+        }
+        return weights;
+    }
+
+    /**
+     * Places a scheduled point of interest whose day has come, in one of the contract's sectors: tried in a random
+     * order until one has an eligible hex for it (see {@link StratConPointOfInterestPlacer}). Its lifespan counts from
+     * today. Does nothing in mapless mode, where there is no map to place it on.
+     *
+     * @param campaign                 the current campaign
+     * @param contract                 the contract the point of interest belongs to
+     * @param scheduledPointOfInterest the point of interest to place
+     *
+     * @return the placed point of interest, or {@code null} if no sector had room for it (logged) or there is no map
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static @Nullable StratConPointOfInterest spawnScheduledPointOfInterest(Campaign campaign,
+          AbstractContract contract, StratConScheduledPointOfInterest scheduledPointOfInterest) {
+        StratConCampaignState campaignState = contract.getStratConCampaignState();
+        if ((campaignState == null) || campaign.getCampaignOptions().isUseStratConMaplessMode()) {
+            return null;
+        }
+
+        // Sectors are tried in random order.
+        List<StratConTrackState> tracks = new ArrayList<>(campaignState.getTracks());
+        while (!tracks.isEmpty()) {
+            StratConTrackState track = tracks.remove(Compute.randomInt(tracks.size()));
+            StratConPointOfInterest pointOfInterest = scheduledPointOfInterest.isStrategicObjective() ?
+                                                            StratConPointOfInterestPlacer.placeAsStrategicObjective(
+                                                                  track,
+                                                                  scheduledPointOfInterest.getTypeId(),
+                                                                  null,
+                                                                  campaign.getLocalDate()) :
+                                                            StratConPointOfInterestPlacer.place(track,
+                                                                  scheduledPointOfInterest.getTypeId(),
+                                                                  null,
+                                                                  campaign.getLocalDate());
+            if (pointOfInterest != null) {
+                // Anything the point of interest was told when it was scheduled goes with it onto the map.
+                scheduledPointOfInterest.getInitialState().forEach(pointOfInterest::setStateValue);
+                return pointOfInterest;
+            }
+        }
+
+        // Debug rather than info: the daily lifecycle retries it each day until a sector has room.
+        LOGGER.debug("No sector of contract {} had room for scheduled point of interest {}; it will be tried again.",
+              contract.getName(),
+              scheduledPointOfInterest);
+        return null;
     }
 
     /**
@@ -408,22 +1407,23 @@ public class StratConContractInitializer {
     }
 
     /**
-     * Retrieves a random scenario odds value from the provided {@link StratConContractDefinition}.
+     * Retrieves a random deployment encounter odds value from the provided {@link StratConContractDefinition}.
      *
-     * <p>The scenario odds are selected randomly from the list of scenario odds in the
+     * <p>The odds are selected randomly from the list of deployment encounter odds in the
      * given {@code StratConContractDefinition}.</p>
      *
-     * @param contractDefinition the contract definition containing scenario odds options
+     * @param contractDefinition the contract definition containing deployment encounter odds options
      *
-     * @return a randomly selected scenario odds value
+     * @return a randomly selected deployment encounter odds value
      *
-     * @throws IllegalArgumentException if the list of scenario odds is empty
-     * @throws NullPointerException     if {@code contractDefinition} or its scenario odds list is null
+     * @throws IllegalArgumentException if the list of deployment encounter odds is empty
+     * @throws NullPointerException     if {@code contractDefinition} or its deployment encounter odds list is null
      * @author Illiani
      * @since 0.50.05
      */
-    public static int getScenarioOdds(StratConContractDefinition contractDefinition) {
-        return contractDefinition.getScenarioOdds().get(Compute.randomInt(contractDefinition.getScenarioOdds().size()));
+    public static int getDeploymentEncounterOdds(StratConContractDefinition contractDefinition) {
+        List<Integer> deploymentEncounterOdds = contractDefinition.getDeploymentEncounterOdds();
+        return deploymentEncounterOdds.get(Compute.randomInt(deploymentEncounterOdds.size()));
     }
 
 
@@ -525,20 +1525,32 @@ public class StratConContractInitializer {
     /**
      * What a proposed resize would disturb, so a GM can be told before anything is moved.
      *
-     * @param facilities how many facilities would be displaced back inside the sector
-     * @param scenarios  how many scenarios would be displaced back inside the sector
-     * @param objectives how many strategic objectives sit on the ground being cut away
-     * @param forces     how many deployed forces would be recalled
-     * @param freeHexes  how many hexes inside the new bounds are free to receive a displaced occupant
+     * @param facilities                how many facilities would be displaced back inside the sector
+     * @param scenarios                 how many scenarios would be displaced back inside the sector
+     * @param pointsOfInterest          how many points of interest would be displaced back inside the sector
+     * @param occupyingPointsOfInterest how many of those points of interest occupy their hex, and so need a free hex
+     *                                  of their own
+     * @param objectives                how many strategic objectives sit on the ground being cut away
+     * @param forces                    how many deployed forces would be recalled
+     * @param freeHexes                 how many hexes inside the new bounds are free to receive a displaced occupant
      */
-    public record ResizeImpact(int facilities, int scenarios, int objectives, int forces, int freeHexes) {
+    public record ResizeImpact(int facilities, int scenarios, int pointsOfInterest, int occupyingPointsOfInterest,
+          int objectives, int forces, int freeHexes) {
         public boolean isEmpty() {
-            return (facilities == 0) && (scenarios == 0) && (objectives == 0) && (forces == 0);
+            return (facilities == 0) &&
+                         (scenarios == 0) &&
+                         (pointsOfInterest == 0) &&
+                         (objectives == 0) &&
+                         (forces == 0);
         }
 
-        /** @return how many facilities and scenarios would have to be found a new hex inside the sector. */
+        /**
+         * @return how many facilities, scenarios, and occupying points of interest would have to be found a free hex
+         *       inside the sector. Points of interest that do not occupy their hex can share one, so they are not
+         *       counted.
+         */
         public int displacedOccupants() {
-            return facilities + scenarios;
+            return facilities + scenarios + occupyingPointsOfInterest;
         }
 
         /**
@@ -563,6 +1575,8 @@ public class StratConContractInitializer {
     public static ResizeImpact previewResize(StratConTrackState track, int newWidth, int newHeight) {
         int facilities = 0;
         int scenarios = 0;
+        int pointsOfInterest = 0;
+        int occupyingPointsOfInterest = 0;
         int objectives = 0;
         int forces = 0;
 
@@ -574,6 +1588,14 @@ public class StratConContractInitializer {
         for (StratConCoords coords : track.getScenarios().keySet()) {
             if (isOutside(coords, newWidth, newHeight)) {
                 scenarios++;
+            }
+        }
+        for (StratConPointOfInterest pointOfInterest : track.getPointsOfInterest()) {
+            if ((pointOfInterest.getCoords() != null) && isOutside(pointOfInterest.getCoords(), newWidth, newHeight)) {
+                pointsOfInterest++;
+                if (pointOfInterest.occupiesHex()) {
+                    occupyingPointsOfInterest++;
+                }
             }
         }
         for (StratConStrategicObjective objective : track.getStrategicObjectives()) {
@@ -588,13 +1610,20 @@ public class StratConContractInitializer {
             }
         }
 
-        return new ResizeImpact(facilities, scenarios, objectives, forces, freeHexes(track, newWidth, newHeight));
+        return new ResizeImpact(facilities,
+              scenarios,
+              pointsOfInterest,
+              occupyingPointsOfInterest,
+              objectives,
+              forces,
+              freeHexes(track, newWidth, newHeight));
     }
 
     /**
      * Counts the hexes that would still be able to take a relocated occupant at the proposed size, mirroring what
-     * {@link #getUnoccupiedCoords(StratConTrackState)} considers eligible: dry land, holding no scenario, no facility,
-     * and no deployed force. Anything already inside the new bounds keeps its hex, so it is counted as taken.
+     * {@link #getUnoccupiedCoords(StratConTrackState)} considers eligible: dry land that is not occupied (see
+     * {@link StratConTrackState#isHexOccupied}) and holds no deployed force. Anything already inside the new bounds
+     * keeps its hex, so it is counted as taken.
      */
     private static int freeHexes(StratConTrackState track, int newWidth, int newHeight) {
         Collection<StratConCoords> forceCoords = track.getAssignedForceCoords().values();
@@ -604,8 +1633,7 @@ public class StratConContractInitializer {
             for (int y = 0; y < newHeight; y++) {
                 StratConCoords coords = new StratConCoords(x, y);
                 boolean available = !StratConBiomeManifest.isOceanTerrain(track.getTerrainTile(coords)) &&
-                                          (track.getScenario(coords) == null) &&
-                                          (track.getFacility(coords) == null) &&
+                                          !track.isHexOccupied(coords) &&
                                           !forceCoords.contains(coords);
                 if (available) {
                     free++;
@@ -624,8 +1652,9 @@ public class StratConContractInitializer {
      * room at the left or top would silently rewire the whole map's adjacency and tear apart coastlines, ranges, and
      * roads. Growing at the far edges leaves every existing hex on its original coordinates.</p>
      *
-     * <p>Ground outside the new bounds is discarded, but its occupants are not: facilities and scenarios are moved
-     * back inside (with their strategic objectives), and any force left standing outside is recalled. Call
+     * <p>Ground outside the new bounds is discarded, but its occupants are not: facilities, scenarios, and points of
+     * interest are moved back inside (with their strategic objectives), and any force left standing outside is
+     * recalled. Call
      * {@link #previewResize} first so the GM knows what is about to move.</p>
      *
      * @param track     the track to resize
@@ -656,8 +1685,9 @@ public class StratConContractInitializer {
 
     /**
      * Moves a sector's bounds and puts its occupants back inside: ground outside the new bounds is discarded, but
-     * facilities and scenarios are relocated (carrying their strategic objectives and any forces deployed to them), and
-     * a force left standing off the map is recalled.
+     * facilities, scenarios, and occupying points of interest are relocated to free hexes (carrying their strategic
+     * objectives and any forces deployed to them), points of interest that do not occupy their hex are pulled in to the
+     * nearest edge, and a force left standing off the map is recalled.
      *
      * <p>Callers must check {@link #previewResize} first - this assumes the sector can hold what it is about to
      * displace.</p>
@@ -666,13 +1696,25 @@ public class StratConContractInitializer {
         // Note who is about to be left outside before the bounds move, so they can be re-homed afterward.
         List<StratConCoords> displacedFacilities = outsideCoords(track.getFacilities().keySet(), width, height);
         List<StratConCoords> displacedScenarios = outsideCoords(track.getScenarios().keySet(), width, height);
+        List<StratConCoords> displacedOccupyingPointsOfInterest = outsideCoords(occupyingPointOfInterestCoords(track),
+              width,
+              height);
+        List<StratConPointOfInterest> displacedNonOccupyingPointsOfInterest = new ArrayList<>();
+        for (StratConPointOfInterest pointOfInterest : track.getPointsOfInterest()) {
+            StratConCoords coords = pointOfInterest.getCoords();
+            if (!pointOfInterest.occupiesHex() && (coords != null) && isOutside(coords, width, height)) {
+                displacedNonOccupyingPointsOfInterest.add(pointOfInterest);
+            }
+        }
 
         track.setWidth(width);
         track.setHeight(height);
         track.trimToBounds();
 
-        for (StratConCoords source : occupiedCoords(displacedFacilities, displacedScenarios)) {
-            StratConCoords destination = getUnoccupiedCoords(track);
+        for (StratConCoords source : occupiedCoords(displacedFacilities,
+              displacedScenarios,
+              displacedOccupyingPointsOfInterest)) {
+            StratConCoords destination = findRelocationCoords(track, source);
             if (destination == null) {
                 // The capacity check above should have prevented this; drop the occupant rather than strand it outside
                 // the sector, where it would be invisible and unreachable but still counted.
@@ -686,13 +1728,128 @@ public class StratConContractInitializer {
             relocateOccupant(track, source, destination);
         }
 
+        pullInNonOccupyingPointsOfInterest(track, displacedNonOccupyingPointsOfInterest);
+
         // Forces left standing on ground that no longer exists are recalled.
         recallForcesOutsideBounds(track);
     }
 
     /**
-     * Collects the distinct hexes holding a displaced facility or scenario, facility hexes first, so that a hex shared
-     * by both is visited once.
+     * Brings points of interest that do not occupy their hex back inside a shrunken sector, onto the nearest hex at its
+     * new edge. They need no free hex of their own, so they are not scattered the way occupants are - but they are not
+     * discarded with the ground either, since any of them may carry a strategic objective.
+     *
+     * <p>If that edge hex breaks the type's placement rules (see {@link StratConPointOfInterestPlacer#canPlace}), the
+     * point of interest goes to a random hex that keeps them instead. Failing that, it stays on the edge hex - unless
+     * it is land-only and that hex is ocean, in which case it goes to any free dry hex, and is removed only if the
+     * sector has none.</p>
+     *
+     * @param track            the sector, already at its new bounds
+     * @param pointsOfInterest the points of interest left outside those bounds
+     */
+    private static void pullInNonOccupyingPointsOfInterest(StratConTrackState track,
+          List<StratConPointOfInterest> pointsOfInterest) {
+        for (StratConPointOfInterest pointOfInterest : pointsOfInterest) {
+            StratConCoords coords = pointOfInterest.getCoords();
+            StratConCoords edgeCoords = new StratConCoords(min(coords.getX(), track.getWidth() - 1),
+                  min(coords.getY(), track.getHeight() - 1));
+            StratConCoords destination = edgeCoords;
+
+            StratConPointOfInterestDefinition definition = pointOfInterest.getDefinition();
+            if ((definition != null) && !StratConPointOfInterestPlacer.canPlace(track, definition, edgeCoords)) {
+                StratConCoords eligibleCoords = StratConPointOfInterestPlacer.findPlacementCoords(track, definition);
+                if (eligibleCoords != null) {
+                    destination = eligibleCoords;
+                } else if (isLandOnly(pointOfInterest) &&
+                                 StratConBiomeManifest.isOceanTerrain(track.getTerrainTile(edgeCoords))) {
+                    destination = getUnoccupiedCoords(track);
+                }
+            }
+
+            if ((destination == null) || !track.movePointOfInterest(pointOfInterest.getId(), destination)) {
+                LOGGER.warn("No room to relocate point of interest {} on track {}; removing it.",
+                      pointOfInterest,
+                      track.getDisplayableName());
+                dropPointOfInterest(track, pointOfInterest);
+            }
+        }
+    }
+
+    /**
+     * Picks where to relocate the occupant of {@code source}. A point of interest that occupies the hex is sent to a
+     * hex its type's placement rules allow (see {@link StratConPointOfInterestPlacer#findPlacementCoords}), kept on
+     * dry land if a facility or scenario shares the hex and moves with it; anything else, or a point of interest with
+     * no such hex, goes to any free dry hex.
+     *
+     * @param track  the sector
+     * @param source the hex whose occupant is moving
+     *
+     * @return the hex to move it to, or {@code null} if there is none
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static @Nullable StratConCoords findRelocationCoords(StratConTrackState track, StratConCoords source) {
+        StratConPointOfInterest occupyingPointOfInterest = track.getOccupyingPointOfInterest(source);
+        StratConPointOfInterestDefinition definition = (occupyingPointOfInterest == null) ?
+                                                             null :
+                                                             occupyingPointOfInterest.getDefinition();
+
+        if (definition != null) {
+            StratConCoords eligibleCoords = StratConPointOfInterestPlacer.findPlacementCoords(track, definition);
+            boolean sharedWithFacilityOrScenario = (track.getFacility(source) != null) ||
+                                                         (track.getScenario(source) != null);
+            boolean eligibleCoordsAreOcean = (eligibleCoords != null) &&
+                                                   StratConBiomeManifest.isOceanTerrain(track.getTerrainTile(
+                                                         eligibleCoords));
+
+            if ((eligibleCoords != null) && !(sharedWithFacilityOrScenario && eligibleCoordsAreOcean)) {
+                return eligibleCoords;
+            }
+        }
+
+        return getUnoccupiedCoords(track);
+    }
+
+    /**
+     * Removes a point of interest that no hex can receive, along with any strategic objective tied to it - as a
+     * facility that cannot be relocated takes its objective with it - so nothing is left pointing at a point of
+     * interest that is gone.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static void dropPointOfInterest(StratConTrackState track, StratConPointOfInterest pointOfInterest) {
+        for (StratConStrategicObjective objective : StratConPointOfInterestRules.getStrategicObjectives(track,
+              pointOfInterest)) {
+            track.removeStrategicObjective(objective);
+        }
+        track.removePointOfInterest(pointOfInterest.getId());
+    }
+
+    /** @return the hexes of every point of interest in the sector that occupies its hex. */
+    private static List<StratConCoords> occupyingPointOfInterestCoords(StratConTrackState track) {
+        List<StratConCoords> coords = new ArrayList<>();
+        for (StratConPointOfInterest pointOfInterest : track.getPointsOfInterest()) {
+            if ((pointOfInterest.getCoords() != null) && pointOfInterest.occupiesHex()) {
+                coords.add(pointOfInterest.getCoords());
+            }
+        }
+        return coords;
+    }
+
+    /**
+     * @return {@code true} if the point of interest's definition keeps it off water; one whose type is no longer
+     *       defined is not held to it
+     */
+    private static boolean isLandOnly(StratConPointOfInterest pointOfInterest) {
+        StratConPointOfInterestDefinition definition = pointOfInterest.getDefinition();
+        return (definition != null) && definition.isLandOnly();
+    }
+
+    /**
+     * Collects the distinct hexes holding a displaced facility, scenario, or occupying point of interest, facility
+     * hexes first, so that a hex shared by more than one is visited once.
      *
      * <p>A facility scenario is created on its facility's coordinates, and later completion, capture, or destruction
      * resolves the facility by looking it up from the scenario's coordinates. Relocating the facility and the scenario
@@ -700,18 +1857,34 @@ public class StratConContractInitializer {
      * the two must move together, as one occupant of a single hex.</p>
      */
     private static Collection<StratConCoords> occupiedCoords(Collection<StratConCoords> facilityCoords,
-          Collection<StratConCoords> scenarioCoords) {
+          Collection<StratConCoords> scenarioCoords, Collection<StratConCoords> pointOfInterestCoords) {
         Set<StratConCoords> coords = new LinkedHashSet<>(facilityCoords);
         coords.addAll(scenarioCoords);
+        coords.addAll(pointOfInterestCoords);
         return coords;
     }
 
     /**
-     * Moves everything sitting on {@code source} - a facility, a scenario, or the facility scenario that is both - to
-     * {@code destination} as one occupant, carrying its strategic objective and any forces deployed to it. This keeps a
-     * facility and its co-located scenario on the same hex, which their capture and destruction rules depend on.
+     * Moves everything sitting on {@code source} - a facility, a scenario, the facility scenario that is both, or a
+     * point of interest that occupies its hex - to {@code destination} as one occupant, carrying its strategic
+     * objective and any forces deployed to it. This keeps a facility and its co-located scenario on the same hex, which
+     * their capture and destruction rules depend on.
+     *
+     * <p>Points of interest that do not occupy their hex stay where they are: they belong to the ground, not to the
+     * occupant.</p>
      */
     private static void relocateOccupant(StratConTrackState track, StratConCoords source, StratConCoords destination) {
+        // Move an occupying point of interest first: once a facility or scenario lands on the destination, that hex
+        // counts as occupied and the point of interest would be refused.
+        StratConPointOfInterest occupyingPointOfInterest = track.getOccupyingPointOfInterest(source);
+        if ((occupyingPointOfInterest != null) &&
+                  !track.movePointOfInterest(occupyingPointOfInterest.getId(), destination)) {
+            LOGGER.warn("Could not relocate point of interest {} to {} on track {}.",
+                  occupyingPointOfInterest,
+                  destination,
+                  track.getDisplayableName());
+        }
+
         StratConFacility facility = track.getFacility(source);
         if (facility != null) {
             track.removeFacility(source);
@@ -727,16 +1900,72 @@ public class StratConContractInitializer {
 
         track.moveObjective(source, destination);
         moveAssignedForces(track, source, destination);
+        moveFacilityState(track, source, destination);
     }
 
     /**
-     * Removes whatever occupies {@code source} - facility, scenario, and its strategic objective - when no free hex can
-     * receive it.
+     * Points the hex-keyed facility state - orders under way, siege targets, and the cut-off record - that referred to
+     * {@code source} at {@code destination} instead, so a moved facility keeps its running orders and sieges.
+     */
+    private static void moveFacilityState(StratConTrackState track, StratConCoords source,
+          StratConCoords destination) {
+        for (StratConFacilityOrder order : track.getFacilityOrders()) {
+            if (source.equals(order.getTargetCoords())) {
+                order.setTargetCoords(destination);
+            }
+        }
+
+        for (StratConScenario scenario : track.getScenarios().values()) {
+            if (source.equals(scenario.getSiegeCoords())) {
+                scenario.setSiegeCoords(destination);
+            }
+        }
+
+        if (track.getCutOffFacilities().remove(source)) {
+            track.getCutOffFacilities().add(destination);
+        }
+    }
+
+    /**
+     * Drops the hex-keyed facility state - orders under way, siege targets, and the cut-off record - that referred to
+     * an occupant that could not be saved.
+     */
+    private static void dropFacilityState(StratConTrackState track, StratConCoords source) {
+        track.getFacilityOrders().removeIf(order -> {
+            boolean targetsSource = source.equals(order.getTargetCoords());
+            if (targetsSource) {
+                LOGGER.warn("Abandoned {} order on {} on track {}: its target could not be relocated.",
+                      order.getOperation(),
+                      source,
+                      track.getDisplayableName());
+            }
+            return targetsSource;
+        });
+
+        for (StratConScenario scenario : track.getScenarios().values()) {
+            if (source.equals(scenario.getSiegeCoords())) {
+                scenario.setSiegeCoords(null);
+            }
+        }
+
+        track.getCutOffFacilities().remove(source);
+    }
+
+    /**
+     * Removes whatever occupies {@code source} - facility, scenario, occupying point of interest, and its strategic
+     * objective - when no free hex can receive it.
      */
     private static void dropOccupant(StratConTrackState track, StratConCoords source) {
         track.removeFacility(source);
         track.getScenarios().remove(source);
+
+        StratConPointOfInterest occupyingPointOfInterest = track.getOccupyingPointOfInterest(source);
+        if (occupyingPointOfInterest != null) {
+            dropPointOfInterest(track, occupyingPointOfInterest);
+        }
+
         removeObjectiveAt(track, source);
+        dropFacilityState(track, source);
     }
 
     /** Drops any strategic objective tied to a hex whose occupant could not be saved, so nothing points at dead ground. */
@@ -894,18 +2123,20 @@ public class StratConContractInitializer {
     }
 
     /**
-     * Moves any facility or scenario that a regeneration left sitting on an ocean hex to a fresh, non-ocean unoccupied
-     * hex, carrying any strategic-objective marker along with it. Occupants are left in place if the sector has no free
-     * land to receive them.
+     * Moves any facility, scenario, or occupying point of interest that a regeneration left sitting on an ocean hex to
+     * a fresh, non-ocean unoccupied hex, carrying any strategic-objective marker along with it. Land-only points of
+     * interest that do not occupy their hex are moved ashore the same way; any others stay put, since they can sit on
+     * water. Everything is left in place if the sector has no free land to receive it.
      *
      * @param track the freshly regenerated track to clean up
      */
     private static void relocateOccupantsOffOcean(StratConTrackState track) {
         List<StratConCoords> floodedFacilities = floodedCoords(track, track.getFacilities().keySet());
         List<StratConCoords> floodedScenarios = floodedCoords(track, track.getScenarios().keySet());
+        List<StratConCoords> floodedPointsOfInterest = floodedCoords(track, occupyingPointOfInterestCoords(track));
 
-        for (StratConCoords source : occupiedCoords(floodedFacilities, floodedScenarios)) {
-            StratConCoords destination = getUnoccupiedCoords(track);
+        for (StratConCoords source : occupiedCoords(floodedFacilities, floodedScenarios, floodedPointsOfInterest)) {
+            StratConCoords destination = findRelocationCoords(track, source);
             if (destination == null) {
                 // No dry land left to receive it; leave the occupant where it is rather than destroy it.
                 break;
@@ -914,8 +2145,44 @@ public class StratConContractInitializer {
             relocateOccupant(track, source, destination);
         }
 
+        relocateLandOnlyPointsOfInterestOffOcean(track);
+
         // A force standing on ground that just flooded, with no facility or scenario to carry it ashore, is recalled.
         recallForcesOnOcean(track);
+    }
+
+    /**
+     * Moves every land-only point of interest that does not occupy its hex, and that a terrain change has left on
+     * ocean, to dry land: a hex its type's placement rules allow if there is one, else any free dry hex. Left in place
+     * if the sector has no dry land to receive it.
+     */
+    private static void relocateLandOnlyPointsOfInterestOffOcean(StratConTrackState track) {
+        List<StratConPointOfInterest> floodedPointsOfInterest = new ArrayList<>();
+        for (StratConPointOfInterest pointOfInterest : track.getPointsOfInterest()) {
+            StratConCoords coords = pointOfInterest.getCoords();
+            if (!pointOfInterest.occupiesHex() &&
+                      (coords != null) &&
+                      isLandOnly(pointOfInterest) &&
+                      StratConBiomeManifest.isOceanTerrain(track.getTerrainTile(coords))) {
+                floodedPointsOfInterest.add(pointOfInterest);
+            }
+        }
+
+        for (StratConPointOfInterest pointOfInterest : floodedPointsOfInterest) {
+            // Prefer a hex its type's placement rules allow; it needs no free hex of its own, only dry land.
+            StratConCoords destination = StratConPointOfInterestPlacer.findPlacementCoords(track,
+                  pointOfInterest.getDefinition());
+            if (destination == null) {
+                destination = getUnoccupiedCoords(track);
+            }
+
+            if (destination == null) {
+                // No dry land left to receive it; leave it where it is rather than destroy it.
+                continue;
+            }
+
+            track.movePointOfInterest(pointOfInterest.getId(), destination);
+        }
     }
 
     /** @return those of the given occupant hexes that a terrain change has left sitting on ocean. */
@@ -1133,28 +2400,72 @@ public class StratConContractInitializer {
      * Worker function that takes a track state and plops down the given number of facilities owned by the given faction
      * Avoids places with existing facilities and scenarios, capable of taking facility sub set and setting strategic
      * objective flag.
+     *
+     * @param objectiveType the strategic objective each facility is tied to, or {@code null} for facilities that are no
+     *                      objective at all
      */
     // Package-private rather than private so the capacity rules can be tested directly; reaching them through contract
     // initialization would mean standing up a whole contract to assert on a placement loop.
     static void initializeTrackFacilities(StratConTrackState trackState, int numFacilities, ForceAlignment owner,
-          boolean strategicObjective, List<String> modifiers) {
+          @Nullable StrategicObjectiveType objectiveType, List<String> modifiers) {
+        initializeTrackFacilities(trackState, numFacilities, owner, objectiveType, modifiers, FacilityTier.BASE);
+    }
+
+    /**
+     * As {@link #initializeTrackFacilities(StratConTrackState, int, ForceAlignment, StrategicObjectiveType, List)},
+     * placing facilities of the given tier, each with a full garrison.
+     *
+     * @param tier the tier of every facility placed
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static void initializeTrackFacilities(StratConTrackState trackState, int numFacilities, ForceAlignment owner,
+          @Nullable StrategicObjectiveType objectiveType, List<String> modifiers, FacilityTier tier) {
+        initializeTrackFacilities(trackState, numFacilities, owner, objectiveType, modifiers, tier, null);
+    }
+
+    /**
+     * As {@link #initializeTrackFacilities(StratConTrackState, int, ForceAlignment, StrategicObjectiveType, List,
+     * FacilityTier)}, picking each facility's type from a contract's facility profile.
+     *
+     * @param facilityProfile the contract's facility profile, or {@code null} for random types
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static void initializeTrackFacilities(StratConTrackState trackState, int numFacilities, ForceAlignment owner,
+          @Nullable StrategicObjectiveType objectiveType, List<String> modifiers, FacilityTier tier,
+          @Nullable StratConContractFacilityProfile facilityProfile) {
+        boolean strategicObjective = objectiveType != null;
 
         int capacity = facilityCapacity(trackState);
         int placed = 0;
 
         for (int fCount = 0; fCount < numFacilities; fCount++) {
             // Stop deliberately at capacity rather than running on until placement happens to fail.
-            if ((trackState.getFacilities().size() + trackState.getScenarios().size()) >= capacity) {
+            if (trackState.getOccupiedHexCount() >= capacity) {
                 break;
             }
 
-            StratConFacility sf = owner == ForceAlignment.Allied ?
-                                        StratConFacilityFactory.getRandomAlliedFacility() :
-                                        StratConFacilityFactory.getRandomHostileFacility();
+            StratConFacility sf;
+            if (facilityProfile != null) {
+                sf = facilityProfile.createFacility(owner);
+            } else {
+                sf = owner == ForceAlignment.Allied ?
+                           StratConFacilityFactory.getRandomAlliedFacility() :
+                           StratConFacilityFactory.getRandomHostileFacility();
+            }
+            if (sf == null) {
+                break;
+            }
 
             sf.setOwner(owner);
+            sf.setTier(tier);
+            FacilityTrait.assignRandomTraits(sf);
+            sf.setGarrison(sf.getGarrisonMaximum());
             sf.setStrategicObjective(strategicObjective);
-            sf.getLocalModifiers().addAll(modifiers);
+            sf.addAdditionalLocalModifiers(modifiers);
 
             StratConCoords coords = getUnoccupiedCoords(trackState);
 
@@ -1172,11 +2483,11 @@ public class StratConContractInitializer {
                 if (sf.getOwner() == ForceAlignment.Allied) {
                     trackState.getRevealedCoords().add(coords);
                     sf.setVisible(true);
-                    sso.setObjectiveType(StrategicObjectiveType.AlliedFacilityControl);
                 } else {
                     sf.setVisible(false);
-                    sso.setObjectiveType(StrategicObjectiveType.HostileFacilityControl);
                 }
+
+                sso.setObjectiveType(objectiveType);
 
                 trackState.addStrategicObjective(sso);
             }
@@ -1201,6 +2512,32 @@ public class StratConContractInitializer {
      *       suggest. And only part of that land is offered, because scenarios need somewhere to spawn for the life of
      *       the contract; a sector paved with facilities has nowhere left to fight.</p>
      */
+    /**
+     * @param track a sector
+     *
+     * @return {@code true} if the sector has room for another facility under its cap (see
+     *       {@link #facilityCapacity})
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static boolean hasRoomForFacility(StratConTrackState track) {
+        return track.getOccupiedHexCount() < facilityCapacity(track);
+    }
+
+    /**
+     * @param track a sector
+     *
+     * @return how many hexes the sector lets facilities, scenarios and points of interest take up (see
+     *       {@link #hasRoomForFacility})
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static int getFacilityCapacity(StratConTrackState track) {
+        return facilityCapacity(track);
+    }
+
     private static int facilityCapacity(StratConTrackState trackState) {
         int placeable = 0;
         for (int x = 0; x < trackState.getWidth(); x++) {
@@ -1320,7 +2657,7 @@ public class StratConContractInitializer {
 
         for (int sCount = 0; sCount < numScenarios; sCount++) {
             // if there's no possible empty places to put down a new scenario, then move on
-            if ((trackState.getFacilities().size() + trackState.getScenarios().size()) >= trackSize) {
+            if (trackState.getOccupiedHexCount() >= trackSize) {
                 break;
             }
 
@@ -1343,13 +2680,21 @@ public class StratConContractInitializer {
             }
 
             // facility
-            boolean addedFacility = false;
+            StratConFacility facility = null;
             if (template.isFacilityScenario()) {
-                StratConFacility facility = template.isHostileFacility() ?
-                                                  StratConFacilityFactory.getRandomHostileFacility() :
-                                                  StratConFacilityFactory.getRandomAlliedFacility();
+                facility = createMidContractFacility(campaign,
+                      contract,
+                      template.isHostileFacility() ? ForceAlignment.Opposing : ForceAlignment.Allied,
+                      true);
+                if (facility == null) {
+                    // Without a facility to sit on, a facility scenario has nothing to fight over; skip it rather
+                    // than place one whose objectives point at a missing facility.
+                    LOGGER.warn("No facility for objective scenario {} on track {}; skipping it.",
+                          template.name,
+                          trackState.getDisplayableName());
+                    continue;
+                }
                 trackState.addFacility(coords, facility);
-                addedFacility = true;
             }
 
             // create scenario - don't assign a force yet
@@ -1362,6 +2707,10 @@ public class StratConContractInitializer {
                   null);
 
             if (scenario != null) {
+                if (facility != null) {
+                    StratConRulesManager.setupFacilityScenario(scenario, facility, null);
+                }
+
                 // These appear over the contract's run on their scheduled day and are meant to be fought like any
                 // normal scenario: keep the deployment dates generateScenario set and leave them uncloaked, so the
                 // player can engage immediately rather than having to scout them out first.
@@ -1381,11 +2730,8 @@ public class StratConContractInitializer {
                 // as befits a scenario that is already visible and fightable: the objectives list then shows its
                 // coordinates instead of the "Locate and..." wording used for hexes still to be scouted.
                 trackState.getRevealedCoords().add(coords);
-                if (addedFacility) {
-                    StratConFacility placedFacility = trackState.getFacility(coords);
-                    if (placedFacility != null) {
-                        placedFacility.setVisible(true);
-                    }
+                if (facility != null) {
+                    facility.setVisible(true);
                 }
 
                 StratConStrategicObjective sso = new StratConStrategicObjective();
@@ -1393,7 +2739,7 @@ public class StratConContractInitializer {
                 sso.setObjectiveType(StrategicObjectiveType.SpecificScenarioVictory);
                 sso.setDesiredObjectiveCount(1);
                 trackState.addStrategicObjective(sso);
-            } else if (addedFacility) {
+            } else if (facility != null) {
                 trackState.removeFacility(coords);
             }
         }
@@ -1425,6 +2771,7 @@ public class StratConContractInitializer {
      * <p>A coordinate is considered suitable when all the following are true:</p>
      * <ul>
      *     <li>There is <b>no active scenario</b> at that coordinate.</li>
+     *     <li>There is <b>no point of interest that occupies</b> that coordinate.</li>
      *     <li>The coordinate does <b>not</b> contain player-assigned forces, unless {@code
      *     allowPlayerForces} is {@code true}.</li>
      *     <li>The coordinate either contains no facility, or contains an <b>allied facility</b> and
@@ -1474,6 +2821,11 @@ public class StratConContractInitializer {
                 }
 
                 if (trackState.getScenario(coords) != null) {
+                    continue;
+                }
+
+                // A point of interest that occupies its hex keeps scenarios and facilities off it.
+                if (trackState.getOccupyingPointOfInterest(coords) != null) {
                     continue;
                 }
 

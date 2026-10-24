@@ -35,8 +35,8 @@ package mekhq.campaign.parts;
 
 import java.io.PrintWriter;
 
+import jakarta.annotation.Nullable;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.units.Entity;
 import megamek.common.units.EntityMovementMode;
 import megamek.common.units.Infantry;
@@ -200,7 +200,9 @@ public class InfantryMotiveType extends Part {
 
     @Override
     public Part clone() {
-        return new InfantryMotiveType(0, campaign, mode);
+        InfantryMotiveType clone = new InfantryMotiveType(0, campaign, mode);
+        clone.copyBaseData(this);
+        return clone;
     }
 
     public EntityMovementMode getMovementMode() {

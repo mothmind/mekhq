@@ -199,7 +199,7 @@ public final class InjuryUtil {
                 hasNewInjuries = true;
             }
 
-            if (injury.getType().impliesDead(injury.getLocation())) {
+            if (injury.getType().impliesDead(injury.getLocation()) && person.getInjuries().contains(injury)) {
                 person.changeStatus(campaign, campaign.getLocalDate(), PersonnelStatus.MEDICAL_COMPLICATIONS);
             }
             // For missing limbs, we add an amputation recovery so they always show up in the infirmary
@@ -639,9 +639,10 @@ public final class InjuryUtil {
                 } else if (!person.needsFixing()) {
                     dismissed = true;
                     MedicalLogger.dismissedFromInfirmary(person, campaign.getLocalDate());
-                    //employed only; prisoners would probably be too much needless spam
                     if (person.getPrisonerStatus().isFreeOrBondsman()) {
                         MedicalLogger.dismissedFromInfirmary(person, campaign);
+                    } else {
+                        MedicalLogger.prisonerDismissedFromInfirmary(person, campaign);
                     }
                 }
 

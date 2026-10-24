@@ -34,6 +34,8 @@ package mekhq.campaign.market;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -49,9 +51,10 @@ import java.util.stream.Stream;
 import megamek.common.equipment.WeaponType;
 import megamek.common.units.Entity;
 import megamek.common.units.Mek;
+import megamek.common.units.ProtoMek;
 import mekhq.campaign.Campaign;
-import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.parts.AmmoStorage;
 import mekhq.campaign.parts.Armor;
 import mekhq.campaign.parts.Cubicle;
@@ -69,11 +72,18 @@ import mekhq.campaign.parts.meks.MekCockpit;
 import mekhq.campaign.parts.meks.MekGyro;
 import mekhq.campaign.parts.meks.MekLocation;
 import mekhq.campaign.parts.meks.MekSensor;
+import mekhq.campaign.parts.protomeks.ProtoMekArmActuator;
+import mekhq.campaign.parts.protomeks.ProtoMekJumpJet;
+import mekhq.campaign.parts.protomeks.ProtoMekLegActuator;
+import mekhq.campaign.parts.protomeks.ProtoMekLocation;
+import mekhq.campaign.parts.protomeks.ProtoMekSensor;
+import mekhq.campaign.unit.Unit;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import testUtilities.MHQTestUtilities;
@@ -840,6 +850,51 @@ class PartsInUseManagerTest {
                 assertEquals(1, afterChangeAllPercents.stream().filter(i -> i == DESIRED_STOCK_LEVEL).toArray().length);
             }
 
+            /**
+             * @return each ProtoMek part paired with the campaign option that should set its default stock percent
+             *
+             * @author Illiani
+             * @since 0.51.01
+             */
+            public static Stream<Arguments> protoMekDefaultStockPercentParts() {
+                return Stream.of(
+                      Arguments.of(new ProtoMekLocation(ProtoMek.LOC_HEAD, 5, 0, false, false, null),
+                            CampaignOption.AUTO_LOGISTICS_MEK_HEAD),
+                      Arguments.of(new ProtoMekLocation(ProtoMek.LOC_TORSO, 5, 0, false, false, null),
+                            CampaignOption.AUTO_LOGISTICS_NON_REPAIRABLE_LOCATION),
+                      Arguments.of(new ProtoMekLocation(ProtoMek.LOC_LEFT_ARM, 5, 0, false, false, null),
+                            CampaignOption.AUTO_LOGISTICS_MEK_LOCATION),
+                      Arguments.of(new ProtoMekLocation(ProtoMek.LOC_LEG, 5, 0, false, false, null),
+                            CampaignOption.AUTO_LOGISTICS_MEK_LOCATION),
+                      Arguments.of(new ProtoMekLocation(ProtoMek.LOC_MAIN_GUN, 5, 0, false, false, null),
+                            CampaignOption.AUTO_LOGISTICS_MEK_LOCATION),
+                      Arguments.of(new ProtoMekArmActuator(5, ProtoMek.LOC_LEFT_ARM, null),
+                            CampaignOption.AUTO_LOGISTICS_ACTUATORS),
+                      Arguments.of(new ProtoMekLegActuator(5, null), CampaignOption.AUTO_LOGISTICS_ACTUATORS),
+                      Arguments.of(new ProtoMekJumpJet(5, null), CampaignOption.AUTO_LOGISTICS_JUMP_JETS),
+                      Arguments.of(new ProtoMekSensor(5, null), CampaignOption.AUTO_LOGISTICS_HEAD_COMPONENTS));
+            }
+
+            @ParameterizedTest
+            @MethodSource(value = "protoMekDefaultStockPercentParts")
+            public void testGetDefaultStockPercentProtoMekParts(Part protoMekPart, CampaignOption expectedOption) {
+                // Act
+                try {
+                    initialStockPercent = (int) method.invoke(partsInUseManager, protoMekPart);
+
+                    // Let's change it and make sure that it uses the new value
+                    when(mockCampaignOptions.get(expectedOption)).thenReturn(DESIRED_STOCK_LEVEL);
+
+                    desiredStockPercent = (int) method.invoke(partsInUseManager, protoMekPart);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new RuntimeException(e);
+                }
+
+                // Assert
+                assertEquals(INCORRECT_STOCK_LEVEL, initialStockPercent);
+                assertEquals(DESIRED_STOCK_LEVEL, desiredStockPercent);
+            }
+
             private List<Integer> getAllDefaultStockPercents() {
                 List<Integer> stockPercents = new ArrayList<>();
 
@@ -1052,6 +1107,104 @@ class PartsInUseManagerTest {
                   "In-transit refit-reserved part should NOT count as stored");
             assertEquals(1, transferCount[0],
                   "In-transit refit-reserved part should count as in-transfer");
+        }
+
+        /**
+         * A counting stand-in for a {@link PartInUse} record.
+         *
+         * @param useCount   a one-element array the in-use count is written into
+         * @param storeCount a one-element array the stored count is written into
+         *
+         * @return the record
+         */
+        private PartInUse countingPartInUse(int[] useCount, int[] storeCount) {
+            PartInUse partInUse = mock(PartInUse.class);
+            when(partInUse.getUseCount()).thenAnswer(invocation -> useCount[0]);
+            when(partInUse.getStoreCount()).thenAnswer(invocation -> storeCount[0]);
+            doAnswer(invocation -> {
+                useCount[0] = invocation.getArgument(0);
+                return null;
+            }).when(partInUse).setUseCount(anyInt());
+            doAnswer(invocation -> {
+                storeCount[0] = invocation.getArgument(0);
+                return null;
+            }).when(partInUse).setStoreCount(anyInt());
+            return partInUse;
+        }
+
+        /**
+         * @param mothballed whether the unit the part sits on is mothballed
+         *
+         * @return a part fitted to a unit in that state
+         */
+        private Part partOnUnit(boolean mothballed) {
+            Unit unit = mock(Unit.class);
+            when(unit.isConventionalInfantry()).thenReturn(false);
+            when(unit.isMothballed()).thenReturn(mothballed);
+            when(unit.isSalvage()).thenReturn(false);
+
+            Part part = mock(Part.class);
+            when(part.getUnit()).thenReturn(unit);
+            when(part.isPresent()).thenReturn(true);
+            when(part.isReservedForRefit()).thenReturn(false);
+            when(part.getQuantity()).thenReturn(1);
+            when(part.getQuantityForPartsInUse()).thenReturn(1);
+            when(part.getQuality()).thenReturn(PartQuality.QUALITY_D);
+            return part;
+        }
+
+        @Test
+        public void testMothballedUnitPartIgnoredWhenFlagSet() throws Exception {
+            // Arrange: a part fitted to a mothballed unit
+            Part part = partOnUnit(true);
+            int[] useCount = { 0 };
+            int[] storeCount = { 0 };
+            PartInUse partInUse = countingPartInUse(useCount, storeCount);
+
+            // Act: ask for mothballed units to be left out
+            method.invoke(partsInUseManager, partInUse, part, true, PartQuality.QUALITY_A);
+
+            // Assert
+            assertEquals(0, useCount[0], "A part on a mothballed unit should not count as in-use");
+            assertEquals(0, storeCount[0], "A part on a mothballed unit should not count as stored");
+        }
+
+        @Test
+        public void testMothballedUnitPartCountedWhenFlagClear() throws Exception {
+            // Arrange: the same part on the same mothballed unit
+            Part part = partOnUnit(true);
+            int[] useCount = { 0 };
+            int[] storeCount = { 0 };
+            PartInUse partInUse = countingPartInUse(useCount, storeCount);
+
+            // Act: this time do not ask for mothballed units to be left out
+            method.invoke(partsInUseManager, partInUse, part, false, PartQuality.QUALITY_A);
+
+            // Assert: proves the test above is actually exercising the flag, and not passing because
+            // something else about the part stopped it being counted
+            assertEquals(1, useCount[0], "A part on a mothballed unit should count when the flag is clear");
+        }
+
+        @Test
+        public void testPartWithNoUnitIsCountedRatherThanFailing() throws Exception {
+            // Arrange: a spare, which is what a part with no unit is
+            Part spare = mock(Part.class);
+            when(spare.getUnit()).thenReturn(null);
+            when(spare.isPresent()).thenReturn(true);
+            when(spare.isReservedForRefit()).thenReturn(false);
+            when(spare.getQuantity()).thenReturn(4);
+            when(spare.getQuantityForPartsInUse()).thenReturn(4);
+            when(spare.getQuality()).thenReturn(PartQuality.QUALITY_D);
+            int[] useCount = { 0 };
+            int[] storeCount = { 0 };
+            PartInUse partInUse = countingPartInUse(useCount, storeCount);
+
+            // Act: with the mothball flag set, which is the path that asks a unit whether it is mothballed
+            method.invoke(partsInUseManager, partInUse, spare, true, PartQuality.QUALITY_A);
+
+            // Assert: a part with no unit never reaches the mothball question, so it is counted normally
+            assertEquals(0, useCount[0], "A spare should not count as in-use");
+            assertEquals(4, storeCount[0], "A spare with qty=4 should count as 4 stored");
         }
     }
 }

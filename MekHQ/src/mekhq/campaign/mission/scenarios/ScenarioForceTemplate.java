@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import jakarta.annotation.Nullable;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBElement;
 import jakarta.xml.bind.Unmarshaller;
@@ -48,7 +49,6 @@ import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlElementWrapper;
 import megamek.client.ratgenerator.MissionRole;
 import megamek.client.ratgenerator.ModelRecord;
-import megamek.common.annotations.Nullable;
 import megamek.common.board.Board;
 import megamek.common.compute.Compute;
 import megamek.common.units.UnitType;
@@ -105,6 +105,10 @@ public class ScenarioForceTemplate implements Comparable<ScenarioForceTemplate> 
 
     public static final int DEPLOYMENT_ZONE_NARROW_EDGE = DEPLOYMENT_ZONES.length - 1;
 
+    // A force's stored destinationZone is a CardinalEdge index (North(0), South(1), West(2), East(3), Nearest(4),
+    // None(5)) for the plain edges, plus the two special sentinels below. Note that this ordering is deliberately NOT
+    // the display ordering of BOT_DESTINATION_ZONES above; DestinationZoneMapper bridges the two for the editor combo
+    // box, and the runtime reads the stored value straight through CardinalEdge.getCardinalEdge(int).
     public static final int DESTINATION_EDGE_OPPOSITE_DEPLOYMENT = 6;
     public static final int DESTINATION_EDGE_RANDOM = 7;
 
@@ -623,7 +627,6 @@ public class ScenarioForceTemplate implements Comparable<ScenarioForceTemplate> 
         this.deploymentZones = deploymentZones;
     }
 
-    @Deprecated(since = "0.51.0", forRemoval = true)
     public void setDestinationZone(int destinationZone) {
         this.destinationZone = destinationZone;
     }
@@ -841,7 +844,8 @@ public class ScenarioForceTemplate implements Comparable<ScenarioForceTemplate> 
         rft.setGenerationMethod(ForceGenerationMethod.PlayerSupplied.ordinal());
         rft.setGenerationOrder(1);
         rft.setActualDeploymentZone(Board.START_NONE);
-        rft.setSyncDeploymentType(SynchronizedDeploymentType.None);
+        rft.setSyncDeploymentType(SynchronizedDeploymentType.SameArc);
+        rft.setSyncedForceName(PRIMARY_FORCE_TEMPLATE_ID);
 
         return rft;
     }

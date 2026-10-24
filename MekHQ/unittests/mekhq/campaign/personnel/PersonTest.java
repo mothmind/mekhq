@@ -33,6 +33,11 @@
 package mekhq.campaign.personnel;
 
 import static mekhq.campaign.personnel.ATOWTraits.WEALTH;
+import static mekhq.campaign.personnel.PersonnelOptions.ATOW_FIT;
+import static mekhq.campaign.personnel.PersonnelOptions.ATOW_TOUGHNESS;
+import static mekhq.campaign.personnel.PersonnelOptions.FLAW_GLASS_JAW;
+import static mekhq.campaign.personnel.PersonnelOptions.FLAW_UNFIT;
+import static mekhq.campaign.personnel.PersonnelOptions.UNOFFICIAL_DOBROWSKI_SYNDROME;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -55,7 +60,6 @@ import static org.mockito.Mockito.when;
 import static testUtilities.MHQTestUtilities.mockCampaign;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -107,6 +111,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
@@ -2303,18 +2309,27 @@ public class PersonTest {
     }
 
     /**
-     * Tests for {@code Person#attemptToCheatDeath(Campaign)} (the "Twist of Fate Survival" ability). The method is
-     * private, so it is exercised here via reflection.
+     * Tests for {@code Person#attemptToCheatDeath(Campaign, PersonnelStatus)} (the "Twist of Fate Survival" ability).
      */
     @Nested
     class AttemptToCheatDeath {
         private static final int DEATH = 6;
+        private static final LocalDate TODAY = LocalDate.of(3151, 1, 1);
 
-        /** Invokes the private {@code attemptToCheatDeath(Campaign)} method reflectively. */
-        private boolean invokeAttemptToCheatDeath(Person person, Campaign campaign) throws Exception {
-            Method method = Person.class.getDeclaredMethod("attemptToCheatDeath", Campaign.class);
-            method.setAccessible(true);
-            return (boolean) method.invoke(person, campaign);
+        private boolean invokeAttemptToCheatDeath(Person person, Campaign campaign) {
+            return person.attemptToCheatDeath(campaign, PersonnelStatus.KIA);
+        }
+
+        private CampaignOptions mockTwistOfFateOptions(boolean isUseAdvancedMedical) {
+            CampaignOptions options = mock(CampaignOptions.class);
+            when(options.get(CampaignOption.USE_TWIST_OF_FATE_SURVIVAL)).thenReturn(true);
+            lenient().when(options.isUseAdvancedMedical()).thenReturn(isUseAdvancedMedical);
+            return options;
+        }
+
+        private Injury newConcussion(int hits, boolean isPermanent) {
+            return new Injury(1, "Test concussion", BodyLocation.HEAD, InjuryTypes.CONCUSSION, hits, TODAY,
+                  isPermanent);
         }
 
         private Campaign mockCampaignWith(CampaignOptions options) {
@@ -2331,7 +2346,7 @@ public class PersonTest {
         }
 
         @Test
-        void returnsFalseWhenTwistOfFateDisabled() throws Exception {
+        void returnsFalseWhenTwistOfFateDisabled() {
             Person person = new Person("GivenName", "Surname", null, "MERC");
             person.setAttributeScore(SkillAttribute.EDGE, 3);
 
@@ -2346,7 +2361,7 @@ public class PersonTest {
         }
 
         @Test
-        void returnsFalseWhenNoPermanentEdge() throws Exception {
+        void returnsFalseWhenNoPermanentEdge() {
             Person person = new Person("GivenName", "Surname", null, "MERC");
             // Fresh personnel default to an Edge score of 0.
             assertEquals(0, person.getAttributeScore(SkillAttribute.EDGE));
@@ -2361,7 +2376,7 @@ public class PersonTest {
         }
 
         @Test
-        void survivesAndConsumesEdgeWhenNoLethalDamage() throws Exception {
+        void survivesAndConsumesEdgeWhenNoLethalDamage() {
             Person person = new Person("GivenName", "Surname", null, "MERC");
             person.setAttributeScore(SkillAttribute.EDGE, 3);
 
@@ -2380,7 +2395,7 @@ public class PersonTest {
         }
 
         @Test
-        void survivesAndHealsExcessHits() throws Exception {
+        void survivesAndHealsExcessHits() {
             Person person = new Person("GivenName", "Surname", null, "MERC");
             person.setAttributeScore(SkillAttribute.EDGE, 3);
             person.setHits(DEATH + 2); // lethal hit total
@@ -2399,7 +2414,7 @@ public class PersonTest {
         }
 
         @Test
-        void survivesAndHealsExcessInjuries() throws Exception {
+        void survivesAndHealsExcessInjuries() {
             Person person = new Person("GivenName", "Surname", null, "MERC");
             person.setAttributeScore(SkillAttribute.EDGE, 3);
             person.addInjury(new Injury(1, "Test concussion 1", BodyLocation.HEAD, InjuryTypes.CONCUSSION, 2,
@@ -2416,8 +2431,89 @@ public class PersonTest {
 
             assertTrue(invokeAttemptToCheatDeath(person, campaign));
             assertEquals(2, person.getAttributeScore(SkillAttribute.EDGE));
-            assertTrue(person.getNonPermanentInjurySeverity() < DEATH);
+            assertTrue(person.getTotalInjurySeverity() < DEATH);
             verify(campaign, atLeast(2)).addReport(any(), anyString());
+        }
+
+        @Test
+        void healsBelowThresholdIncludingPermanentInjuries() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+            person.addInjury(newConcussion(2, true));
+            person.addInjury(newConcussion(2, false));
+            person.addInjury(newConcussion(2, false));
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(true));
+
+            assertTrue(invokeAttemptToCheatDeath(person, campaign));
+            assertTrue(person.getTotalInjurySeverity() < DEATH);
+            // The permanent injury cannot be healed
+            assertEquals(1, person.getPermanentInjuries().size());
+        }
+
+        @Test
+        void healsHitsBelowThresholdIncludingPermanentInjuries() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+            person.addInjury(newConcussion(2, true));
+            person.setHits(DEATH);
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(false));
+
+            assertTrue(invokeAttemptToCheatDeath(person, campaign));
+            assertEquals(DEATH - 1 - 2, person.getHits());
+            assertTrue(person.getTotalInjurySeverity() < DEATH);
+        }
+
+        @Test
+        void failsWithoutConsumingEdgeWhenPermanentInjuriesAreLethal() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+            // Concussions cap at 2 hits, so three are needed to reach the lethal threshold
+            person.addInjury(newConcussion(2, true));
+            person.addInjury(newConcussion(2, true));
+            person.addInjury(newConcussion(2, true));
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(true));
+
+            assertFalse(invokeAttemptToCheatDeath(person, campaign));
+            assertEquals(3, person.getAttributeScore(SkillAttribute.EDGE));
+            verify(campaign, never()).addReport(any(), anyString());
+        }
+
+        @Test
+        void failsWithoutConsumingEdgeForVoluntaryDeath() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(false));
+
+            assertFalse(person.attemptToCheatDeath(campaign, PersonnelStatus.SEPPUKU));
+            assertEquals(3, person.getAttributeScore(SkillAttribute.EDGE));
+        }
+
+        @Test
+        void failsWithoutConsumingEdgeWhenAlreadyDead() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+            person.setStatus(PersonnelStatus.KIA);
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(false));
+
+            assertFalse(person.attemptToCheatDeath(campaign, PersonnelStatus.WOUNDS));
+            assertEquals(3, person.getAttributeScore(SkillAttribute.EDGE));
+        }
+
+        @Test
+        void failsWithoutConsumingEdgeWhenPrisoner() {
+            Person person = new Person("GivenName", "Surname", null, "MERC");
+            person.setAttributeScore(SkillAttribute.EDGE, 3);
+            person.setPrisonerStatusDirect(PrisonerStatus.PRISONER);
+
+            Campaign campaign = mockCampaignWith(mockTwistOfFateOptions(false));
+
+            assertFalse(invokeAttemptToCheatDeath(person, campaign));
+            assertEquals(3, person.getAttributeScore(SkillAttribute.EDGE));
         }
     }
 
@@ -2425,5 +2521,117 @@ public class PersonTest {
         Field declaredField = target.getClass().getDeclaredField(fieldName);
         declaredField.setAccessible(true);
         declaredField.set(target, value);
+    }
+
+    @Nested
+    class FatigueChanges {
+        private Person person;
+
+        @BeforeEach
+        void setUp() {
+            Campaign mockCampaign = mockCampaign();
+            Faction mockFaction = mock(Faction.class);
+            when(mockCampaign.getPlayerForce().getFaction()).thenReturn(mockFaction);
+            when(mockFaction.getShortName()).thenReturn("MERC");
+            person = new Person(mockCampaign);
+        }
+
+        /**
+         * Sets the option directly, rather than through {@link PersonnelOptions#acquireAbility}, as acquiring an
+         * ability removes its opposite (such as Glass Jaw and Toughness). Characters can still end up with both, so
+         * the multiplier has to handle it.
+         */
+        private void giveAbility(String ability) {
+            person.getOptions().getOption(ability).setValue(true);
+        }
+
+        @ParameterizedTest(name = "Glass Jaw {0}, Toughness {1}, Unfit {2}, Fit {3}: +{4} -> {5}")
+        @CsvSource({
+              // No traits: x1
+              "false, false, false, false, 3, 3",
+              // Glass Jaw or Unfit: x2
+              "true, false, false, false, 2, 4",
+              "false, false, true, false, 2, 4",
+              // Glass Jaw and Unfit: x3
+              "true, false, true, false, 2, 6",
+              // Toughness or Fit: x0.5, rounded down, minimum 1
+              "false, true, false, false, 1, 1",
+              "false, true, false, false, 3, 1",
+              "false, true, false, false, 4, 2",
+              "false, false, false, true, 1, 1",
+              // Toughness and Fit: x0.25, rounded down, minimum 1
+              "false, true, false, true, 1, 1",
+              "false, true, false, true, 3, 1",
+              "false, true, false, true, 8, 2",
+              // Opposing pairs cancel out
+              "true, true, false, false, 3, 3",
+              "false, false, true, true, 3, 3",
+              "true, true, true, true, 3, 3"
+        })
+        void gainIsScaledByMultiplier(boolean glassJaw, boolean toughness, boolean unfit, boolean fit, int gain,
+              int expected) {
+            if (glassJaw) {
+                giveAbility(FLAW_GLASS_JAW);
+            }
+            if (toughness) {
+                giveAbility(ATOW_TOUGHNESS);
+            }
+            if (unfit) {
+                giveAbility(FLAW_UNFIT);
+            }
+            if (fit) {
+                giveAbility(ATOW_FIT);
+            }
+
+            person.changeFatigue(gain);
+
+            assertEquals(expected, person.getFatigueDirect());
+        }
+
+        @Test
+        void gainWithoutMultiplierIsUnscaled() {
+            giveAbility(FLAW_GLASS_JAW);
+
+            person.changeFatigue(2, false);
+
+            assertEquals(2, person.getFatigueDirect());
+        }
+
+        @Test
+        void reductionIsNeverScaled() {
+            giveAbility(FLAW_GLASS_JAW);
+            person.setFatigue(10);
+
+            person.changeFatigue(-3);
+
+            assertEquals(7, person.getFatigueDirect());
+        }
+
+        @Test
+        void fatigueIsCappedAtThirty() {
+            person.setFatigue(29);
+
+            person.changeFatigue(5);
+
+            assertEquals(30, person.getFatigueDirect());
+        }
+
+        @Test
+        void fatigueCannotGoBelowZero() {
+            person.setFatigue(2);
+
+            person.changeFatigue(-5);
+
+            assertEquals(0, person.getFatigueDirect());
+        }
+
+        @Test
+        void dobrowskiSyndromeAddsTwoAdjustedFatigue() {
+            giveAbility(UNOFFICIAL_DOBROWSKI_SYNDROME);
+            person.setFatigue(3);
+
+            assertEquals(3, person.getFatigueDirect());
+            assertEquals(5, person.getAdjustedFatigue());
+        }
     }
 }

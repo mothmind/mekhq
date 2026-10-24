@@ -32,8 +32,10 @@
  */
 package mekhq.campaign.mission.contract;
 
+import static mekhq.MHQConstants.BATTLE_OF_TUKAYYID;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.MAXIMUM_MORALE_LEVEL;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.MINIMUM_MORALE_LEVEL;
+import static mekhq.campaign.universe.Faction.PIRATE_FACTION_CODE;
 import static mekhq.utilities.MHQInternationalization.getTextAt;
 
 import java.time.LocalDate;
@@ -60,6 +62,7 @@ import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
 import mekhq.campaign.digitalGM.stratCon.SupportPointNegotiation;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.mission.contract.contractData.*;
+import mekhq.campaign.mission.contract.contractGeneration.ChaosContractDeterminationScale;
 import mekhq.campaign.mission.contract.contractGeneration.ChaosEmployerType;
 import mekhq.campaign.mission.contract.io.ContractXmlCodec;
 import mekhq.campaign.mission.scenarios.AtBScenario;
@@ -106,8 +109,14 @@ public abstract class AbstractContract {
 
     private @Nonnull Money salvagedByUnitValue = Money.zero();
     private @Nonnull Money salvagedByEmployerValue = Money.zero();
+    private @Nonnull Money withheldSupportPayments = Money.zero();
 
     private MissionStatus missionStatus;
+    /**
+     * The outcome this contract must be recorded with when it is completed, overriding the outcome its performance
+     * would otherwise recommend. {@code null} when the contract's performance decides.
+     */
+    private @Nullable MissionStatus mandatedCompletionStatus;
     private ContractScheduleData scheduleData;
     private SystemsTargetData systemsTargetData;
 
@@ -120,6 +129,11 @@ public abstract class AbstractContract {
     private Person playerNegotiator;
 
     private int sharesPercent = DEFAULT_SHARES_PERCENT;
+
+    /**
+     * Running tally for the {@link ChaosObjectiveSpecialRules#END_CONTRACT_AFTER_TWO_CONSECUTIVE_TRACKS} special rule.
+     */
+    private int consecutiveTrackResultTally = 0;
     private final EnumSet<ObfuscatableIntel> obfuscatedIntel = EnumSet.noneOf(ObfuscatableIntel.class);
     private final EnumSet<ContractCharacteristic> characteristics = EnumSet.noneOf(ContractCharacteristic.class);
 
@@ -159,6 +173,14 @@ public abstract class AbstractContract {
     private transient UUID pendingPlayerNegotiatorId;
     private transient Double pendingLegacySettlementMultiplier;
     private transient CampaignOptions campaignOptions;
+    /** Salvage rights multiplier from the Scale taper; 1.0 for contracts signed without it */
+    private double salvageTaperMultiplier = 1.0;
+
+    /**
+     * The player's response to their employer losing control of this contract's planet, chosen in the end-of-day nag
+     * and applied as the new day is processed. Transient; the choice and the day advance happen together.
+     */
+    private transient @Nullable PlanetLossResponse pendingPlanetLossResponse;
 
     public @Nonnull List<Scenario> getScenarios() {
         return scenarios;
@@ -384,6 +406,50 @@ public abstract class AbstractContract {
         this.missionStatus = missionStatus;
     }
 
+    /**
+     * @return the outcome this contract must be recorded with on completion, or {@code null} when its performance
+     *       decides
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public @Nullable MissionStatus getMandatedCompletionStatus() {
+        return mandatedCompletionStatus;
+    }
+
+    /**
+     * @param mandatedCompletionStatus the outcome this contract must be recorded with on completion, or {@code null} to
+     *                                 let its performance decide
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public void setMandatedCompletionStatus(@Nullable MissionStatus mandatedCompletionStatus) {
+        this.mandatedCompletionStatus = mandatedCompletionStatus;
+    }
+
+    /**
+     * @return the player's pending response to their employer losing control of this contract's planet, or
+     *       {@code null} when there is none
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public @Nullable PlanetLossResponse getPendingPlanetLossResponse() {
+        return pendingPlanetLossResponse;
+    }
+
+    /**
+     * @param pendingPlanetLossResponse the player's response to their employer losing control of this contract's
+     *                                  planet, or {@code null} to clear it
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public void setPendingPlanetLossResponse(@Nullable PlanetLossResponse pendingPlanetLossResponse) {
+        this.pendingPlanetLossResponse = pendingPlanetLossResponse;
+    }
+
     public ContractScheduleData getScheduleData() {
         return scheduleData;
     }
@@ -448,24 +514,42 @@ public abstract class AbstractContract {
     }
 
     public void changeMorale(ContractMoraleLevel newMoraleLevel) {
-        setMoraleData(new MoraleData(newMoraleLevel, null, Money.zero()));
+        setMoraleData(new MoraleData(newMoraleLevel, null, null));
     }
 
     public void changeMorale(ContractMoraleLevel newMoraleLevel, @Nullable LocalDate newRoutEndDate) {
-        setMoraleData(new MoraleData(newMoraleLevel, newRoutEndDate, Money.zero()));
+        setMoraleData(new MoraleData(newMoraleLevel, newRoutEndDate, null));
     }
 
     public void changeMorale(ContractMoraleLevel newMoraleLevel, @Nullable LocalDate newRoutEndDate,
-          @Nonnull Money newRoutPayout) {
+          @Nullable Money newRoutPayout) {
         setMoraleData(new MoraleData(newMoraleLevel, newRoutEndDate, newRoutPayout));
     }
 
     public void changeMorale(LocalDate newRoutEndDate) {
-        setMoraleData(new MoraleData(moraleData.moraleLevel(), newRoutEndDate, Money.zero()));
+        setMoraleData(new MoraleData(moraleData.moraleLevel(), newRoutEndDate, null));
     }
 
     public void changeMorale(LocalDate newRoutEndDate, Money newRoutPayout) {
         setMoraleData(new MoraleData(moraleData.moraleLevel(), newRoutEndDate, newRoutPayout));
+    }
+
+    /**
+     * Ends this contract early by moving its end date to {@code newEndDate} and storing the final payout that will be
+     * paid on completion in place of the remaining monthly payments.
+     *
+     * <p>The morale level and rout end date are left untouched, and the contract length is preserved so that
+     * length-based calculations are not affected by the early finish.</p>
+     *
+     * @param newEndDate  the day the contract should now end
+     * @param finalPayout the payout to award on completion
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public void endContractEarly(LocalDate newEndDate, Money finalPayout) {
+        setMoraleData(new MoraleData(moraleData.moraleLevel(), moraleData.routEndDate(), finalPayout));
+        setScheduleData(new ContractScheduleData(scheduleData.startDate(), newEndDate, scheduleData.lengthInMonths()));
     }
 
     /**
@@ -510,7 +594,7 @@ public abstract class AbstractContract {
         return moraleData.routEndDate();
     }
 
-    public Money getRoutPayout() {
+    public @Nullable Money getRoutPayout() {
         return moraleData.routedPayout();
     }
 
@@ -628,6 +712,18 @@ public abstract class AbstractContract {
         this.sharesPercent = sharesPercent;
     }
 
+    public int getConsecutiveTrackResultTally() {
+        return consecutiveTrackResultTally;
+    }
+
+    public void setConsecutiveTrackResultTally(int consecutiveTrackResultTally) {
+        this.consecutiveTrackResultTally = consecutiveTrackResultTally;
+    }
+
+    public void changeConsecutiveTrackResultTally(int delta) {
+        consecutiveTrackResultTally += delta;
+    }
+
     public @Nullable StratConCampaignState getStratConCampaignState() {
         return stratConCampaignState;
     }
@@ -641,12 +737,43 @@ public abstract class AbstractContract {
         return intensityData;
     }
 
+    /**
+     * @return the contract's Scale rounded up to a whole number, as Hot Spots: Draconis Reach uses it. Anything Scale
+     *       counts (facilities, track rolls, negotiation steps, support points) reads this, whatever the
+     *       {@link CampaignOption#USE_FRACTIONAL_SCALE} option says.
+     */
     public int getScale() {
+        return ChaosContractDeterminationScale.roundUpScale(intensityData.scale());
+    }
+
+    /**
+     * @return the contract's exact, unrounded Scale
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public double getExactScale() {
         return intensityData.scale();
     }
 
-    public void setScale(int scale) {
-        intensityData = intensityData.withScale(scale);
+    /**
+     * @param useFractionalScale whether the {@link CampaignOption#USE_FRACTIONAL_SCALE} option is set
+     *
+     * @return the Scale money and supplies are worked out from: exact when the option is set, otherwise
+     *       {@link #getScale()}
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public double getEconomicScale(boolean useFractionalScale) {
+        return ChaosContractDeterminationScale.getEconomicScale(intensityData.scale(), useFractionalScale);
+    }
+
+    /**
+     * @param scale the contract's exact Scale; a whole number for a rules-as-written Scale
+     */
+    public void setScale(double scale) {
+        intensityData = intensityData.withScale(ChaosContractDeterminationScale.cleanExactScale(scale));
     }
 
     public int getTrackCount() {
@@ -1027,12 +1154,79 @@ public abstract class AbstractContract {
     }
 
     public double getSalvageRightsMultiplier() {
-        return getSalvageRightsStep().getSalvageMultiplier() * contractTermMultiplier(
+        final double salvageRightsMultiplier = getSalvageRightsStep().getSalvageMultiplier() * contractTermMultiplier(
               CampaignOption.CONTRACT_SALVAGE_MULTIPLIER);
+        return salvageRightsMultiplier * salvageTaperMultiplier;
+    }
+
+    /**
+     * @return the multiplier applied to salvage rights by the Scale taper, locked in when the contract's pay was set
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public double getSalvageTaperMultiplier() {
+        return salvageTaperMultiplier;
+    }
+
+    /**
+     * @param salvageTaperMultiplier the multiplier applied to salvage rights by the Scale taper
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public void setSalvageTaperMultiplier(double salvageTaperMultiplier) {
+        this.salvageTaperMultiplier = salvageTaperMultiplier;
     }
 
     public boolean isSalvageExchange() {
         return getSalvageRightsStep().isExchangeSalvage();
+    }
+
+    /**
+     * Checks whether the employer is evoking the special Clan salvage clause.
+     *
+     * <p>If the {@link CampaignOption#USE_CLAN_SALVAGE_CLAUSE} campaign option is enabled, then up to and including
+     * the Battle of Tukayyid, a non-Clan employer facing a Clan enemy claims all salvage for itself: the salvage is
+     * treated as exchange, whatever the contract's salvage rights. The contract's salvage terms are left unchanged, so
+     * the clause lapses once its conditions no longer hold.</p>
+     *
+     * <p>Pirate Raids backed by pirates (see {@link #getStandingEmployerFaction()}) are exempt: pirates keep all their
+     * hard-won loot.</p>
+     *
+     * @param campaign the current campaign
+     *
+     * @return {@code true} if the clause is in effect
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public boolean isEmployerEvokingClanSalvageClause(Campaign campaign) {
+        return campaign.getCampaignOptions().get(CampaignOption.USE_CLAN_SALVAGE_CLAUSE) &&
+                     !isPirateBackedPirateRaid() &&
+                     getEnemyFaction().isClan() &&
+                     !getEmployerFaction().isClan() &&
+                     !campaign.getLocalDate().isAfter(BATTLE_OF_TUKAYYID);
+    }
+
+    private boolean isPirateBackedPirateRaid() {
+        return getObjectiveType().isPirateRaid() &&
+                     PIRATE_FACTION_CODE.equals(getStandingEmployerFaction().getShortName());
+    }
+
+    /**
+     * Checks whether this contract's salvage is treated as exchange: either its salvage rights are exchange rights, or
+     * the employer is evoking the special Clan salvage clause (see {@link #isEmployerEvokingClanSalvageClause}).
+     *
+     * @param campaign the current campaign
+     *
+     * @return {@code true} if salvage is treated as exchange
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public boolean isSalvageTreatedAsExchange(Campaign campaign) {
+        return isSalvageExchange() || isEmployerEvokingClanSalvageClause(campaign);
     }
 
     public boolean canSalvage() {
@@ -1041,6 +1235,44 @@ public abstract class AbstractContract {
 
     public boolean isPlayerAttacker() {
         return getObjectiveType().getChaosObjectiveType().isAttacker();
+    }
+
+    /**
+     * Reports whether this contract's objective carries the given Chaos special rule.
+     *
+     * @param specialRule the special rule to test for
+     *
+     * @return {@code true} when the contract's objective type uses the special rule; {@code false} when it does not,
+     *       when no objective data has been assigned, or when the objective data has no player objective type
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public boolean usesSpecialRule(ChaosObjectiveSpecialRules specialRule) {
+        if (objectiveData == null) {
+            return false;
+        }
+
+        ContractObjectiveType objectiveType = getObjectiveType();
+        return (objectiveType != null) && objectiveType.getChaosObjectiveType().usesSpecialRule(specialRule);
+    }
+
+    /**
+     * Lists the Chaos special rules carried by this contract's objective.
+     *
+     * @return the objective type's special rules, or an empty list when no objective data has been assigned or the
+     *       objective data has no player objective type
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public List<ChaosObjectiveSpecialRules> getSpecialRules() {
+        if (objectiveData == null) {
+            return List.of();
+        }
+
+        ContractObjectiveType objectiveType = getObjectiveType();
+        return (objectiveType == null) ? List.of() : objectiveType.getChaosObjectiveType().getSpecialRules();
     }
 
     public @Nonnull Money getSalvagedByEmployerValue() {
@@ -1053,6 +1285,18 @@ public abstract class AbstractContract {
 
     public void changeSalvagedByEmployerValue(Money delta) {
         salvagedByEmployerValue = salvagedByEmployerValue.plus(delta);
+    }
+
+    public @Nonnull Money getWithheldSupportPayments() {
+        return withheldSupportPayments;
+    }
+
+    public void setWithheldSupportPayments(@Nonnull Money withheldSupportPayments) {
+        this.withheldSupportPayments = withheldSupportPayments;
+    }
+
+    public void changeWithheldSupportPayments(Money delta) {
+        withheldSupportPayments = withheldSupportPayments.plus(delta);
     }
 
     public @Nonnull Money getSalvagedByUnitValue() {
@@ -1094,9 +1338,22 @@ public abstract class AbstractContract {
         return getObjectiveType().isGarrisonType() && getMoraleLevel().isRouted();
     }
 
+    /**
+     * Sets the contract's start date, and its end date from its length. Moving the start also moves StratCon's
+     * pre-rolled schedule by the same number of days (see {@link StratConCampaignState#shiftScheduledDates}), since
+     * that schedule was rolled from the old start: otherwise, when the start slips to the arrival day, every date
+     * before it would fire at once on arrival and the contract's last weeks would be left short.
+     *
+     * @param localDate the new start date
+     */
     public void setStartAndEndDate(LocalDate localDate) {
+        LocalDate previousStartDate = getStartDate();
         setScheduleData(scheduleData.withStartDate(localDate)
                               .withEndDate(localDate.plusMonths(getLengthInMonths())));
+
+        if ((previousStartDate != null) && (stratConCampaignState != null)) {
+            stratConCampaignState.shiftScheduledDates(ChronoUnit.DAYS.between(previousStartDate, localDate));
+        }
     }
 
     /**

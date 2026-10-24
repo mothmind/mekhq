@@ -37,8 +37,8 @@ import static mekhq.campaign.personnel.skills.SkillType.S_LEADER;
 import static mekhq.campaign.personnel.skills.SkillType.S_NEGOTIATION;
 import static mekhq.campaign.personnel.skills.SkillType.S_TACTICS;
 
+import jakarta.annotation.Nullable;
 import megamek.client.bot.princess.BehaviorSettings;
-import megamek.common.annotations.Nullable;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;

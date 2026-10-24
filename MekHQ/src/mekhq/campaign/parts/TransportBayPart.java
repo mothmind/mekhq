@@ -35,10 +35,9 @@ package mekhq.campaign.parts;
 import java.io.PrintWriter;
 import java.util.List;
 
+import jakarta.annotation.Nullable;
 import megamek.common.TechAdvancement;
-import megamek.common.annotations.Nullable;
 import megamek.common.bays.Bay;
-import megamek.common.compute.Compute;
 import megamek.common.units.Entity;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.campaignOptions.CampaignOption;
@@ -72,6 +71,18 @@ public class TransportBayPart extends Part {
 
     public int getBayNumber() {
         return bayNumber;
+    }
+
+    /**
+     * A bay that takes up no space on its unit gets no part. Unit files can list quarters of size 0, such as the
+     * second class quarters on a Leopard (2537); there is nothing there to damage or repair.
+     *
+     * @param bay a bay on a unit
+     *
+     * @return {@code true} if the bay takes up space and so is a part of the unit
+     */
+    public static boolean isWorthAPart(Bay bay) {
+        return bay.getWeight() > 0;
     }
 
     public Bay getBay() {
@@ -127,7 +138,7 @@ public class TransportBayPart extends Part {
                                          .toList();
                 for (Part door : doors) {
                     if (checkForDestruction
-                              && Compute.d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
+                              && campaign.getDice().d6(2) < campaign.getCampaignOptions().get(CampaignOption.DESTROY_PART_TARGET)) {
                         door.remove(false);
                     } else {
                         door.hits = 1;
@@ -145,7 +156,7 @@ public class TransportBayPart extends Part {
                                             .filter(p -> p instanceof Cubicle)
                                             .toList();
                 while ((hits > prevHits) && !cubicles.isEmpty()) {
-                    Part cubicle = cubicles.get(Compute.randomInt(cubicles.size()));
+                    Part cubicle = cubicles.get(campaign.getDice().randomInt(cubicles.size()));
                     cubicle.remove(false);
                     prevHits++;
                 }

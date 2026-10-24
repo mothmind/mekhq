@@ -61,6 +61,7 @@ import mekhq.campaign.personnel.enums.BloodmarkLevel;
 import mekhq.campaign.personnel.enums.PersonnelStatus;
 import mekhq.campaign.personnel.medical.InjurySPAUtility;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryUtil;
+import mekhq.campaign.personnel.turnoverAndRetention.Fatigue;
 
 /**
  * Handles Bloodmark-related logic for characters, including assassination attempt scheduling and execution.
@@ -171,14 +172,6 @@ public class Bloodmark {
      * @since 0.50.07
      */
     public static boolean checkForAssassinationAttempt(Person target, LocalDate today, boolean isCampaignPlanetside) {
-        if (target.isChild(today, true)) { // Children are not eligible for bloodmark assassinations
-            return false;
-        }
-
-        if (target.getEduEducationTime() != 0) { // Student Bloodmarks are handled by the education system
-            return false;
-        }
-
         List<LocalDate> bloodhuntSchedule = target.getBloodhuntSchedule();
         if (bloodhuntSchedule.isEmpty()) {
             return false;
@@ -192,6 +185,14 @@ public class Bloodmark {
         // Removing the date even if the hunt is skips is a way of representing the character getting lucky and just
         // not being accessible when the bounty hunter makes their move.
         target.removeBloodhuntDate(today);
+
+        if (target.isChild(today, true)) { // Children are not eligible for bloodmark assassinations
+            return false;
+        }
+
+        if (target.getEduEducationTime() != 0) { // Student Bloodmarks are handled by the education system
+            return false;
+        }
 
         if (!isCampaignPlanetside && !target.getStatus().isAbsent()) {
             return false;
@@ -263,10 +264,15 @@ public class Bloodmark {
         }
 
         // Inflict injuries or wounds as appropriate
-        wounds = InjurySPAUtility.adjustInjuriesAndFatigueForSPAs(person,
-              campaign.getCampaignOptions().get(CampaignOption.USE_INJURY_FATIGUE),
+        boolean isUseInjuryFatigue = InjurySPAUtility.isUseInjuryFatigue(campaign.getCampaignOptions());
+        wounds = InjurySPAUtility.adjustInjuriesAndFatigueForSPAs(person, isUseInjuryFatigue,
               campaign.getCampaignOptions().get(CampaignOption.FATIGUE_RATE), wounds);
         processWounds(campaign, person, today, wounds);
+
+        // Process after the wounds are applied, so the injured person isn't sent on leave
+        if (isUseInjuryFatigue && !person.getStatus().isDead()) {
+            Fatigue.processFatigueActions(campaign, person);
+        }
 
         String report = getReport(person.getStatus().isDead(), person.getHyperlinkedFullTitle(), bountyHunterName);
         campaign.addReport(PERSONNEL, report);
@@ -378,12 +384,11 @@ public class Bloodmark {
             }
         } else {
             int currentWounds = person.getHits();
-            int newWounds = currentWounds + wounds;
+            int newWounds = min(currentWounds + wounds, DEATH);
+            person.setHits(newWounds);
             if (newWounds >= DEATH) {
-                newWounds = 6;
                 person.changeStatus(campaign, today, PersonnelStatus.HOMICIDE);
             }
-            person.setHits(newWounds);
         }
     }
 }

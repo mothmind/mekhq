@@ -35,8 +35,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.Vector;
 
+import jakarta.annotation.Nullable;
 import megamek.common.Player;
-import megamek.common.annotations.Nullable;
 import megamek.common.equipment.EquipmentType;
 import megamek.common.game.Game;
 import megamek.common.enums.SkillLevel;

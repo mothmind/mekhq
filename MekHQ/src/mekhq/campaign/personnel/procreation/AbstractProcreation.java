@@ -51,7 +51,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-import megamek.common.annotations.Nullable;
+import jakarta.annotation.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.enums.Gender;
 import megamek.common.icons.Portrait;
@@ -78,7 +78,6 @@ import mekhq.campaign.personnel.lifeEvents.BirthAnnouncement;
 import mekhq.campaign.personnel.medical.advancedMedical.InjuryTypes;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AdvancedMedicalAlternate;
 import mekhq.campaign.personnel.medical.advancedMedicalAlternate.AlternateInjuries;
-import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 import mekhq.campaign.randomEvents.prisoners.PrisonerStatus;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Planet;
@@ -409,6 +408,20 @@ public abstract class AbstractProcreation {
      * @param mother   the mother giving birth
      */
     public void birth(final Campaign campaign, final LocalDate today, final Person mother) {
+        birth(campaign, today, mother, false);
+    }
+
+    /**
+     * This method is how a mother gives birth to a number of babies and has them added to the campaign.
+     *
+     * @param campaign             the campaign to add the baby in question to
+     * @param today                today's date
+     * @param mother               the mother giving birth
+     * @param isStartingSimulation true if the birth is part of a new command's simulated history, in which case the
+     *                             mother is spared postpartum recovery and no birth announcement is shown
+     */
+    public void birth(final Campaign campaign, final LocalDate today, final Person mother,
+          final boolean isStartingSimulation) {
         CampaignOptions campaignOptions = campaign.getCampaignOptions();
         // Determine the number of children
         final int size = mother.getExtraData().get(PREGNANCY_CHILDREN_DATA, 1);
@@ -492,11 +505,13 @@ public abstract class AbstractProcreation {
             // if the mother is at school, add the baby to the list of tag along
             if (mother.getStatus().isStudent()) {
                 mother.addEduTagAlong(baby.getId());
-                baby.changeStatus(campaign, today, PersonnelStatus.ON_LEAVE);
+                if (!baby.getStatus().isCampFollower()) {
+                    baby.changeStatus(campaign, today, PersonnelStatus.ON_LEAVE);
+                }
             }
 
             // Apply postpartum effects (first baby only)
-            if (i == 0) {
+            if ((i == 0) && !isStartingSimulation) {
                 if (campaignOptions.isUseAdvancedMedical()) {
                     Injury injury;
                     if (campaignOptions.get(CampaignOption.USE_ALTERNATIVE_ADVANCED_MEDICAL) &&
@@ -530,7 +545,7 @@ public abstract class AbstractProcreation {
             }
 
             // Alert the player, but only show this dialog for the first child with twins/triplets/etc
-            if (campaignOptions.get(CampaignOption.SHOW_LIFE_EVENT_DIALOG_BIRTHS) && (i == 0)) {
+            if (campaignOptions.get(CampaignOption.SHOW_LIFE_EVENT_DIALOG_BIRTHS) && (i == 0) && !isStartingSimulation) {
                 new BirthAnnouncement(campaign, mother, baby.getGender(), size);
             }
         }
@@ -637,6 +652,10 @@ public abstract class AbstractProcreation {
                 baby.getOptions().getOption(option.getName()).clearValue();
             }
 
+            baby.setPreNominal(""); // Stop babies being born with doctorates
+            baby.setPostNominal(""); // Stop babies being born with post-nominal titles
+            baby.setEduHighestEducation(EducationLevel.EARLY_CHILDHOOD);
+
             baby.setLoyalty(Compute.d6(3) + 2);
 
             // Create reports and log the birth
@@ -711,13 +730,27 @@ public abstract class AbstractProcreation {
     //region New Day
 
     /**
-     * Process new day procreation for an individual
+     * Process new week procreation for an individual
      *
      * @param campaign the campaign to process
      * @param today    the current day
      * @param person   the person to process
      */
     public void processNewWeek(final Campaign campaign, final LocalDate today, final Person person) {
+        processNewWeek(campaign, today, person, false);
+    }
+
+    /**
+     * Process new week procreation for an individual
+     *
+     * @param campaign             the campaign to process
+     * @param today                the current day
+     * @param person               the person to process
+     * @param isStartingSimulation true if this week is part of a new command's simulated history; see
+     *                             {@link #birth(Campaign, LocalDate, Person, boolean)}
+     */
+    public void processNewWeek(final Campaign campaign, final LocalDate today, final Person person,
+          final boolean isStartingSimulation) {
         // Instantly return for male personnel
         if (person.getGender().isMale()) {
             return;
@@ -727,14 +760,14 @@ public abstract class AbstractProcreation {
         if (person.isPregnant()) {
             // They give birth if the due date has passed
             if ((today.isAfter(person.getDueDate())) || (today.isEqual(person.getDueDate()))) {
-                birth(campaign, today, person);
+                birth(campaign, today, person, isStartingSimulation);
 
                 return;
             }
 
             if (campaign.getCampaignOptions().get(CampaignOption.USE_MATERNITY_LEAVE) && !person.isBlockMaternityLeave()) {
                 if (!person.isBusy()
-                          && !person.getStatus().isCampFollower()
+                          && person.getStatus().isActive()
                           && person.getNonPermanentInjurySeverity() == 0
                           && (person.getDueDate().minusWeeks(20).isBefore(today))) {
                     person.changeStatus(campaign, today, PersonnelStatus.ON_MATERNITY_LEAVE);

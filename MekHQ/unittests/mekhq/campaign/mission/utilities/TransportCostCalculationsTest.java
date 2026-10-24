@@ -62,6 +62,7 @@ import java.util.UUID;
 
 import megamek.codeUtilities.MathUtility;
 import megamek.common.units.Entity;
+import megamek.common.units.EntityMovementMode;
 import megamek.common.units.Jumpship;
 import megamek.common.units.SpaceStation;
 import mekhq.campaign.JumpPath;
@@ -405,6 +406,47 @@ public class TransportCostCalculationsTest {
         double expectedCost = 0;
         assertEquals(expectedCost, actualCost,
               "Expected " + expectedCost + " cargo bay cost but was " + actualCost);
+    }
+
+    @Test
+    public void calculateAdditionalBayRequirementsFromUnits_unusedBaysProvideCargoCapacity() {
+        // 2 small craft bays, 1 used by an overflow ASF; 3 Mek bays, 1 used; 2 super heavy bays, both cascading down
+        // to light vehicles with 1 used; 5 ProtoMek slots, 2 used
+        TransportCostCalculations local = calculationsWithUnits(List.of(unitWithSmallCraftCapacity(2),
+              unitWithMekCapacity(3), unitWithSuperHeavyVehicleCapacity(2), unitWithProtoMekCapacity(5)));
+
+        local.setASFCount(1);
+        local.setMekCount(1);
+        local.setLightVehicleCount(1);
+        local.setProtoMekCount(2);
+        local.calculateAdditionalBayRequirementsFromUnits();
+
+        double expectedCapacity = SMALL_CRAFT_BAY_CARGO_TONNAGE +
+                                        2 * MEK_BAY_CARGO_TONNAGE +
+                                        SUPER_HEAVY_VEHICLE_BAY_CARGO_TONNAGE +
+                                        3 * PROTOMEK_BAY_CARGO_TONNAGE;
+        double actualCapacity = local.getSpareBayCargoCapacity();
+        assertEquals(expectedCapacity, actualCapacity,
+              "Expected " + expectedCapacity + " spare bay cargo capacity but was " + actualCapacity);
+    }
+
+    @Test
+    public void calculateCargoRequirements_unusedBaysOffsetCargoShortfall() {
+        TransportCostCalculations local = calculationsWithUnits(List.of(unitWithMekCapacity(2)));
+        local.calculateAdditionalBayRequirementsFromUnits();
+
+        try (MockedStatic<CargoStatistics> mockedCargo = mockStatic(CargoStatistics.class)) {
+            mockedCargo.when(() -> CargoStatistics.getTotalCargoCapacity(ArgumentMatchers.any())).thenReturn(0.0);
+            mockedCargo.when(() -> CargoStatistics.getCargoTonnage(anyCollection(), anyCollection(), eq(false),
+                  eq(false))).thenReturn(150.0);
+            mockedCargo.when(() -> CargoStatistics.getCargoTonnage(anyCollection(), anyCollection(), eq(false),
+                  eq(true))).thenReturn(0.0);
+
+            local.calculateCargoRequirements();
+        }
+
+        assertEquals(0.0, local.getAdditionalCargoSpaceRequired());
+        assertEquals(0, local.getAdditionalDropShipsRequired());
     }
 
     @ParameterizedTest
@@ -1303,6 +1345,7 @@ public class TransportCostCalculationsTest {
         when(mockEntity.isProtoMek()).thenReturn(false);
         when(mockEntity.isBattleArmor()).thenReturn(false);
         when(mockEntity.isInfantry()).thenReturn(true);
+        when(mockEntity.getMovementMode()).thenReturn(EntityMovementMode.INF_LEG);
 
         Collection<Unit> units = new ArrayList<>();
         for (int i = 0; i < unitCount; i++) {
@@ -1315,6 +1358,32 @@ public class TransportCostCalculationsTest {
 
         int countedUnits = local.getInfantryCount();
         assertEquals(unitCount, countedUnits, "Expected " + unitCount + " units but was " + countedUnits);
+    }
+
+    /**
+     * Support carriers are an organisational wrapper around support personnel; the people inside travel as passengers,
+     * so the carrier itself must not demand an infantry bay.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    @Test
+    public void testCountUnitsByType_supportCarrierIsIgnored() {
+        Entity carrierEntity = mock(Entity.class);
+        when(carrierEntity.isInfantry()).thenReturn(true);
+        Unit carrier = unitWithEntity(carrierEntity);
+        when(carrier.isCarrier()).thenReturn(true);
+
+        Entity infantryEntity = mock(Entity.class);
+        when(infantryEntity.isInfantry()).thenReturn(true);
+        when(infantryEntity.getMovementMode()).thenReturn(EntityMovementMode.INF_LEG);
+        Unit infantry = unitWithEntity(infantryEntity);
+
+        TransportCostCalculations local = calculationsWithUnits(List.of(carrier, infantry));
+        local.countUnitsByType();
+
+        assertEquals(1, local.getInfantryCount(), "Only the non-carrier infantry unit should need a bay");
+        assertEquals(0, local.getOtherUnitCount());
     }
 
     @ParameterizedTest

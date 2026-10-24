@@ -47,11 +47,13 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import jakarta.annotation.Nullable;
 import jakarta.xml.bind.annotation.XmlElement;
 import jakarta.xml.bind.annotation.XmlElementWrapper;
 import jakarta.xml.bind.annotation.XmlRootElement;
 import megamek.logging.MMLogger;
 import mekhq.MHQConstants;
+import mekhq.campaign.digitalGM.stratCon.facility.StratConContractFacilityProfile;
 import mekhq.campaign.mission.contract.contractData.ContractObjectiveType;
 import mekhq.utilities.MMDataLicenseHeader;
 
@@ -149,25 +151,32 @@ public class StratConContractDefinition {
          * of hostile facilities They may either be destroyed or the player must have control of them at the
          * end-of-contract date
          */
-        FacilityDestruction
+        FacilityDestruction,
+
+        /**
+         * Dealing with a point of interest drawn from the "objectivePointsOfInterest" type IDs. Like specific-scenario
+         * objectives, these appear over the contract's months rather than all at contract start. What "dealing with"
+         * means is up to the point of interest's type: its behavior decides when the objective is met or has failed.
+         */
+        PointOfInterest,
+
+        /**
+         * Raising the contract's Escalation to the objective's desired count before the contract ends (see
+         * {@link StratConEscalation}). Added in code, not by contract definitions; its current count follows the
+         * contract's Escalation.
+         */
+        Escalation,
+
+        /**
+         * Scouting at least half of a sector's land (non-ocean) hexes before the contract ends (see
+         * {@link StratConReconnaissance}). Added in code, one per sector, not by contract definitions; its counts follow
+         * the sector's map, and once met it stays met.
+         */
+        Reconnaissance
     }
 
     private String contractTypeName;
     private String briefing;
-
-    /**
-     * How many allied facilities to generate for the contract, in addition to any facilities placed by objectives. < 0
-     * indicates that the number of facilities should be scaled to the number of lances required by the contract. 0
-     * indicates no additional allied facilities.
-     */
-    private double alliedFacilityCount;
-
-    /**
-     * How many hostile facilities to generate for the contract, in addition to any facilities placed by objectives. -1
-     * indicates that the number of facilities should be scaled to the number of lances required by the contract. 0
-     * indicates no additional hostile facilities.
-     */
-    private double hostileFacilityCount;
 
     private boolean allowEarlyVictory;
 
@@ -192,9 +201,22 @@ public class StratConContractDefinition {
      */
     private List<String> globalScenarioModifiers = new ArrayList<>();
 
-    private List<Integer> scenarioOdds;
+    /**
+     * Points of interest that are not strategic objectives, to appear over the contract's months. Points of interest
+     * that are objectives come from {@link ObjectiveParameters} instead.
+     */
+    private List<PointOfInterestParameters> pointsOfInterest = new ArrayList<>();
+
+    /**
+     * The odds, one picked at random per sector, that a formation deploying to a sector runs into the enemy. Scenario
+     * tempo is not set here: it follows the contract's scale (see {@link StratConScenarioTempo}).
+     */
+    private List<Integer> deploymentEncounterOdds;
 
     private List<Integer> deploymentTimes;
+
+    /** How the contract type lays out its facilities; {@code null} to place them as before. */
+    private StratConContractFacilityProfile facilityProfile;
 
     /**
      * @return the contract type name
@@ -232,34 +254,6 @@ public class StratConContractDefinition {
         this.allowEarlyVictory = allowEarlyVictory;
     }
 
-    /**
-     * @return the alliedFacilityCount
-     */
-    public double getAlliedFacilityCount() {
-        return alliedFacilityCount;
-    }
-
-    /**
-     * @param alliedFacilityCount the alliedFacilityCount to set
-     */
-    public void setAlliedFacilityCount(double alliedFacilityCount) {
-        this.alliedFacilityCount = alliedFacilityCount;
-    }
-
-    /**
-     * @return the hostileFacilityCount
-     */
-    public double getHostileFacilityCount() {
-        return hostileFacilityCount;
-    }
-
-    /**
-     * @param hostileFacilityCount the hostileFacilityCount to set
-     */
-    public void setHostileFacilityCount(double hostileFacilityCount) {
-        this.hostileFacilityCount = hostileFacilityCount;
-    }
-
     @XmlElementWrapper(name = "allowedScenarios")
     @XmlElement(name = "allowedScenario")
     @Deprecated(since = "0.51.0", forRemoval = true)
@@ -294,14 +288,14 @@ public class StratConContractDefinition {
         this.objectiveParameters = objectiveParameters;
     }
 
-    @XmlElementWrapper(name = "scenarioOdds")
-    @XmlElement(name = "scenarioOdds")
-    public List<Integer> getScenarioOdds() {
-        return scenarioOdds;
+    @XmlElementWrapper(name = "deploymentEncounterOdds")
+    @XmlElement(name = "deploymentEncounterOdds")
+    public List<Integer> getDeploymentEncounterOdds() {
+        return deploymentEncounterOdds;
     }
 
-    public void setScenarioOdds(List<Integer> scenarioOdds) {
-        this.scenarioOdds = scenarioOdds;
+    public void setDeploymentEncounterOdds(List<Integer> deploymentEncounterOdds) {
+        this.deploymentEncounterOdds = deploymentEncounterOdds;
     }
 
     @XmlElementWrapper(name = "deploymentTimes")
@@ -314,8 +308,36 @@ public class StratConContractDefinition {
         this.deploymentTimes = deploymentTimes;
     }
 
+    /**
+     * @return how the contract type lays out its facilities, or {@code null} to place them as before
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public @Nullable StratConContractFacilityProfile getFacilityProfile() {
+        return facilityProfile;
+    }
+
+    public void setFacilityProfile(@Nullable StratConContractFacilityProfile facilityProfile) {
+        this.facilityProfile = facilityProfile;
+    }
+
     public List<String> getGlobalScenarioModifiers() {
         return globalScenarioModifiers;
+    }
+
+    /**
+     * @return the points of interest that are not strategic objectives; never {@code null}
+     */
+    public List<PointOfInterestParameters> getPointsOfInterest() {
+        if (pointsOfInterest == null) {
+            pointsOfInterest = new ArrayList<>();
+        }
+        return pointsOfInterest;
+    }
+
+    public void setPointsOfInterest(List<PointOfInterestParameters> pointsOfInterest) {
+        this.pointsOfInterest = pointsOfInterest;
     }
 
     public void setGlobalScenarioModifiers(List<String> globalScenarioModifiers) {
@@ -356,6 +378,14 @@ public class StratConContractDefinition {
         @XmlElement(name = "objectiveScenarioModifier")
         List<String> objectiveScenarioModifiers = new ArrayList<>();
 
+        /**
+         * Type IDs of the points of interest to choose from for this objective, one picked at random per objective.
+         * Used only by the {@link StrategicObjectiveType#PointOfInterest} objective type.
+         */
+        @XmlElementWrapper(name = "objectivePointsOfInterest")
+        @XmlElement(name = "objectivePointOfInterest")
+        List<String> objectivePointsOfInterest = new ArrayList<>();
+
         public StrategicObjectiveType getObjectiveType() {
             return objectiveType;
         }
@@ -380,9 +410,57 @@ public class StratConContractDefinition {
             return objectiveScenarioModifiers;
         }
 
+        /**
+         * @return the point of interest type IDs this objective draws from; never {@code null}
+         */
+        public List<String> getObjectivePointsOfInterest() {
+            if (objectivePointsOfInterest == null) {
+                objectivePointsOfInterest = new ArrayList<>();
+            }
+            return objectivePointsOfInterest;
+        }
+
         @Override
         public String toString() {
             return objectiveType + " (" + objectiveCount + ")";
+        }
+    }
+
+    /**
+     * How many points of interest of one type a contract places over its run, outside the strategic objectives.
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    public static class PointOfInterestParameters {
+        /** The type ID of the point of interest's definition. */
+        String typeId;
+
+        /**
+         * How many to place across the contract's sectors. 0 means none. A number less than zero indicates that the
+         * count should be scaled to the contract's size, and multiplied by that factor - as facility counts are.
+         */
+        double count;
+
+        public String getTypeId() {
+            return typeId;
+        }
+
+        public void setTypeId(String typeId) {
+            this.typeId = typeId;
+        }
+
+        public double getCount() {
+            return count;
+        }
+
+        public void setCount(double count) {
+            this.count = count;
+        }
+
+        @Override
+        public String toString() {
+            return typeId + " (" + count + ")";
         }
     }
 

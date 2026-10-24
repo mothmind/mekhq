@@ -37,10 +37,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 
+import jakarta.annotation.Nullable;
 import megamek.common.OrbitalBay;
 import megamek.common.OrbitalBay.WeaponClass;
 import megamek.common.OrbitalSupport;
-import megamek.common.annotations.Nullable;
 import megamek.common.compute.Compute;
 import megamek.common.enums.SkillLevel;
 import megamek.common.equipment.WeaponMounted;

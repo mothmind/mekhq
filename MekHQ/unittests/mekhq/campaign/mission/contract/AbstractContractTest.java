@@ -32,25 +32,35 @@
  */
 package mekhq.campaign.mission.contract;
 
+import static mekhq.MHQConstants.BATTLE_OF_TUKAYYID;
 import static mekhq.campaign.mission.contract.AbstractContract.DEFAULT_SHARES_PERCENT;
 import static mekhq.campaign.mission.contract.AbstractContract.INITIAL_SUPPORT_POINTS_PER_COMBAT_TEAM;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.ADVANCING;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.OVERWHELMING;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.ROUTED;
 import static mekhq.campaign.mission.contract.contractData.ContractMoraleLevel.STALEMATE;
+import static mekhq.campaign.universe.Faction.PIRATE_FACTION_CODE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
+import java.util.List;
 
+import mekhq.campaign.Campaign;
+import mekhq.campaign.campaignOptions.CampaignOption;
+import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
+import mekhq.campaign.digitalGM.stratCon.pointOfInterest.StratConScheduledPointOfInterest;
 import mekhq.campaign.finances.Money;
 import mekhq.campaign.mission.contract.contractData.ChaosContractStepsTable;
+import mekhq.campaign.mission.contract.contractData.ChaosObjectiveSpecialRules;
 import mekhq.campaign.mission.contract.contractData.ContractFinanceData;
 import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
 import mekhq.campaign.mission.contract.contractData.ContractObjectiveData;
@@ -59,6 +69,7 @@ import mekhq.campaign.mission.contract.contractData.ContractScheduleData;
 import mekhq.campaign.mission.contract.contractData.ContractTermsData;
 import mekhq.campaign.mission.contract.contractData.MoraleData;
 import mekhq.campaign.mission.scenarios.Scenario;
+import mekhq.campaign.universe.Faction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -106,7 +117,22 @@ class AbstractContractTest {
 
         assertEquals(ADVANCING, contract.getMoraleLevel());
         assertNull(contract.getRoutEndDate(), "a morale level change ends any rout in progress");
-        assertTrue(contract.getRoutPayout().isZero(), "a morale level change clears the pending rout payout");
+        assertNull(contract.getRoutPayout(), "a morale level change clears the pending rout payout");
+    }
+
+    @Test
+    void endingAContractEarlyMovesTheEndDateAndSetsThePayout() {
+        AbstractContract contract = contract();
+        contract.changeMorale(ADVANCING, START.plusDays(5));
+
+        contract.endContractEarly(START.plusDays(30), Money.of(4_000));
+
+        assertEquals(START.plusDays(30), contract.getEndingDate());
+        assertEquals(START, contract.getStartDate());
+        assertEquals(6, contract.getLengthInMonths(), "an early finish must not rewrite the contract length");
+        assertEquals(Money.of(4_000), contract.getRoutPayout());
+        assertEquals(ADVANCING, contract.getMoraleLevel(), "ending early must not move the morale level");
+        assertEquals(START.plusDays(5), contract.getRoutEndDate(), "ending early must not touch the rout window");
     }
 
     @Test
@@ -194,6 +220,24 @@ class AbstractContractTest {
     }
 
     @Test
+    void movingTheStartMovesStratConsScheduleWithIt() {
+        AbstractContract contract = contract();
+        StratConCampaignState campaignState = new StratConCampaignState(contract);
+        campaignState.addStrategicScenarioSpawnDate(START.plusDays(3));
+        campaignState.addScheduledPointOfInterest(new StratConScheduledPointOfInterest(START.plusDays(40), "Test",
+              true));
+        contract.setStratConCampaignState(campaignState);
+
+        // The force arrives ten days after the date the schedule was rolled from.
+        contract.setStartAndEndDate(START.plusDays(10));
+
+        assertEquals(List.of(START.plusDays(13)), campaignState.getStrategicScenarioSpawnDates(),
+              "an Essential scenario keeps its place in the contract rather than firing on arrival");
+        assertEquals(START.plusDays(50), campaignState.getScheduledPointsOfInterest().get(0).getSpawnDate(),
+              "a point of interest keeps its place in the contract too");
+    }
+
+    @Test
     void monthsLeftCountsWholeMonthsToTheEndDate() {
         AbstractContract contract = contract();
 
@@ -251,6 +295,64 @@ class AbstractContractTest {
     }
 
     @Test
+    void salvageTaperDefaultsToNoTaper() {
+        assertEquals(1.0, new ChaosContract().getSalvageTaperMultiplier());
+    }
+
+    @Test
+    void salvageTaperScalesTheNegotiatedSalvageRights() {
+        AbstractContract contract = contract();
+        contract.setContractTerms(termsWithSalvage(ChaosContractStepsTable.STEP_THREE));
+        double untapered = contract.getSalvageRightsMultiplier();
+
+        contract.setSalvageTaperMultiplier(0.65);
+
+        assertEquals(untapered * 0.65, contract.getSalvageRightsMultiplier(), 1e-9);
+    }
+
+    @Test
+    void salvageTaperStacksWithTheCampaignSalvageMultiplier() {
+        AbstractContract contract = contract();
+        contract.setContractTerms(termsWithSalvage(ChaosContractStepsTable.STEP_THREE));
+        double untapered = contract.getSalvageRightsMultiplier();
+        CampaignOptions campaignOptions = new CampaignOptions();
+        campaignOptions.set(CampaignOption.CONTRACT_SALVAGE_MULTIPLIER, 2.0);
+        contract.setCampaignOptions(campaignOptions);
+
+        contract.setSalvageTaperMultiplier(0.5);
+
+        assertEquals(untapered * 2.0 * 0.5, contract.getSalvageRightsMultiplier(), 1e-9);
+    }
+
+    /** The taper is part of the agreed terms, so changing campaign options afterwards must not alter it. */
+    @Test
+    void salvageTaperIsNotReadFromCampaignOptions() {
+        AbstractContract contract = contract();
+        contract.setContractTerms(termsWithSalvage(ChaosContractStepsTable.STEP_THREE));
+        CampaignOptions campaignOptions = new CampaignOptions();
+        campaignOptions.set(CampaignOption.TAPER_COMBAT_PAY_AND_SALVAGE_BY_SCALE, true);
+        contract.setCampaignOptions(campaignOptions);
+        contract.setScale(10);
+        double beforeToggle = contract.getSalvageRightsMultiplier();
+
+        campaignOptions.set(CampaignOption.TAPER_COMBAT_PAY_AND_SALVAGE_BY_SCALE, false);
+
+        assertEquals(1.0, contract.getSalvageTaperMultiplier());
+        assertEquals(beforeToggle, contract.getSalvageRightsMultiplier(), 1e-9);
+    }
+
+    /** A tapered share is smaller, never gone: the taper cannot take salvage away altogether. */
+    @Test
+    void taperedSalvageIsStillSalvage() {
+        AbstractContract contract = contract();
+        contract.setContractTerms(termsWithSalvage(ChaosContractStepsTable.STEP_THREE));
+
+        contract.setSalvageTaperMultiplier(0.51);
+
+        assertTrue(contract.canSalvage());
+    }
+
+    @Test
     void salvageTalliesAccumulateSeparatelyForTheUnitAndTheEmployer() {
         AbstractContract contract = contract();
 
@@ -271,6 +373,97 @@ class AbstractContractTest {
     }
 
     // endregion salvage
+
+    // region Clan salvage clause
+
+    private static Faction faction(String shortName, boolean isClan) {
+        Faction faction = mock(Faction.class);
+        when(faction.getShortName()).thenReturn(shortName);
+        when(faction.isClan()).thenReturn(isClan);
+        return faction;
+    }
+
+    private static Campaign campaign(LocalDate today, boolean isClanSalvageClauseEnabled) {
+        CampaignOptions campaignOptions = new CampaignOptions();
+        campaignOptions.set(CampaignOption.USE_CLAN_SALVAGE_CLAUSE, isClanSalvageClauseEnabled);
+        Campaign campaign = mock(Campaign.class);
+        when(campaign.getCampaignOptions()).thenReturn(campaignOptions);
+        when(campaign.getLocalDate()).thenReturn(today);
+        return campaign;
+    }
+
+    /**
+     * A contract whose Inner Sphere employer faces a Clan enemy. Faction lookups are stubbed, so no faction data needs
+     * loading; everything else is the real contract.
+     *
+     * @param objectiveType   the contract's objective
+     * @param backingEmployer the faction backing the employer (see
+     *                        {@link AbstractContract#getStandingEmployerFaction()})
+     */
+    private static AbstractContract clanEnemyContract(ContractObjectiveType objectiveType, Faction backingEmployer) {
+        AbstractContract contract = spy(contract());
+        // Ordinary salvage rights, so any exchange comes from the clause
+        contract.setContractTerms(termsWithSalvage(ChaosContractStepsTable.STEP_FIVE));
+        contract.setObjectiveData(new ContractObjectiveData(objectiveType, ContractObjectiveType.GARRISON_DUTY));
+        doReturn(faction("FS", false)).when(contract).getEmployerFaction();
+        doReturn(backingEmployer).when(contract).getStandingEmployerFaction();
+        doReturn(faction("CW", true)).when(contract).getEnemyFaction();
+        return contract;
+    }
+
+    private static AbstractContract clanEnemyContract(ContractObjectiveType objectiveType) {
+        return clanEnemyContract(objectiveType, faction("FS", false));
+    }
+
+    @Test
+    void clanSalvageClauseIsEnabledByDefault() {
+        assertTrue(new CampaignOptions().get(CampaignOption.USE_CLAN_SALVAGE_CLAUSE));
+    }
+
+    @Test
+    void clanSalvageClauseAppliesUpToAndIncludingTukayyid() {
+        AbstractContract contract = clanEnemyContract(ContractObjectiveType.GARRISON_DUTY);
+
+        assertTrue(contract.isEmployerEvokingClanSalvageClause(campaign(BATTLE_OF_TUKAYYID, true)));
+        assertTrue(contract.isSalvageTreatedAsExchange(campaign(BATTLE_OF_TUKAYYID, true)),
+              "the clause treats salvage as exchange whatever the salvage rights");
+        assertFalse(contract.isEmployerEvokingClanSalvageClause(campaign(BATTLE_OF_TUKAYYID.plusDays(1), true)));
+    }
+
+    @Test
+    void disablingTheOptionDisablesTheClanSalvageClause() {
+        AbstractContract contract = clanEnemyContract(ContractObjectiveType.GARRISON_DUTY);
+        Campaign campaign = campaign(BATTLE_OF_TUKAYYID, false);
+
+        assertFalse(contract.isEmployerEvokingClanSalvageClause(campaign));
+        assertFalse(contract.isSalvageTreatedAsExchange(campaign));
+    }
+
+    @Test
+    void pirateBackedPirateRaidsAreExemptFromTheClanSalvageClause() {
+        AbstractContract contract = clanEnemyContract(ContractObjectiveType.PIRATE_RAID,
+              faction(PIRATE_FACTION_CODE, false));
+
+        assertFalse(contract.isEmployerEvokingClanSalvageClause(campaign(BATTLE_OF_TUKAYYID, true)),
+              "pirates keep all their hard-won loot");
+    }
+
+    @Test
+    void pirateRaidsBackedByOtherFactionsAreNotExemptFromTheClanSalvageClause() {
+        AbstractContract contract = clanEnemyContract(ContractObjectiveType.PIRATE_RAID, faction("LA", false));
+
+        assertTrue(contract.isEmployerEvokingClanSalvageClause(campaign(BATTLE_OF_TUKAYYID, true)));
+    }
+
+    @Test
+    void pirateBackedContractsThatArentPirateRaidsAreNotExemptFromTheClanSalvageClause() {
+        AbstractContract contract = clanEnemyContract(ContractObjectiveType.GARRISON_DUTY,
+              faction(PIRATE_FACTION_CODE, false));
+
+        assertTrue(contract.isEmployerEvokingClanSalvageClause(campaign(BATTLE_OF_TUKAYYID, true)));
+    }
+
+    // endregion Clan salvage clause
 
     // region attacker/defender
 
@@ -341,4 +534,116 @@ class AbstractContractTest {
     }
 
     // endregion identity and defaults
+
+    // region usesSpecialRule
+
+    @Test
+    void usesSpecialRuleIsTrueWhenTheObjectiveCarriesIt() {
+        AbstractContract contract = contract();
+        // PIRATE_HUNTING maps to the PIRATE_HUNT Chaos objective, which carries END_CONTRACT_AFTER_TWO_CONSECUTIVE_TRACKS.
+        contract.setObjectiveData(new ContractObjectiveData(ContractObjectiveType.PIRATE_HUNTING,
+              ContractObjectiveType.GARRISON_DUTY));
+
+        assertTrue(contract.usesSpecialRule(ChaosObjectiveSpecialRules.END_CONTRACT_AFTER_TWO_CONSECUTIVE_TRACKS));
+    }
+
+    @Test
+    void usesSpecialRuleIsFalseWhenTheObjectiveDoesNotCarryIt() {
+        AbstractContract contract = contract();
+        // GARRISON_DUTY maps to the GARRISON Chaos objective, which carries no special rules.
+        contract.setObjectiveData(new ContractObjectiveData(ContractObjectiveType.GARRISON_DUTY,
+              ContractObjectiveType.GARRISON_DUTY));
+
+        assertFalse(contract.usesSpecialRule(ChaosObjectiveSpecialRules.SIMULATED_DAMAGE));
+    }
+
+    @Test
+    void usesSpecialRuleIsFalseWhenThePlayerObjectiveTypeIsUnset() {
+        AbstractContract contract = contract();
+        // objectiveData itself is set, but its playerObjectiveType is null.
+        contract.setObjectiveData(new ContractObjectiveData(null, ContractObjectiveType.GARRISON_DUTY));
+
+        assertFalse(contract.usesSpecialRule(ChaosObjectiveSpecialRules.SIMULATED_DAMAGE));
+    }
+
+    @Test
+    void usesSpecialRuleIsFalseWhenObjectiveDataIsNeverAssigned() {
+        // A freshly-constructed contract has a null objectiveData field (no default is assigned). usesSpecialRule sits
+        // on the purchase-cost path for every active contract, so it must not throw here.
+        AbstractContract contract = new ChaosContract();
+
+        assertFalse(contract.usesSpecialRule(ChaosObjectiveSpecialRules.SIMULATED_DAMAGE));
+        assertTrue(contract.getSpecialRules().isEmpty());
+    }
+
+    // endregion usesSpecialRule
+
+    // region consecutive track result tally
+
+    @Test
+    void consecutiveTrackResultTallyStartsAtZero() {
+        assertEquals(0, new ChaosContract().getConsecutiveTrackResultTally());
+    }
+
+    @Test
+    void changeConsecutiveTrackResultTallyAccumulates() {
+        AbstractContract contract = contract();
+
+        contract.changeConsecutiveTrackResultTally(1);
+        contract.changeConsecutiveTrackResultTally(1);
+        contract.changeConsecutiveTrackResultTally(-1);
+
+        assertEquals(1, contract.getConsecutiveTrackResultTally());
+    }
+
+    @Test
+    void changeConsecutiveTrackResultTallyCanGoNegative() {
+        AbstractContract contract = contract();
+
+        contract.changeConsecutiveTrackResultTally(-1);
+        contract.changeConsecutiveTrackResultTally(-1);
+
+        assertEquals(-2, contract.getConsecutiveTrackResultTally());
+    }
+
+    @Test
+    void setConsecutiveTrackResultTallyOverwritesTheRunningTotal() {
+        AbstractContract contract = contract();
+        contract.changeConsecutiveTrackResultTally(5);
+
+        contract.setConsecutiveTrackResultTally(0);
+
+        assertEquals(0, contract.getConsecutiveTrackResultTally());
+    }
+
+    // endregion consecutive track result tally
+
+    // region withheld support payments
+
+    @Test
+    void withheldSupportPaymentsStartAtZero() {
+        assertTrue(new ChaosContract().getWithheldSupportPayments().isZero());
+    }
+
+    @Test
+    void changeWithheldSupportPaymentsAccumulates() {
+        AbstractContract contract = contract();
+
+        contract.changeWithheldSupportPayments(Money.of(500));
+        contract.changeWithheldSupportPayments(Money.of(250));
+
+        assertEquals(Money.of(750), contract.getWithheldSupportPayments());
+    }
+
+    @Test
+    void setWithheldSupportPaymentsOverwritesTheRunningTotal() {
+        AbstractContract contract = contract();
+        contract.changeWithheldSupportPayments(Money.of(500));
+
+        contract.setWithheldSupportPayments(Money.zero());
+
+        assertTrue(contract.getWithheldSupportPayments().isZero());
+    }
+
+    // endregion withheld support payments
 }

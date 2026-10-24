@@ -116,8 +116,10 @@ import mekhq.gui.FileDialogs;
 import mekhq.gui.campaignOptions.CampaignOptionsDialog;
 import mekhq.gui.commandGeneration.CommandGenerationDialog;
 import mekhq.gui.developerTools.ContractDefinitionEditorDialog;
+import mekhq.gui.developerTools.FactionStandingUltimatumEditorDialog;
 import mekhq.gui.developerTools.ScenarioModifierEditorDialog;
 import mekhq.gui.developerTools.StratConFacilityEditorDialog;
+import mekhq.gui.developerTools.StratConPointOfInterestEditorDialog;
 import mekhq.gui.dialog.*;
 import mekhq.gui.dialog.advancedCharacterBuilder.lifePathBuilder.LifePathBuilderDialog;
 import mekhq.gui.dialog.reportDialogs.CargoReportDialog;
@@ -129,6 +131,7 @@ import mekhq.gui.dialog.reportDialogs.TransportReportDialog;
 import mekhq.gui.enums.MHQTabType;
 import mekhq.gui.scenarioTemplateEditor.ScenarioTemplateEditorDialog;
 import mekhq.io.FileType;
+import mekhq.io.idReferenceClasses.PersonIdReference;
 import mekhq.utilities.MHQInternationalization;
 import mekhq.utilities.MHQXMLUtility;
 import org.w3c.dom.Document;
@@ -637,6 +640,15 @@ public class MekHQMenuBar extends JMenuBar {
               event -> new StratConFacilityEditorDialog(getFrame()).setVisible(true));
         menuDeveloperTools.add(miFacilityEditor);
 
+        JMenuItem miPointOfInterestEditor = createMenuItem("miPointOfInterestEditor.text", KeyEvent.VK_P,
+              event -> new StratConPointOfInterestEditorDialog(getFrame()).setVisible(true));
+        menuDeveloperTools.add(miPointOfInterestEditor);
+
+        JMenuItem miFactionStandingUltimatumEditor = createMenuItem("miFactionStandingUltimatumEditor.text",
+              KeyEvent.VK_U,
+              event -> new FactionStandingUltimatumEditorDialog(getFrame()).setVisible(true));
+        menuDeveloperTools.add(miFactionStandingUltimatumEditor);
+
         JMenuItem miLifePathBuilder = createMenuItem("miLifePathBuilder.text", KeyEvent.VK_L,
               event -> new LifePathBuilderDialog(getCampaign(), getFrame()));
         menuDeveloperTools.add(miLifePathBuilder);
@@ -794,6 +806,7 @@ public class MekHQMenuBar extends JMenuBar {
             personnelEle.normalize();
 
             final Version version = new Version(personnelEle.getAttribute("version"));
+            final List<Person> importedPersonnel = new ArrayList<>();
 
             // we need to iterate through three times, the first time to collect
             // any custom units that might not be written yet
@@ -836,28 +849,20 @@ public class MekHQMenuBar extends JMenuBar {
                     // changed...
                     person.setUnit(null);
                     person.clearTechUnits();
+
+                    // <51.01 compatibility handler: an older export may hold a Natural Aptitude SPA we couldn't convert
+                    person.reportUnresolvedLegacyNaturalAptitudes(campaign);
+                    importedPersonnel.add(person);
                 }
             }
 
-            // Fix Spouse Id Information - This is required to fix spouse NPEs where one doesn't export both members
-            // of the couple
+            // Imported relatives are only ID placeholders until resolved against the campaign; relatives that weren't
+            // exported alongside them (e.g., one half of a couple) are dropped here
             // TODO : make it so that exports will automatically include both spouses
+            PersonIdReference.fixImportedPersonnelReferences(getCampaign(), importedPersonnel);
+
             Campaign campaign2 = getCampaign();
             for (Person p : campaign2.getPlayerForce().getHumanResources().getActivePersonnel(true, true)) {
-                Person spouse = p.getGenealogy().getSpouse();
-                Campaign campaign1 = getCampaign();
-                final UUID id = spouse.getId();
-                if (p.getGenealogy().hasSpouse() &&
-                          ((spouse == null) ||
-                                 (campaign1.getPlayerForce().getHumanResources().getPerson(id) == null))) {
-                    // If this happens, we need to clear the spouse
-                    if (p.getMaidenName() != null) {
-                        p.setSurname(p.getMaidenName());
-                    }
-
-                    p.getGenealogy().setSpouse(null);
-                }
-
                 if (p.isPregnant()) {
                     String fatherIdString = p.getExtraData().get(AbstractProcreation.PREGNANCY_FATHER_DATA);
                     UUID fatherId = (fatherIdString != null) ? UUID.fromString(fatherIdString) : null;

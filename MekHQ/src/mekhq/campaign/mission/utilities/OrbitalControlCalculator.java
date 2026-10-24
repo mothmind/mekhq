@@ -34,8 +34,8 @@ package mekhq.campaign.mission.utilities;
 
 import java.util.Map;
 
+import jakarta.annotation.Nullable;
 import megamek.common.compute.Compute;
-import megamek.common.annotations.Nullable;
 import mekhq.campaign.enums.DragoonRating;
 import mekhq.campaign.mission.contract.AbstractContract;
 import mekhq.campaign.mission.contract.contractData.ContractMoraleLevel;
