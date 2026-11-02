@@ -125,6 +125,7 @@ import mekhq.campaign.finances.Money;
 import mekhq.campaign.finances.enums.TransactionType;
 import mekhq.campaign.force.CombatTeam;
 import mekhq.campaign.force.Formation;
+import mekhq.campaign.force.PlayerForce;
 import mekhq.campaign.location.IPlace;
 import mekhq.campaign.location.LocationNewDayUtil;
 import mekhq.campaign.market.ForceShoppingList;
@@ -186,6 +187,7 @@ import mekhq.campaign.personnel.skills.QuickTrain;
 import mekhq.campaign.personnel.skills.enums.AgingMilestone;
 import mekhq.campaign.personnel.skills.enums.SkillAttribute;
 import mekhq.campaign.personnel.turnoverAndRetention.Fatigue;
+import mekhq.campaign.randomEvents.other.ContractRandomEvent;
 import mekhq.campaign.randomEvents.other.GrayMonday;
 import mekhq.campaign.randomEvents.other.VoiceOfKerensky;
 import mekhq.campaign.randomEvents.prisoners.PrisonerEventManager;
@@ -197,6 +199,7 @@ import mekhq.campaign.unit.Unit;
 import mekhq.campaign.universe.Faction;
 import mekhq.campaign.universe.Factions;
 import mekhq.campaign.universe.PlanetarySystem;
+import mekhq.campaign.universe.commandGeneration.ratgen.FormationIconBuilder;
 import mekhq.campaign.universe.factionHints.WarAndPeaceProcessor;
 import mekhq.campaign.universe.factionStanding.FactionAccoladeEvent;
 import mekhq.campaign.universe.factionStanding.FactionAccoladeLevel;
@@ -1207,7 +1210,11 @@ public class CampaignNewDayManager {
                                                .toList();
         for (Person person : departedPersonnel) {
             if (isNewWeek) {
-                randomDeath.processNewWeek(campaign, today, person);
+                if (!randomDeath.processNewWeek(campaign, today, person)) {
+                    campaign.getPlayerForce()
+                          .getHumanResources()
+                          .processBackgroundCharacterPregnancy(campaign, today, person);
+                }
             }
         }
     }
@@ -1251,8 +1258,8 @@ public class CampaignNewDayManager {
      * <p>
      * It generates contract offers in the contract market, updates ship search expiration and results, processes ship
      * search on Mondays, awards training experience to eligible training lances on active contracts on Mondays, adds or
-     * removes dependents at the start of the year if the options are enabled, rolls for morale at the start of the
-     * month, and processes ATB scenarios.
+     * removes dependents at the start of the year if the options are enabled, rolls for morale and contract random
+     * events at the start of the month, and processes ATB scenarios.
      */
     private void processNewDayATB() {
         // Before anything else touches the contracts: an employer losing its planet today resolves the contract's
@@ -1289,6 +1296,8 @@ public class CampaignNewDayManager {
                 if (!report.isBlank()) {
                     campaign.addReport(GENERAL, report);
                 }
+
+                ContractRandomEvent.processMonthlyEvent(campaign, contract);
             }
         }
 
@@ -1518,6 +1527,13 @@ public class CampaignNewDayManager {
         // update formation levels
         Formation.populateFormationLevelsFromOrigin(campaign);
         recalculateCombatTeams(campaign);
+
+        // Draw and update the generated formation icons before the status indicator goes on top of them
+        if (MekHQ.getMHQOptions().getNewDayAutoFormationIcons()) {
+            PlayerForce playerForce = campaign.getPlayerForce();
+            FormationIconBuilder.refreshIcons(playerForce.getFormations(), playerForce.getFaction(),
+                  campaign::getUnit, playerForce.getSupportCommandFormation());
+        }
 
         // Update the formation icons based on the end-of-day unit status if desired
         if (MekHQ.getMHQOptions().getNewDayFormationIconOperationalStatus()) {

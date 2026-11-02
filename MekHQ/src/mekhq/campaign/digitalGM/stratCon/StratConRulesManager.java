@@ -174,7 +174,6 @@ public class StratConRulesManager {
     private static final int AUTOMATIC_FACILITY_MODIFIER = 1;
     // a facility your employer holds answers a fight's draw for support only 1 time in this many
     public static final int EMPLOYER_LEND_DIE_SIZE = 2;
-    public static final int INDEPENDENT_COMMAND_RIGHTS_REQUIRED_VICTORY_POINTS = 1;
     // what an enemy counterattack on a facility is fought in; see startCounterattackScenario
     private static final List<String> COUNTERATTACK_SCENARIO_TEMPLATES = List.of("Base Defense.json",
           "Hold Until Relief.json");
@@ -695,8 +694,10 @@ public class StratConRulesManager {
     /**
      * Determines if a given StratCon scenario should be marked as critical within the context of a contract.
      * <p>
-     * This method evaluates the scenario's template, type, and the contract's command rights to decide if the scenario
-     * should be flagged as a "turning point." Turning Point scenarios can cause CVP to be increased or decreased.
+     * Special scenarios, strategic objectives, and combat challenges are never Turning Points. Any other scenario has a
+     * one-in-three chance of being one, whatever the contract's command rights: command rights are felt through
+     * Deployment Orders instead (see {@link StratConDeploymentOrders}). Under House command rights, a Turning Point also
+     * brings the House commander's attached units. Turning Point scenarios can cause CVP to be increased or decreased.
      * </p>
      *
      * @param contract          The {@link AbstractContract} representing the current contract.
@@ -715,28 +716,10 @@ public class StratConRulesManager {
             return;
         }
 
-        ContractCommandRights commandRights = contract.getCommandRights();
-        switch (commandRights) {
-            case INTEGRATED -> scenario.setTurningPoint(true);
-            case HOUSE -> {
-                if (randomInt(3) == 0) {
-                    scenario.setTurningPoint(true);
-                    setAttachedUnitsModifier(scenario, contract);
-                }
-            }
-            case LIAISON -> {
-                if (randomInt(3) == 0) {
-                    scenario.setTurningPoint(true);
-                }
-            }
-            case INDEPENDENT -> {
-                // Victory points only exist on a StratCon campaign state; treat a non-StratCon contract as having
-                // none, so it still qualifies as a turning point.
-                StratConCampaignState campaignState = contract.getStratConCampaignState();
-                int victoryPoints = (campaignState == null) ? 0 : campaignState.getVictoryPoints();
-                if (victoryPoints < INDEPENDENT_COMMAND_RIGHTS_REQUIRED_VICTORY_POINTS) {
-                    scenario.setTurningPoint(true);
-                }
+        if (randomInt(3) == 0) {
+            scenario.setTurningPoint(true);
+            if (contract.getCommandRights().isHouse()) {
+                setAttachedUnitsModifier(scenario, contract);
             }
         }
     }
@@ -1594,9 +1577,6 @@ public class StratConRulesManager {
                     facility.setVisible(true);
                     track.addFacility(coords, facility);
                     setupFacilityScenario(scenario, facility);
-                    // A new base belongs on the road grid if the planet's owner holds it, same as one placed at
-                    // contract start.
-                    StratConContractInitializer.connectFacilitiesToRoads(track, contract, campaign);
                 }
             }
         }
@@ -2023,7 +2003,8 @@ public class StratConRulesManager {
         // we want to ensure we only increase Fatigue once
         boolean hasFatigueIncreased = false;
 
-        int scanRangeIncrease = track.getScanRangeIncrease();
+        int trackScanRangeIncrease = track.getScanRangeIncrease();
+        int scanRangeIncrease = trackScanRangeIncrease;
         boolean isTraining = false;
         CombatTeam combatTeam = campaign.getPlayerForce().getCombatTeamsAsMap(campaign).get(forceID);
         if (combatTeam != null) {
@@ -2084,12 +2065,23 @@ public class StratConRulesManager {
         // Each scout may scan up to scanMultiplier hexes
         // Each scout may scan up to a radius of individualScanRange hexes
         for (ScoutRecord scoutData : scouts) {
-            int individualScanRange = useAdvancedScouting && scoutData.unitWeight() <= 35 ?
-                                            scanRangeIncrease + 1 :
-                                            scanRangeIncrease;
+            int individualScanRange = getIndividualScanRange(scoutData.unitWeight(), scanRangeIncrease,
+                  useAdvancedScouting);
             int remainingScans = useAdvancedScouting ? 1 : Integer.MAX_VALUE;
 
             Person scout = scoutData.scout();
+
+            // A scout whose reach the track's jamming has cut to nothing never rolls, so say why
+            if (useAdvancedScouting
+                      && isScoutJammed(scoutData.unitWeight(), scanRangeIncrease, trackScanRangeIncrease)) {
+                campaign.addReport(SKILL_CHECKS, getFormattedTextAt(RESOURCE_BUNDLE,
+                      "StratConRulesManager.scoutingJammed",
+                      getTextAt(RESOURCE_BUNDLE, "StratConRulesManager.scoutingSkillCheck"),
+                      scout.getHyperlinkedFullTitle(),
+                      spanOpeningWithCustomColor(ReportingUtilities.getNegativeColor()),
+                      CLOSING_SPAN_TAG));
+                continue;
+            }
 
             // Per-scout BFS structures
             Queue<Pair<StratConCoords, Integer>> scoutQueue = new LinkedList<>();
@@ -2109,7 +2101,9 @@ public class StratConRulesManager {
                 }
 
                 boolean isUseEdge = campaignOptions.get(CampaignOption.USE_EDGE) && scout.getOptions().booleanOption(EDGE_RECON_FAIL);
-                for (int direction = 0; direction < 6; direction++) {
+                // Directions are shuffled so scouts don't sweep each ring in a fixed clockwise order. The BFS still
+                // finishes each ring before moving outward, so the closest hexes are always scouted first.
+                for (int direction : getShuffledDirections()) {
                     StratConCoords checkCoords = currentCoords.translate(direction);
 
                     //ensure we are scouting on the StratCon track
@@ -2186,6 +2180,22 @@ public class StratConRulesManager {
                 }
             }
         }
+    }
+
+    /**
+     * Returns the six hex directions (0-5) in a random order.
+     *
+     * @return an array containing each hex direction exactly once, shuffled
+     */
+    private static int[] getShuffledDirections() {
+        int[] directions = { 0, 1, 2, 3, 4, 5 };
+        for (int i = directions.length - 1; i > 0; i--) {
+            int swapIndex = randomInt(i + 1);
+            int temp = directions[i];
+            directions[i] = directions[swapIndex];
+            directions[swapIndex] = temp;
+        }
+        return directions;
     }
 
     /**
@@ -4276,21 +4286,29 @@ public class StratConRulesManager {
     }
 
     /**
-     * Check if the unit's force (if one exists) has been deployed to a StratCon track
+     * Check if the unit's force (if one exists), or any formation above it, has been deployed to a StratCon track. A
+     * formation deployed as a whole takes the units of its sub-formations with it.
      */
     public static boolean isUnitDeployedToStratCon(Unit unit) {
-        if (!unit.getCampaign().getCampaignOptions().isUseStratCon()) {
+        Campaign campaign = unit.getCampaign();
+        if (!campaign.getCampaignOptions().isUseStratCon()) {
             return false;
+        }
+
+        List<Integer> formationIds = new ArrayList<>();
+        formationIds.add(unit.getFormationId());
+
+        Formation formation = campaign.getPlayerForce().getFormation(unit.getFormationId());
+        if (formation != null) {
+            for (Formation parent : formation.getAllParents()) {
+                formationIds.add(parent.getId());
+            }
         }
 
         // this is a little inefficient, but probably there aren't too many active AtB
         // contracts at a time
-        return unit.getCampaign()
-                     .getActiveContracts()
-                     .stream()
-                     .anyMatch(contract -> (contract.getStratConCampaignState() != null) &&
-                                                 contract.getStratConCampaignState()
-                                                       .isForceDeployedHere(unit.getFormationId()));
+        List<AbstractContract> activeContracts = campaign.getActiveContracts();
+        return formationIds.stream().anyMatch(formationId -> isForceDeployedToStratCon(activeContracts, formationId));
     }
 
     public static boolean isForceDeployedToStratCon(List<AbstractContract> activeAtBContracts, int forceId) {
@@ -4640,9 +4658,15 @@ public class StratConRulesManager {
                 }
 
                 // Deliberately does not touch the road network. Roads are laid when the sector is generated, and
-                // afterwards only when a GM edits the map - adding or removing a city or a facility. Resolving a
-                // scenario is playing on the map, not editing it: taking a base, or losing one, changes who holds
-                // the ground at the end of a road, not whether the road was ever built.
+                // afterwards only when a GM edits the map - its terrain or its cities. Resolving a scenario is playing
+                // on the map, not editing it: taking a base, or losing one, changes who holds the ground at the end of
+                // a road, not whether the road was ever built. Who holds it does decide where supply can go, though,
+                // so the supply routes, and which facilities they leave cut off, are brought up to date at once rather
+                // than the next day.
+                if (StratConFacilitySupply.isSupplyLinesActive(campaign)) {
+                    StratConFacilitySupply.reconcileNetworks(track);
+                    StratConFacilitySupply.refreshCutOffFacilities(track, campaign);
+                }
 
                 processTrackForceReturnDates(track, campaign);
 
@@ -4854,6 +4878,7 @@ public class StratConRulesManager {
               MekHQ.getMHQOptions().getLocale());
 
         List<Integer> forcesToUndeploy = new ArrayList<>();
+        List<Integer> patrolsToScout = new ArrayList<>();
         LocalDate date = campaign.getLocalDate();
 
         // for each force on the track, if the return date is today or in the past,
@@ -4865,8 +4890,16 @@ public class StratConRulesManager {
                 continue;
             }
 
-            if (track.getBackingScenariosMap().containsKey(formation.getScenarioId()) ||
-                      track.getStickyForces().contains(forceID)) {
+            if (track.getBackingScenariosMap().containsKey(formation.getScenarioId())) {
+                continue;
+            }
+
+            if (track.getStickyForces().contains(forceID)) {
+                // A patrol told to remain deployed scouts again instead of returning
+                boolean isDueToReturn = !track.getAssignedForceReturnDates().get(forceID).isAfter(date);
+                if (isDueToReturn && isPatrolScoutingUntilDone(forceID, track, campaign)) {
+                    patrolsToScout.add(forceID);
+                }
                 continue;
             }
 
@@ -4896,9 +4929,205 @@ public class StratConRulesManager {
             }
         }
 
+        for (int forceID : patrolsToScout) {
+            String formationName = campaign.getPlayerForce().getFormation(forceID).getName();
+            if (scoutRemainingPatrolArea(forceID, track, campaign)) {
+                forcesToUndeploy.add(forceID);
+                campaign.addReport(BATTLE,
+                      String.format(resources.getString("patrol.scoutingComplete"), formationName));
+            } else {
+                campaign.addReport(BATTLE,
+                      String.format(resources.getString("patrol.stillScouting"), formationName));
+            }
+        }
+
         for (int forceID : forcesToUndeploy) {
             track.unassignFormation(forceID);
         }
+    }
+
+    /**
+     * Whether a formation told to Remain Deployed is a patrol that keeps scouting until its area is fully scouted,
+     * instead of staying in place until recalled.
+     *
+     * <p>This only applies under Advanced Scouting, where a patrol may need several attempts to scout its whole area,
+     * and never to a formation held in place by a facility order - that order decides when it may leave.</p>
+     *
+     * @param forceID  the deployed formation's ID
+     * @param track    the track it is deployed to
+     * @param campaign the current campaign
+     *
+     * @return {@code true} if the formation should scout again, rather than return, whenever it would normally return
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isPatrolScoutingUntilDone(int forceID, StratConTrackState track, Campaign campaign) {
+        if (!campaign.getCampaignOptions().get(CampaignOption.USE_ADVANCED_SCOUTING)) {
+            return false;
+        }
+
+        if (track.getFacilityOrder(forceID) != null) {
+            return false;
+        }
+
+        // Matches the role scanNeighboringCoords uses to grant the patrol its extra scan range
+        CombatTeam combatTeam = campaign.getPlayerForce().getCombatTeamsAsMap(campaign).get(forceID);
+        return (combatTeam != null) && combatTeam.getRole().isPatrol();
+    }
+
+    /**
+     * Has a patrol told to Remain Deployed make another round of Advanced Scouting checks around its hex, as it would
+     * when first deploying. Once every hex within its scouts' reach has been scouted the patrol is done; otherwise it
+     * stays out until it would next return, when it tries again.
+     *
+     * @param forceID  the deployed patrol's ID
+     * @param track    the track it is deployed to
+     * @param campaign the current campaign
+     *
+     * @return {@code true} if the patrol's whole area is now scouted, and it should return
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean scoutRemainingPatrolArea(int forceID, StratConTrackState track, Campaign campaign) {
+        StratConCoords coords = track.getAssignedForceCoords().get(forceID);
+        if (coords == null) {
+            return true;
+        }
+
+        int radius = getPatrolScoutingRadius(coords, forceID, track, campaign);
+        if (!isAreaFullyScouted(coords, radius, track)) {
+            scanNeighboringCoords(coords, forceID, campaign, track);
+            StratConReconnaissance.updateObjectives(track);
+        }
+
+        if (isAreaFullyScouted(coords, radius, track)) {
+            return true;
+        }
+
+        track.setReturnDate(forceID, campaign.getLocalDate().plusDays(track.getDeploymentTime()));
+        return false;
+    }
+
+    /**
+     * The furthest, in hexes, a deployed patrol can scout from its hex under Advanced Scouting: the patrol's scan
+     * range, plus one for any scout in a unit of 35 tons or less. A patrol with no scouts, or sitting on a scenario
+     * or a hostile facility, can't scout past its own hex.
+     *
+     * @param coords   the hex the patrol is deployed to
+     * @param forceID  the deployed patrol's ID
+     * @param track    the track it is deployed to
+     * @param campaign the current campaign
+     *
+     * @return the patrol's scouting radius
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    private static int getPatrolScoutingRadius(StratConCoords coords, int forceID, StratConTrackState track,
+          Campaign campaign) {
+        // scanNeighboringCoords scouts nothing past a hex holding a scenario or a hostile facility
+        StratConFacility facility = track.getFacility(coords);
+        if ((track.getScenario(coords) != null) || ((facility != null) && !facility.isOwnerAlliedToPlayer())) {
+            return 0;
+        }
+
+        // Patrols increase their scan range by 1
+        int scanRangeIncrease = track.getScanRangeIncrease() + 1;
+        int radius = 0;
+        for (ScoutRecord scout : buildScoutMap(campaign.getPlayerForce().getFormation(forceID),
+              campaign.getPlayerForce().getHangar(), campaign)) {
+            radius = max(radius, getIndividualScanRange(scout.unitWeight(), scanRangeIncrease, true));
+        }
+        return radius;
+    }
+
+    /**
+     * How far, in hexes, a single scout can reveal from where its formation deploys. Under Advanced Scouting, a scout
+     * in a unit of 35 tons or less reaches one hex further.
+     *
+     * @param unitWeight          the weight of the scout's unit, in tons
+     * @param scanRangeIncrease   the formation's scan range
+     * @param useAdvancedScouting whether Advanced Scouting is enabled
+     *
+     * @return the scout's scan range
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static int getIndividualScanRange(double unitWeight, int scanRangeIncrease, boolean useAdvancedScouting) {
+        return useAdvancedScouting && unitWeight <= 35 ? scanRangeIncrease + 1 : scanRangeIncrease;
+    }
+
+    /**
+     * Whether a scout has been jammed out of scouting entirely under Advanced Scouting: the track's scan range
+     * penalties, such as a hostile Jamming Station, leave it unable to reach any hex past its formation's own, when it
+     * could have reached at least one without them.
+     *
+     * @param unitWeight             the weight of the scout's unit, in tons
+     * @param scanRangeIncrease      the formation's scan range, including the track's penalties
+     * @param trackScanRangeIncrease the track's own change to scan range, included in {@code scanRangeIncrease}
+     *
+     * @return {@code true} if the scout can't scout any hex because of the track's scan range penalties
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isScoutJammed(double unitWeight, int scanRangeIncrease, int trackScanRangeIncrease) {
+        if (trackScanRangeIncrease >= 0 || getIndividualScanRange(unitWeight, scanRangeIncrease, true) > 0) {
+            return false;
+        }
+
+        int unjammedScanRangeIncrease = scanRangeIncrease - trackScanRangeIncrease;
+        return getIndividualScanRange(unitWeight, unjammedScanRangeIncrease, true) > 0;
+    }
+
+    /**
+     * Whether every hex on the track within the given radius of a hex has been scouted. Like scouting itself, this
+     * never looks past the edge of the track.
+     *
+     * @param center the hex at the center of the area
+     * @param radius how far from the center, in hexes, the area reaches
+     * @param track  the track to check
+     *
+     * @return {@code true} if every on-track hex in the area has been revealed
+     *
+     * @author Illiani
+     * @since 0.51.01
+     */
+    static boolean isAreaFullyScouted(StratConCoords center, int radius, StratConTrackState track) {
+        Set<StratConCoords> revealedCoords = track.getRevealedCoords();
+        if (!revealedCoords.contains(center)) {
+            return false;
+        }
+
+        Queue<Pair<StratConCoords, Integer>> queue = new LinkedList<>();
+        Set<StratConCoords> visited = new HashSet<>();
+        queue.add(new Pair<>(center, 0));
+        visited.add(center);
+
+        while (!queue.isEmpty()) {
+            Pair<StratConCoords, Integer> current = queue.poll();
+            int distance = current.getValue();
+            if (distance >= radius) {
+                continue;
+            }
+
+            for (int direction = 0; direction < 6; direction++) {
+                StratConCoords checkCoords = current.getKey().translate(direction);
+                if (track.isOffTrack(checkCoords) || !visited.add(checkCoords)) {
+                    continue;
+                }
+
+                if (!revealedCoords.contains(checkCoords)) {
+                    return false;
+                }
+                queue.add(new Pair<>(checkCoords, distance + 1));
+            }
+        }
+
+        return true;
     }
 
     /**

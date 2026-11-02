@@ -80,6 +80,8 @@ public final class MHQConstants extends SuiteConstants {
     public static final String SHOW_COMMAND_GENERATOR = "showCompanyGenerator";
     public static final String SHOW_UNIT_PICTURES_ON_TOE = "showUnitPicturesOnTOE";
     public static final String SHOW_WARRIORS_ALMANAC = "showWarriorsAlmanac";
+    public static final String LOCK_MAIN_TAB_ORDER = "lockMainTabOrder";
+    public static final String LOCK_MAIN_TAB_DETACHING = "lockMainTabDetaching";
 
     // Personnel record logs - controls whether each personnel record section starts expanded
     public static final String DISPLAY_PERSONNEL_LOG = "displayPersonnelLog";
@@ -240,6 +242,7 @@ public final class MHQConstants extends SuiteConstants {
     public static final String DO_NOT_MOTHBALL_SALVAGE = "doNotMothballSalvage";
     public static final String NEW_DAY_FORCE_ICON_OPERATIONAL_STATUS = "newDayFormationIconOperationalStatus";
     public static final String NEW_DAY_FORCE_ICON_OPERATIONAL_STATUS_STYLE = "newDayFormationIconOperationalStatusStyle";
+    public static final String NEW_DAY_AUTO_FORMATION_ICONS = "newDayAutoFormationIcons";
     // endregion New Day
 
     // region Campaign XML Save Options
@@ -432,7 +435,7 @@ public final class MHQConstants extends SuiteConstants {
     public static final String STRAT_CON_POINT_OF_INTEREST_MANIFEST = "./data/stratconpointsofinterest/pointofinterestmanifest.json";
     public static final String STRAT_CON_USER_POINT_OF_INTEREST_MANIFEST = "./data/stratconpointsofinterest/userpointofinterestmanifest.json";
     public static final String STRAT_CON_POINT_OF_INTEREST_PATH = "./data/stratconpointsofinterest/";
-    public static final String FACTION_STANDING_ULTIMATUM_MANIFEST = "./data/universe/factionStandingUltimatums/ultimatummanifest.json";
+    public static final String FACTION_STANDING_ULTIMATUM_PATH = "./data/universe/factionStandingUltimatums/";
     public static final String STRAT_CON_CONTRACT_MANIFEST = "./data/stratconcontractdefinitions/ContractDefinitionManifest.json";
     public static final String STRAT_CON_USER_CONTRACT_MANIFEST = "./data/stratconcontractdefinitions/UserContractDefinitionManifest.json";
     public static final String STRAT_CON_CONTRACT_PATH = "./data/stratconcontractdefinitions/";

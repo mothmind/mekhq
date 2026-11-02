@@ -60,7 +60,6 @@ import megamek.common.enums.SkillLevel;
 import megamek.common.game.Game;
 import megamek.common.icons.Camouflage;
 import megamek.common.units.Entity;
-import megamek.logging.MMLogger;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.ForceHumanResources;
@@ -107,7 +106,6 @@ import mekhq.campaign.universe.factionStanding.FactionStandings;
  * in as method parameters and does its own reporting around the force's state changes.</p>
  */
 public abstract class AbstractForce {
-    private static final MMLogger LOGGER = MMLogger.create(AbstractForce.class);
 
     private ForceHumanResources humanResources = new ForceHumanResources();
     private ForceShoppingList shoppingList = new ForceShoppingList();
@@ -912,8 +910,6 @@ public abstract class AbstractForce {
 
         Formation formation = formationIds.get(id);
         Formation prevFormation = formationIds.get(unit.getFormationId());
-        LOGGER.info("TOE-DEBUG: addUnitToFormation unit={} targetId={} formationFound={} prevFound={}",
-              unit.getId(), id, formation != null, prevFormation != null);
         boolean useTransfers = false;
         boolean transferLog = !campaign.getCampaignOptions().get(CampaignOption.USE_TRANSFERS);
 
@@ -949,13 +945,7 @@ public abstract class AbstractForce {
                 }
             }
             formation.addUnit(campaign, unit.getId(), useTransfers, prevFormation);
-            try {
-                LOGGER.info("TOE-DEBUG: about to construct+trigger OrganizationChangedEvent for add");
-                MekHQ.triggerEvent(new OrganizationChangedEvent(campaign, formation, unit));
-                LOGGER.info("TOE-DEBUG: trigger returned normally");
-            } catch (Exception ex) {
-                LOGGER.error(ex, "TOE-DEBUG: EXCEPTION during event construct/trigger");
-            }
+            MekHQ.triggerEvent(new OrganizationChangedEvent(campaign, formation, unit));
         }
 
         if (campaign.getCampaignOptions().isUseStratCon()) {
@@ -1412,18 +1402,41 @@ public abstract class AbstractForce {
     }
 
     /**
+     * @return every other unit (slaves and lance-level masters) linked to {@code master} as a C3 node. {@code master}
+     *       itself is never included, even when it is slaved to itself as a company-level master.
+     */
+    public List<Unit> getC3Nodes(Unit master) {
+        List<Unit> nodes = new ArrayList<>();
+        if ((master.getEntity() == null) || (master.getEntity().getC3UUIDAsString() == null)) {
+            return nodes;
+        }
+        String masterUUID = master.getEntity().getC3UUIDAsString();
+        for (Unit unit : allUnits()) {
+            if ((unit != master) && (unit.getEntity() != null) &&
+                      masterUUID.equals(unit.getEntity().getC3MasterIsUUIDAsString())) {
+                nodes.add(unit);
+            }
+        }
+        return nodes;
+    }
+
+    /**
      * Detaches every unit slaved to {@code master} from it, clearing their C3 master reference and refreshing networks
-     * against the supplied {@link Game}.
+     * against the supplied {@link Game}. If {@code master} is slaved to itself (a company-level master), that self-link
+     * is cleared too, leaving it as an independent master.
      */
     public void removeUnitsFromC3Master(Unit master, Game game) {
-        List<Unit> removed = new ArrayList<>();
-        for (Unit unit : allUnits()) {
-            if (null != unit.getEntity().getC3MasterIsUUIDAsString() &&
-                      unit.getEntity().getC3MasterIsUUIDAsString().equals(master.getEntity().getC3UUIDAsString())) {
-                unit.getEntity().setC3MasterIsUUIDAsString(null);
-                unit.getEntity().setC3Master(null, true);
-                removed.add(unit);
-            }
+        List<Unit> removed = getC3Nodes(master);
+        for (Unit unit : removed) {
+            unit.getEntity().setC3MasterIsUUIDAsString(null);
+            unit.getEntity().setC3Master(null, true);
+        }
+        Entity masterEntity = master.getEntity();
+        if ((masterEntity != null) && (masterEntity.getC3UUIDAsString() != null) &&
+                  masterEntity.getC3UUIDAsString().equals(masterEntity.getC3MasterIsUUIDAsString())) {
+            masterEntity.setC3MasterIsUUIDAsString(null);
+            masterEntity.setC3Master(null, true);
+            removed.add(master);
         }
         refreshNetworks(game);
         MekHQ.triggerEvent(new NetworkChangedEvent(removed));

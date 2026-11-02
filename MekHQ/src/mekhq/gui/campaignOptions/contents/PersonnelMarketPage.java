@@ -41,22 +41,26 @@ import static mekhq.gui.campaignOptions.CampaignOptionsUtilities.getMetadata;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JSpinner;
 
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
+import megamek.Version;
 import megamek.client.ui.comboBoxes.MMComboBox;
+import megamek.client.ui.settings.SettingsFormPanel;
 import mekhq.campaign.market.personnelMarket.enums.PersonnelMarketStyle;
 import mekhq.gui.campaignOptions.CampaignOptionFlag;
 import mekhq.gui.campaignOptions.components.CampaignOptionsCheckBox;
-import megamek.client.ui.settings.SettingsFormPanel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsHeaderPanel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsLabel;
 import mekhq.gui.campaignOptions.components.CampaignOptionsPagePanel;
+import mekhq.gui.campaignOptions.components.CampaignOptionsSpinner;
 
 /**
  * The {@code PersonnelMarketPage} class builds and manages the Personnel Market leaf page of the Campaign Options
- * dialog. It owns the widgets for personnel market configuration - the market style and the report-refresh and
- * hiring-hall-only toggles - and synchronises them with a shared {@link MarketsOptionsModel}.
+ * dialog. It owns the widgets for personnel market configuration - the market style and the report-refresh,
+ * hiring-hall-only, disable-show-of-interest, and disable-combat-maneuvers-restriction toggles - and synchronises them
+ * with a shared {@link MarketsOptionsModel}.
  *
  * <p>This view is a sub-component of {@link MarketsPages}: the model snapshot and the overall load/apply lifecycle still
  * live on {@code MarketsPages}, while this class is responsible only for constructing the Personnel Market panel and
@@ -75,6 +79,11 @@ class PersonnelMarketPage {
     private MMComboBox<PersonnelMarketStyle> comboPersonnelMarketStyle;
     private JCheckBox chkPersonnelMarketReportRefresh;
     private JCheckBox chkUsePersonnelHireHiringHallOnly;
+    private JCheckBox chkPersonnelMarketDisableShowOfInterest;
+    private JCheckBox chkPersonnelMarketDisableCombatManeuversRestriction;
+    private JCheckBox chkPersonnelMarketDisableCivilianApplicants;
+    private JLabel lblPersonnelMarketApplicantMultiplier;
+    private JSpinner spnPersonnelMarketApplicantMultiplier;
 
     private boolean created;
 
@@ -137,14 +146,44 @@ class PersonnelMarketPage {
                 getMetadata(LEGACY_RULE_BEFORE_METADATA, CampaignOptionFlag.CUSTOM_SYSTEM));
         chkUsePersonnelHireHiringHallOnly.addMouseListener(createTipPanelUpdater("UsePersonnelHireHiringHallOnly"));
 
+        chkPersonnelMarketDisableShowOfInterest = new CampaignOptionsCheckBox("PersonnelMarketDisableShowOfInterest",
+                getMetadata(new Version(0, 51, 1), CampaignOptionFlag.CUSTOM_SYSTEM));
+        chkPersonnelMarketDisableShowOfInterest
+                .addMouseListener(createTipPanelUpdater("PersonnelMarketDisableShowOfInterest"));
+
+        chkPersonnelMarketDisableCombatManeuversRestriction = new CampaignOptionsCheckBox(
+                "PersonnelMarketDisableCombatManeuversRestriction", getMetadata(new Version(0, 51, 1),
+              CampaignOptionFlag.CUSTOM_SYSTEM));
+        chkPersonnelMarketDisableCombatManeuversRestriction
+                .addMouseListener(createTipPanelUpdater("PersonnelMarketDisableCombatManeuversRestriction"));
+
+        chkPersonnelMarketDisableCivilianApplicants = new CampaignOptionsCheckBox(
+                "PersonnelMarketDisableCivilianApplicants", getMetadata(new Version(0, 51, 1),
+              CampaignOptionFlag.CUSTOM_SYSTEM));
+        chkPersonnelMarketDisableCivilianApplicants
+                .addMouseListener(createTipPanelUpdater("PersonnelMarketDisableCivilianApplicants"));
+
+        lblPersonnelMarketApplicantMultiplier = new CampaignOptionsLabel("PersonnelMarketApplicantMultiplier",
+                getMetadata(new Version(0, 51, 1), CampaignOptionFlag.CUSTOM_SYSTEM));
+        lblPersonnelMarketApplicantMultiplier
+                .addMouseListener(createTipPanelUpdater("PersonnelMarketApplicantMultiplier"));
+        spnPersonnelMarketApplicantMultiplier = new CampaignOptionsSpinner("PersonnelMarketApplicantMultiplier",
+                1.0, 0.1, 10.0, 0.1);
+        spnPersonnelMarketApplicantMultiplier
+                .addMouseListener(createTipPanelUpdater("PersonnelMarketApplicantMultiplier"));
+
         // Layout the Panel
         final SettingsFormPanel panel = new SettingsFormPanel("PersonnelMarketGeneralOptionsPanel",
                 LABEL_COLUMN_WIDTH,
                 CONTROL_COLUMN_WIDTH);
         panel.addRow(lblPersonnelMarketStyle, comboPersonnelMarketStyle);
+        panel.addRow(lblPersonnelMarketApplicantMultiplier, spnPersonnelMarketApplicantMultiplier);
         panel.addCheckBoxGrid(CHECKBOX_GRID_COLUMNS,
                 chkPersonnelMarketReportRefresh,
-                chkUsePersonnelHireHiringHallOnly);
+                chkUsePersonnelHireHiringHallOnly,
+                chkPersonnelMarketDisableShowOfInterest,
+                chkPersonnelMarketDisableCombatManeuversRestriction,
+                chkPersonnelMarketDisableCivilianApplicants);
 
         return panel;
     }
@@ -163,6 +202,11 @@ class PersonnelMarketPage {
         comboPersonnelMarketStyle.setSelectedItem(model.personnelMarketStyle);
         chkPersonnelMarketReportRefresh.setSelected(model.personnelMarketReportRefresh);
         chkUsePersonnelHireHiringHallOnly.setSelected(model.usePersonnelHireHiringHallOnly);
+        chkPersonnelMarketDisableShowOfInterest.setSelected(model.personnelMarketDisableShowOfInterest);
+        chkPersonnelMarketDisableCombatManeuversRestriction
+                .setSelected(model.personnelMarketDisableCombatManeuversRestriction);
+        chkPersonnelMarketDisableCivilianApplicants.setSelected(model.personnelMarketDisableCivilianApplicants);
+        spnPersonnelMarketApplicantMultiplier.setValue(model.personnelMarketApplicantMultiplier);
     }
 
     /**
@@ -179,5 +223,10 @@ class PersonnelMarketPage {
         model.personnelMarketStyle = comboPersonnelMarketStyle.getSelectedItem();
         model.personnelMarketReportRefresh = chkPersonnelMarketReportRefresh.isSelected();
         model.usePersonnelHireHiringHallOnly = chkUsePersonnelHireHiringHallOnly.isSelected();
+        model.personnelMarketDisableShowOfInterest = chkPersonnelMarketDisableShowOfInterest.isSelected();
+        model.personnelMarketDisableCombatManeuversRestriction =
+                chkPersonnelMarketDisableCombatManeuversRestriction.isSelected();
+        model.personnelMarketDisableCivilianApplicants = chkPersonnelMarketDisableCivilianApplicants.isSelected();
+        model.personnelMarketApplicantMultiplier = (double) spnPersonnelMarketApplicantMultiplier.getValue();
     }
 }

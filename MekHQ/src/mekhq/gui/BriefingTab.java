@@ -953,9 +953,14 @@ public final class BriefingTab extends CampaignGuiTab {
             return;
         }
 
-        StratConCampaignState campaignState = comboMission.getSelectedItem().getStratConCampaignState();
+        final AbstractContract contract = comboMission.getSelectedItem();
+        if (contract == null) {
+            return;
+        }
+
+        StratConCampaignState campaignState = contract.getStratConCampaignState();
         if (campaignState != null) {
-            generateDailyScenariosForTrack(getCampaign(), campaignState, comboMission.getSelectedItem(), 1);
+            generateDailyScenariosForTrack(getCampaign(), campaignState, contract, 1);
             this.refreshAll(); // We need to refresh otherwise the scenario won't show up in the GUI
             return;
         }
@@ -2171,7 +2176,6 @@ public final class BriefingTab extends CampaignGuiTab {
             btnCompleteMission.setEnabled(false);
             btnDeleteMission.setEnabled(false);
             btnAddScenario.setEnabled(false);
-            btnGMGenerateScenarios.setEnabled(false);
         } else {
             missionViewPanel = new MissionViewPanel(mission, getCampaignGui());
             scrollMissionView.setViewportView(missionViewPanel);
@@ -2182,11 +2186,22 @@ public final class BriefingTab extends CampaignGuiTab {
             btnCompleteMission.setEnabled(mission.getStatus().isActive());
             btnDeleteMission.setEnabled(true);
             btnAddScenario.setEnabled(mission.isActiveOn(getCampaign().getLocalDate()));
-            btnGMGenerateScenarios.setEnabled(mission.isActiveOn(getCampaign().getLocalDate()) &&
-                                                    getCampaign().isGM() &&
-                                                    getCampaignOptions().isUseStratCon());
         }
+        refreshGMGenerateScenariosAvailability();
         refreshScenarioTableData();
+    }
+
+    /**
+     * Enables the GM scenario generation button only when it can do something: the campaign is in GM mode, StratCon
+     * is enabled, and the selected contract is active and StratCon-enabled.
+     */
+    private void refreshGMGenerateScenariosAvailability() {
+        final AbstractContract mission = comboMission.getSelectedItem();
+        btnGMGenerateScenarios.setEnabled((mission != null) &&
+                                                mission.isActiveOn(getCampaign().getLocalDate()) &&
+                                                (mission.getStratConCampaignState() != null) &&
+                                                getCampaign().isGM() &&
+                                                getCampaignOptions().isUseStratCon());
     }
 
     public void refreshScenarioTableData() {
@@ -2336,6 +2351,7 @@ public final class BriefingTab extends CampaignGuiTab {
     @Subscribe
     public void handle(OptionsChangedEvent ev) {
         refreshAssignmentsTabAvailability();
+        refreshGMGenerateScenariosAvailability();
     }
 
     @Subscribe
@@ -2411,6 +2427,6 @@ public final class BriefingTab extends CampaignGuiTab {
 
     @Subscribe
     public void handle(GMModeEvent ev) {
-        btnGMGenerateScenarios.setEnabled(ev.isGMMode());
+        refreshGMGenerateScenariosAvailability();
     }
 }

@@ -1000,6 +1000,14 @@ public final class CampaignOption<T> {
           of(Boolean.class, false, "usePersonnelHireHiringHallOnly");
     public static final CampaignOption<Boolean> PERSONNEL_MARKET_REPORT_REFRESH =
           of(Boolean.class, true, "personnelMarketReportRefresh");
+    public static final CampaignOption<Boolean> PERSONNEL_MARKET_DISABLE_SHOW_OF_INTEREST =
+          of(Boolean.class, false, "personnelMarketDisableShowOfInterest");
+    public static final CampaignOption<Boolean> PERSONNEL_MARKET_DISABLE_COMBAT_MANEUVERS_RESTRICTION =
+          of(Boolean.class, false, "personnelMarketDisableCombatManeuversRestriction");
+    public static final CampaignOption<Boolean> PERSONNEL_MARKET_DISABLE_CIVILIAN_APPLICANTS =
+          of(Boolean.class, false, "personnelMarketDisableCivilianApplicants");
+    public static final CampaignOption<Double> PERSONNEL_MARKET_APPLICANT_MULTIPLIER =
+          of(Double.class, 1.0, "personnelMarketApplicantMultiplier");
     public static final CampaignOption<UnitMarketMethod> UNIT_MARKET_METHOD =
           of(UnitMarketMethod.class, UnitMarketMethod.NONE, "unitMarketMethod");
     public static final CampaignOption<Boolean> UNIT_MARKET_REGIONAL_MEK_VARIATIONS =
@@ -1030,6 +1038,8 @@ public final class CampaignOption<T> {
           of(Integer.class, 100, "contractMaxSalvagePercentage");
     public static final CampaignOption<Integer> DROP_SHIP_BONUS_PERCENTAGE =
           of(Integer.class, 0, "dropShipBonusPercentage");
+    public static final CampaignOption<Boolean> USE_DROP_SHIP_BONUS_IN_SPACE =
+          of(Boolean.class, false, "useDropShipBonusInSpace");
     public static final CampaignOption<Integer> PITY_CONTRACTS =
           of(Integer.class, 4, "pityContracts");
     public static final CampaignOption<Boolean> IS_USE_TWO_WAY_PAY =

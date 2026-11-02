@@ -41,6 +41,7 @@ import static mekhq.campaign.personnel.PersonnelOptions.UNOFFICIAL_PATHOLOGIC_IN
 import static mekhq.campaign.personnel.PersonnelOptions.UNOFFICIAL_PROTHESIS_TECHNICIAN;
 import static mekhq.campaign.personnel.PersonnelOptions.UNOFFICIAL_TRAUMA_SURGEON;
 import static mekhq.campaign.personnel.medical.BodyLocation.GENERIC;
+import static mekhq.campaign.personnel.medical.BodyLocation.LEFT_HAND;
 import static mekhq.campaign.personnel.medical.BodyLocation.RIGHT_FOREARM;
 import static mekhq.campaign.personnel.medical.BodyLocation.RIGHT_HAND;
 import static mekhq.campaign.personnel.medical.advancedMedicalAlternate.InjurySubType.DISEASE_GENERIC;
@@ -175,25 +176,64 @@ class AdvancedMedicalAlternateHealingTest {
     }
 
     @Test
+    @DisplayName("getProstheticPenalties ignores cloned limbs")
+    void getProstheticPenalties_ignoresClonedLimbs() throws Exception {
+        Injury clonedHand = mock(Injury.class);
+        when(clonedHand.getType()).thenReturn(AlternateInjuries.CLONED_HAND);
+        when(clonedHand.getSubType()).thenReturn(PROSTHETIC_GENERIC);
+        when(clonedHand.getLocation()).thenReturn(LEFT_HAND);
+
+        Injury prostheticHand = mock(Injury.class);
+        when(prostheticHand.getType()).thenReturn(AlternateInjuries.PROSTHETIC_HAND);
+        when(prostheticHand.getSubType()).thenReturn(PROSTHETIC_GENERIC);
+        when(prostheticHand.getLocation()).thenReturn(RIGHT_HAND);
+
+        Person patient = mock(Person.class);
+        when(patient.getPermanentInjuries()).thenReturn(List.of(clonedHand, prostheticHand));
+
+        Set<BodyLocation> penalties = invokePrivateStatic("getProstheticPenalties",
+              new Class<?>[] { Person.class }, patient);
+
+        assertEquals(Set.of(RIGHT_HAND), penalties);
+    }
+
+    @Test
     @DisplayName("getMiscPenalty applies trauma surgeon, prosthetic, and prosthetic technician modifiers")
     void getMiscPenalty_appliesAllRelevantModifiers() throws Exception {
         Set<BodyLocation> prostheticPenalties = Set.of(RIGHT_HAND);
 
-        int plainPenalty = invokePrivateStatic("getMiscPenalty",
-              new Class<?>[] { int.class, Set.class, BodyLocation.class, boolean.class, boolean.class },
-              2, prostheticPenalties, RIGHT_FOREARM, false, false);
-
-        int traumaPenalty = invokePrivateStatic("getMiscPenalty",
-              new Class<?>[] { int.class, Set.class, BodyLocation.class, boolean.class, boolean.class },
-              2, prostheticPenalties, RIGHT_FOREARM, true, false);
-
-        int technicanPenalty = invokePrivateStatic("getMiscPenalty",
-              new Class<?>[] { int.class, Set.class, BodyLocation.class, boolean.class, boolean.class },
-              0, prostheticPenalties, RIGHT_FOREARM, false, true);
+        int plainPenalty = invokeMiscPenalty(2, prostheticPenalties, 0, false, false);
+        int traumaPenalty = invokeMiscPenalty(2, prostheticPenalties, 0, true, false);
+        int technicanPenalty = invokeMiscPenalty(0, prostheticPenalties, 0, false, true);
 
         assertEquals(6, plainPenalty);
         assertEquals(5, traumaPenalty);
         assertEquals(3, technicanPenalty);
+    }
+
+    @Test
+    @DisplayName("getMiscPenalty reduces the prosthetic penalty by 1 per Tech/Cybernetics level, to a minimum of 0")
+    void getMiscPenalty_cyberneticsReducesProstheticPenalty() throws Exception {
+        Set<BodyLocation> prostheticPenalties = Set.of(RIGHT_HAND);
+
+        assertEquals(4, invokeMiscPenalty(2, prostheticPenalties, 2, false, false));
+        assertEquals(3, invokeMiscPenalty(2, prostheticPenalties, 2, false, true));
+        assertEquals(2, invokeMiscPenalty(2, prostheticPenalties, 4, false, false));
+        assertEquals(2, invokeMiscPenalty(2, prostheticPenalties, 10, false, true));
+    }
+
+    @Test
+    @DisplayName("getMiscPenalty ignores Tech/Cybernetics when no prosthetic penalty applies")
+    void getMiscPenalty_cyberneticsDoesNotReduceInjuryPenalty() throws Exception {
+        assertEquals(2, invokeMiscPenalty(2, Set.of(), 5, false, false));
+    }
+
+    private static int invokeMiscPenalty(int injuryPenalty, Set<BodyLocation> prostheticPenalties,
+          int cyberneticsLevel, boolean hasTraumaSurgeon, boolean hasProthesisTechnician) throws Exception {
+        return invokePrivateStatic("getMiscPenalty",
+              new Class<?>[] { int.class, Set.class, BodyLocation.class, int.class, boolean.class, boolean.class },
+              injuryPenalty, prostheticPenalties, RIGHT_FOREARM, cyberneticsLevel, hasTraumaSurgeon,
+              hasProthesisTechnician);
     }
 
     @Test
