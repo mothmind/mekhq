@@ -192,6 +192,7 @@ public class CampaignGUI extends JPanel {
     private final BriefingTab briefingRoomTab;
     private final StratConTab stratConTab;
     private final NavigationTab navigationTab;
+    private final BasesTab basesTab;
     private final PersonnelTab personnelTab;
     private final HangarTab hangarTab;
     private final WarehouseTab warehouseTab;
@@ -248,6 +249,7 @@ public class CampaignGUI extends JPanel {
         briefingRoomTab = new BriefingTab(app, this, MHQTabType.BRIEFING_ROOM.toString());
         stratConTab = new StratConTab(this, MHQTabType.STRAT_CON.toString());
         navigationTab = new NavigationTab(this, MHQTabType.NAVIGATION.toString());
+        basesTab = new BasesTab(this, MHQTabType.BASES.toString());
         personnelTab = new PersonnelTab(this, MHQTabType.PERSONNEL.toString());
         hangarTab = new HangarTab(this, MHQTabType.HANGAR.toString());
         warehouseTab = new WarehouseTab(this, MHQTabType.WAREHOUSE.toString());
@@ -263,6 +265,7 @@ public class CampaignGUI extends JPanel {
             activateTab(stratConTab);
         }
         activateTab(navigationTab);
+        activateTab(basesTab);
         activateTab(personnelTab);
         activateTab(hangarTab);
         activateTab(warehouseTab);
@@ -703,6 +706,10 @@ public class CampaignGUI extends JPanel {
         return navigationTab;
     }
 
+    public BasesTab getBasesTab() {
+        return basesTab;
+    }
+
     public PersonnelTab getPersonnelTab() {
         return personnelTab;
     }
@@ -754,6 +761,7 @@ public class CampaignGUI extends JPanel {
         Optional<? extends CampaignGuiTab> tab = switch (tabType) {
             case COMMAND_CENTER -> Optional.of(getCommandCenterTab());
             case NAVIGATION -> Optional.of(getNavigationTab());
+            case BASES -> Optional.of(getBasesTab());
             case TOE -> Optional.of(getTOETab());
             case BRIEFING_ROOM -> Optional.of(getBriefingRoomTab());
             case STRAT_CON -> getStratConTab();

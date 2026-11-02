@@ -107,6 +107,7 @@ import megamek.common.options.OptionsConstants;
 import megamek.logging.MMLogger;
 import mekhq.MHQOptions;
 import mekhq.MekHQ;
+import mekhq.campaign.base.BaseFacilityManager;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.digitalGM.stratCon.StratConCampaignState;
@@ -1448,6 +1449,9 @@ public class CampaignNewDayManager {
         }
 
         cancelIneligibleFabrications();
+
+        // SkyEye: charges base facility upkeep on the 1st and finishes any construction due today
+        BaseFacilityManager.processNewDay(campaign);
 
         LocationNewDayUtil.processAllLocationUnits(campaign);
 

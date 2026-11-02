@@ -49,6 +49,7 @@ public enum MHQTabType {
     //region Enum Declaration
     COMMAND_CENTER("MHQTabType.COMMAND_CENTER.text", KeyEvent.VK_O),
     NAVIGATION("MHQTabType.NAVIGATION.text", KeyEvent.VK_UNDEFINED),
+    BASES("MHQTabType.BASES.text", KeyEvent.VK_UNDEFINED),
     TOE("MHQTabType.TOE.text", KeyEvent.VK_T),
     BRIEFING_ROOM("MHQTabType.BRIEFING_ROOM.text", KeyEvent.VK_B),
     STRAT_CON("MHQTabType.STRAT_CON.text", KeyEvent.VK_C),
@@ -88,6 +89,10 @@ public enum MHQTabType {
 
     public boolean isNavigation() {
         return this == NAVIGATION;
+    }
+
+    public boolean isBases() {
+        return this == BASES;
     }
 
     public boolean isTOE() {

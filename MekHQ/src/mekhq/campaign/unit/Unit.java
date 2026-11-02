@@ -116,6 +116,7 @@ import mekhq.MHQStaticDirectoryManager;
 import mekhq.MekHQ;
 import mekhq.campaign.Campaign;
 import mekhq.campaign.LocalWarehouse;
+import mekhq.campaign.base.BaseFacilityManager;
 import mekhq.campaign.campaignOptions.CampaignOption;
 import mekhq.campaign.campaignOptions.CampaignOptions;
 import mekhq.campaign.chaosCampaign.ChaosCampaignUtilities;
@@ -866,8 +867,12 @@ public class Unit implements ITechnology, ILocatable {
         return getShipTransportedUnitsSummary().getTransportedUnits().stream().anyMatch(u -> !u.getEntity().isAero());
     }
 
+    /**
+     * SkyEye: the repair site the unit is worked on at: the one chosen for it, or the floor its base's garage gives it
+     * if that is higher. Only the chosen site is saved.
+     */
     public int getSite() {
-        return site;
+        return Math.max(site, BaseFacilityManager.getRepairSiteFloor(this));
     }
 
     public void setSite(int i) {
@@ -1576,7 +1581,7 @@ public class Unit implements ITechnology, ILocatable {
     }
 
     public TargetRoll getSiteMod() {
-        return getSiteMod(site);
+        return getSiteMod(getSite());
     }
 
     /**
@@ -1628,7 +1633,7 @@ public class Unit implements ITechnology, ILocatable {
     }
 
     public String getCurrentSiteName() {
-        return getSiteName(site);
+        return getSiteName(getSite());
     }
 
     public boolean isDeployed() {

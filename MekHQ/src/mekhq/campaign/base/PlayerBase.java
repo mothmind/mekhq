@@ -34,7 +34,10 @@ package mekhq.campaign.base;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.annotation.Nullable;
@@ -70,6 +73,42 @@ public class PlayerBase extends AbstractBase {
     /** For XML deserialization only. */
     private PlayerBase() {
         super();
+    }
+
+    // SkyEye: the base's own money and the facilities built on it. A facility that has never been built has no entry
+    // until something asks for it, so every type is always available through getFacility.
+    private BaseLedger ledger = new BaseLedger();
+    private final Map<BaseFacilityType, BaseFacility> facilities = new EnumMap<>(BaseFacilityType.class);
+
+    /** @return the money this base holds, kept apart from the campaign's funds */
+    public BaseLedger getLedger() {
+        return ledger;
+    }
+
+    /** @return the facility of this type at the base, at level 0 if nothing has been built */
+    public BaseFacility getFacility(BaseFacilityType type) {
+        return facilities.computeIfAbsent(type, BaseFacility::new);
+    }
+
+    /** @return the level the base's facility of this type has reached: 0 if nothing has been built */
+    public int getFacilityLevel(BaseFacilityType type) {
+        BaseFacility facility = facilities.get(type);
+        return (facility == null) ? 0 : facility.getLevel();
+    }
+
+    /** @return every facility type's state at the base, in the order the types are declared */
+    public Collection<BaseFacility> getFacilities() {
+        List<BaseFacility> all = new ArrayList<>();
+        for (BaseFacilityType type : BaseFacilityType.values()) {
+            all.add(getFacility(type));
+        }
+        return all;
+    }
+
+    /** A base that holds money is not empty, so deleting it cannot make that money disappear. */
+    @Override
+    public boolean isEmpty(Campaign campaign) {
+        return !ledger.getBalance().isPositive() && super.isEmpty(campaign);
     }
 
     // Populated during XML load; drained by CampaignXmlParser to reconnect persons after load.
@@ -135,6 +174,17 @@ public class PlayerBase extends AbstractBase {
         getBaseWarehouse().writeToXML(pw, indent, "baseWarehouse");
         // Units stationed at this base's hangar.
         getBaseHangar().writeToXML(pw, indent, "baseHangar");
+        if (!ledger.isBlank()) {
+            ledger.writeToXML(pw, indent);
+        }
+        List<BaseFacility> builtFacilities = facilities.values().stream().filter(BaseFacility::isWorthSaving).toList();
+        if (!builtFacilities.isEmpty()) {
+            MHQXMLUtility.writeSimpleXMLOpenTag(pw, indent++, "baseFacilities");
+            for (BaseFacility facility : builtFacilities) {
+                facility.writeToXML(pw, indent);
+            }
+            MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "baseFacilities");
+        }
         MHQXMLUtility.writeSimpleXMLCloseTag(pw, --indent, "playerBase");
     }
 
@@ -254,6 +304,20 @@ public class PlayerBase extends AbstractBase {
                         if (unit != null) {
                             base.getBaseHangar().addUnit(unit);
                             base.pendingBaseHangarUnits.add(unit);
+                        }
+                    }
+                } else if (nodeName.equalsIgnoreCase("baseLedger")) {
+                    base.ledger = BaseLedger.generateInstanceFromXML(wn2);
+                } else if (nodeName.equalsIgnoreCase("baseFacilities")) {
+                    NodeList facilityNodes = wn2.getChildNodes();
+                    for (int i = 0; i < facilityNodes.getLength(); i++) {
+                        Node facilityNode = facilityNodes.item(i);
+                        if (facilityNode.getNodeType() != Node.ELEMENT_NODE) {
+                            continue;
+                        }
+                        BaseFacility facility = BaseFacility.generateInstanceFromXML(facilityNode);
+                        if (facility != null) {
+                            base.facilities.put(facility.getType(), facility);
                         }
                     }
                 } else {

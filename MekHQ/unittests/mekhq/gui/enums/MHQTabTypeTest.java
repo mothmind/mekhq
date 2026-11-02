@@ -73,6 +73,24 @@ public class MHQTabTypeTest {
     }
 
     @Test
+    public void testIsBases() {
+        for (final MHQTabType mhqTabType : types) {
+            if (mhqTabType == MHQTabType.BASES) {
+                assertTrue(mhqTabType.isBases());
+            } else {
+                assertFalse(mhqTabType.isBases());
+            }
+        }
+    }
+
+    @Test
+    public void testBasesTabSitsBetweenNavigationAndTOE() {
+        assertEquals(MHQTabType.NAVIGATION.ordinal() + 1, MHQTabType.BASES.ordinal());
+        assertEquals(MHQTabType.BASES.ordinal() + 1, MHQTabType.TOE.ordinal());
+        assertEquals("Bases", MHQTabType.BASES.toString());
+    }
+
+    @Test
     public void testIsCommandCenter() {
         for (final MHQTabType mhqTabType : types) {
             if (mhqTabType == MHQTabType.COMMAND_CENTER) {
